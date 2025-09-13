@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>🐸 Cluster Visualizer - Partitioned</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐸</text></svg>">
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            background: #1a1a2e; 
+            color: white; 
+            margin: 0; 
+            padding: 0; 
+            overflow: hidden;
+        }
+        .header { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            right: 0; 
+            background: rgba(26, 26, 46, 0.9); 
+            padding: 10px 20px; 
+            z-index: 1000; 
+            border-bottom: 1px solid #3b82f6;
+            height: 40px;
+        }
+        .header h1 { 
+            margin: 0; 
+            background: linear-gradient(45deg, #3b82f6, #8b5cf6); 
+            -webkit-background-clip: text; 
+            -webkit-text-fill-color: transparent; 
+            display: inline-block;
+            font-size: 18px;
+        }
+        .frog-logo { position: relative; display: inline-block; line-height: 1; margin-right: 6px; }
+        .frog-logo::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -3px; width: 0.95em; height: 0.26em; background: radial-gradient(ellipse at center, rgba(6,182,212,0.35), rgba(6,182,212,0.05)); border-radius: 50% / 60%; filter: blur(0.3px); }
+        .controls {
+            display: inline-block;
+            float: right;
+            margin-top: 5px;
+        }
+        .btn { 
+            background: linear-gradient(45deg, #3b82f6, #8b5cf6); 
+            color: white; 
+            border: none; 
+            padding: 6px 12px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            margin-left: 8px;
+            font-size: 12px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover { transform: translateY(-1px); }
+        #canvas { 
+            position: fixed; 
+            top: 60px; 
+            left: 280px;
+            background: radial-gradient(circle at center, #2a2a4e, #1a1a2e); 
+            cursor: move;
+        }
+        .sidebar {
+            position: fixed;
+            top: 60px;
+            left: 0;
+            width: 280px;
+            height: calc(100vh - 60px);
+            background: rgba(15, 15, 30, 0.95);
+            border-right: 1px solid #3b82f6;
+            overflow-y: auto;
+            padding: 0;
+        }
+        .sidebar-section {
+            padding: 15px;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+        }
+        .sidebar-section h3 {
+            margin: 0 0 10px 0;
+            color: #06b6d4;
+            font-size: 14px;
+        }
+        .partition-item { 
+            background: rgba(59,130,246,0.08); 
+            margin: 6px 0; 
+            padding: 8px; 
+            border-radius: 4px; 
+            font-size: 11px; 
+            border: 1px solid rgba(59,130,246,0.2); 
+            cursor: pointer; 
+        }
+        .partition-item:hover { background: rgba(59,130,246,0.18); }
+        .partition-item .id { 
+            display: block; 
+            color: #e5e7eb; 
+            font-family: monospace; 
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        .partition-item .info { 
+            color: #94a3b8; 
+            font-size: 10px; 
+            line-height: 1.3;
+        }
+        .partition-item.under { 
+            border-color: rgba(239,68,68,0.6); 
+            background: rgba(239,68,68,0.12); 
+        }
+        .partition-search { 
+            width: 100%; 
+            padding: 6px 8px; 
+            border-radius: 4px; 
+            border: 1px solid rgba(148,163,184,0.3); 
+            background: rgba(15,15,30,0.9); 
+            color: #e5e7eb; 
+            margin-bottom: 8px; 
+            font-size: 12px; 
+        }
+        .node-item {
+            background: rgba(59, 130, 246, 0.1);
+            margin: 5px 0;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .node-item.offline {
+            background: rgba(107, 114, 128, 0.3);
+        }
+        .stats-box {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(15, 15, 30, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #8b5cf6;
+            font-size: 14px;
+            min-width: 180px;
+        }
+        .view-toggle {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .view-toggle button {
+            background: rgba(59, 130, 246, 0.2);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            color: #e5e7eb;
+            padding: 4px 8px;
+            margin: 0 2px;
+            border-radius: 3px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .view-toggle button.active {
+            background: rgba(59, 130, 246, 0.5);
+            border-color: rgba(59, 130, 246, 0.8);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span class="frog-logo" aria-hidden="true">🐸</span>Cluster Network Visualizer</h1>
+        <div class="controls">
+            <button class="btn" onclick="resetLayout()">🔄 Reset Layout</button>
+            <button class="btn" onclick="togglePause()" id="pauseBtn">⏸️ Pause</button>
+            <a href="/" class="btn">← Home</a>
+        </div>
+    </div>
+    
+    <div class="sidebar">
+        <div class="sidebar-section">
+            <h3>📊 Cluster Stats</h3>
+            <div><strong>Nodes:</strong> <span id="nodeCount">0</span></div>
+            <div><strong>Replication Factor:</strong> <span id="rfDisplay">3</span></div>
+            <div><strong>Total Files:</strong> <span id="totalFilesDisplay">0</span></div>
+            <div><strong>Total Partitions:</strong> <span id="totalPartitionsDisplay">0</span></div>
+            <div><strong>Under-replicated:</strong> <span id="underReplicatedDisplay">0</span></div>
+        </div>
+        
+        <div class="sidebar-section">
+            <h3>🗂️ Partitions</h3>
+            <div class="view-toggle">
+                <button onclick="setPartitionView('all')" id="allBtn" class="active">All</button>
+                <button onclick="setPartitionView('under')" id="underBtn">Under-Rep</button>
+                <button onclick="setPartitionView('local')" id="localBtn">Local</button>
+            </div>
+            <input id="partitionSearch" class="partition-search" placeholder="Filter partitions..." />
+            <div id="partitionList">Loading...</div>
+        </div>
+        
+        <div class="sidebar-section">
+            <h3>📦 Partition Stats</h3>
+            <div><strong>Displayed:</strong> <span id="partitionCount">0</span></div>
+            <div><strong>Local:</strong> <span id="localPartitionsDisplay">0</span></div>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 5px;">Limited to 50 for performance</div>
+        </div>
+        
+        <div class="sidebar-section">
+            <h3>🎨 Legend</h3>
+            <div style="font-size: 11px; color: #94a3b8;">
+                <div>🔵 Blue nodes = Online</div>
+                <div>⚫ Gray nodes = Offline</div>
+                <div style="color: #10b981;">— Green lines = Well replicated</div>
+                <div style="color: #ef4444;">— Red lines = Under replicated</div>
+                <div style="margin-top: 8px;">Drag to pan • Wheel to zoom</div>
+                <div>Click partition to highlight</div>
+            </div>
+        </div>
+    </div>
+    
+    <canvas id="canvas"></canvas>
+    
+    <div class="stats-box">
+        <div><strong>Performance:</strong> <span id="fpsDisplay">-- FPS</span></div>
+        <div><strong>View:</strong> <span id="currentViewDisplay">All Partitions</span></div>
+        <div style="font-size: 12px; color: #94a3b8; margin-top: 5px;">Physics simulation active</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let nodes = [];
+        let partitions = [];
+        let allPartitions = []; // Keep full list for filtering
+        let hoveredPartitionId = null;
+        let selectedPartitionId = null;
+        let animationId;
+        let isPaused = false;
+        let camera = { x: 0, y: 0, zoom: 1 };
+        let isDragging = false;
+        let lastMouse = { x: 0, y: 0 };
+        let partitionView = 'all'; // 'all', 'under', 'local'
+        let currentNodeId = '';
+        
+        // Physics constants
+        const SPRING_STRENGTH = 0.01;
+        const DAMPING = 0.9;
+        const REPULSION_FORCE = 1000;
+        const CENTER_FORCE = 0.001;
+        const MAX_VELOCITY = 5;
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth - 280; // Account for sidebar
+            canvas.height = window.innerHeight - 60; // Account for header
+        }
+        
+        function setPartitionView(view) {
+            partitionView = view;
+            document.querySelectorAll('.view-toggle button').forEach(b => b.classList.remove('active'));
+            document.getElementById(view + 'Btn').classList.add('active');
+            filterPartitions();
+            
+            const viewNames = { all: 'All Partitions', under: 'Under-Replicated', local: 'Local Only' };
+            document.getElementById('currentViewDisplay').textContent = viewNames[view];
+        }
+        
+        function filterPartitions() {
+            const searchTerm = document.getElementById('partitionSearch').value.toLowerCase();
+            
+            let filtered = allPartitions.filter(partition => {
+                // Apply search filter
+                if (searchTerm && !partition.id.toLowerCase().includes(searchTerm)) {
+                    return false;
+                }
+                
+                // Apply view filter
+                switch (partitionView) {
+                    case 'under':
+                        return partition.under_replicated;
+                    case 'local':
+                        return partition.holders.includes(currentNodeId);
+                    default:
+                        return true;
+                }
+            });
+            
+            // Limit for performance
+            partitions = filtered.slice(0, 50);
+            updatePartitionList();
+        }
+        
+        function updatePartitionList() {
+            const listEl = document.getElementById('partitionList');
+            const listHTML = partitions.map(p => {
+                const cls = p.under_replicated ? 'partition-item under' : 'partition-item';
+                const holders = p.holders.map(h => h.replace('node-', '')).join(', ');
+                return `<div class="${cls}" data-partition-id="${p.id}">
+                    <span class="id">${p.id}</span>
+                    <div class="info">
+                        Files: ${p.file_count || 0}<br/>
+                        Holders: ${holders}<br/>
+                        RF: ${p.holders.length}/${p.rf_target}
+                    </div>
+                </div>`;
+            }).join('');
+            
+            listEl.innerHTML = listHTML || '<div style="color:#94a3b8; font-size:12px;">No partitions</div>';
+            
+            // Bind events
+            Array.from(listEl.querySelectorAll('.partition-item')).forEach(item => {
+                const id = item.getAttribute('data-partition-id');
+                item.addEventListener('mouseenter', () => { hoveredPartitionId = id; });
+                item.addEventListener('mouseleave', () => { hoveredPartitionId = null; });
+                item.addEventListener('click', () => { 
+                    selectedPartitionId = (selectedPartitionId === id ? null : id); 
+                });
+            });
+            
+            document.getElementById('partitionCount').textContent = partitions.length;
+        }
+        
+        function initializeLayout() {
+            // Position nodes in a circle initially
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = Math.min(centerX, centerY) * 0.6;
+            
+            nodes.forEach((node, i) => {
+                const angle = (i / nodes.length) * Math.PI * 2;
+                node.x = centerX + Math.cos(angle) * radius;
+                node.y = centerY + Math.sin(angle) * radius;
+                node.vx = 0;
+                node.vy = 0;
+            });
+        }
+        
+        function resetLayout() {
+            initializeLayout();
+            camera = { x: 0, y: 0, zoom: 1 };
+        }
+        
+        function togglePause() {
+            isPaused = !isPaused;
+            document.getElementById('pauseBtn').textContent = isPaused ? '▶️ Resume' : '⏸️ Pause';
+            if (!isPaused && !animationId) {
+                animate();
+            }
+        }
+        
+        // Physics simulation
+        function updatePhysics() {
+            if (isPaused || nodes.length === 0) return;
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            
+            // Apply forces
+            nodes.forEach((node, i) => {
+                let fx = 0, fy = 0;
+                
+                // Repulsion between nodes
+                nodes.forEach((other, j) => {
+                    if (i !== j) {
+                        const dx = node.x - other.x;
+                        const dy = node.y - other.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+                        const force = REPULSION_FORCE / (dist * dist);
+                        fx += (dx / dist) * force;
+                        fy += (dy / dist) * force;
+                    }
+                });
+                
+                // Center attraction (weak)
+                const centerDx = centerX - node.x;
+                const centerDy = centerY - node.y;
+                fx += centerDx * CENTER_FORCE;
+                fy += centerDy * CENTER_FORCE;
+                
+                // Update velocity
+                node.vx = (node.vx + fx) * DAMPING;
+                node.vy = (node.vy + fy) * DAMPING;
+                
+                // Limit velocity
+                const speed = Math.sqrt(node.vx * node.vx + node.vy * node.vy);
+                if (speed > MAX_VELOCITY) {
+                    node.vx = (node.vx / speed) * MAX_VELOCITY;
+                    node.vy = (node.vy / speed) * MAX_VELOCITY;
+                }
+                
+                // Update position
+                node.x += node.vx;
+                node.y += node.vy;
+                
+                // Keep nodes on screen
+                const margin = 50;
+                node.x = Math.max(margin, Math.min(canvas.width - margin, node.x));
+                node.y = Math.max(margin, Math.min(canvas.height - margin, node.y));
+            });
+        }
+        
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            
+            // Apply camera transform
+            ctx.translate(camera.x, camera.y);
+            ctx.scale(camera.zoom, camera.zoom);
+            
+            // Draw partition connections
+            partitions.forEach(partition => {
+                const holders = partition.holders.filter(h => nodes.find(n => n.id === h));
+                if (holders.length < 2) return;
+                
+                const isHighlighted = (partition.id === hoveredPartitionId) || (partition.id === selectedPartitionId);
+                ctx.strokeStyle = isHighlighted ? '#facc15' : (partition.under_replicated ? '#ef4444' : '#10b981');
+                ctx.lineWidth = (isHighlighted ? 3 : 1.5) / camera.zoom;
+                ctx.globalAlpha = isHighlighted ? 0.9 : 0.4;
+                
+                // Draw lines between all holders of this partition
+                for (let i = 0; i < holders.length; i++) {
+                    for (let j = i + 1; j < holders.length; j++) {
+                        const node1 = nodes.find(n => n.id === holders[i]);
+                        const node2 = nodes.find(n => n.id === holders[j]);
+                        if (node1 && node2) {
+                            ctx.beginPath();
+                            ctx.moveTo(node1.x, node1.y);
+                            ctx.lineTo(node2.x, node2.y);
+                            ctx.stroke();
+                        }
+                    }
+                }
+            });
+            
+            ctx.globalAlpha = 1;
+            
+            // Draw nodes as frog emoji with status ring
+            nodes.forEach(node => {
+                const baseRadius = 38;
+                const radius = baseRadius / camera.zoom;
+                const emojiSize = (baseRadius * 2) / camera.zoom;
+                const belongsToHover = hoveredPartitionId && partitions.find(p => p.id === hoveredPartitionId)?.holders.includes(node.id);
+                const belongsToSelected = selectedPartitionId && partitions.find(p => p.id === selectedPartitionId)?.holders.includes(node.id);
+                const highlighted = belongsToHover || belongsToSelected;
+
+                // Status ring
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, highlighted ? radius * 1.2 : radius, 0, Math.PI * 2);
+                ctx.strokeStyle = highlighted ? '#facc15' : (node.online ? '#3b82f6' : '#6b7280');
+                ctx.lineWidth = (highlighted ? 4 : 2) / camera.zoom;
+                ctx.stroke();
+
+                // Emoji
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = `${emojiSize}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+                ctx.fillText('🐸', node.x, node.y);
+
+                // Labels
+                ctx.fillStyle = '#ffffff';
+                ctx.font = `${12 / camera.zoom}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'alphabetic';
+                const rim = (highlighted ? radius * 1.2 : radius);
+                ctx.fillText(node.id.replace(/^node-/, '').replace(/^sim-/, ''), node.x, node.y + rim + (14 / camera.zoom));
+                ctx.font = `${10 / camera.zoom}px Arial`;
+                ctx.fillText(`${node.partitions || 0} partitions`, node.x, node.y + rim + (26 / camera.zoom));
+            });
+            
+            ctx.restore();
+        }
+        
+        function animate() {
+            updatePhysics();
+            draw();
+            animationId = requestAnimationFrame(animate);
+        }
+        
+        async function fetchClusterData() {
+            try {
+                // Get basic cluster stats
+                const response = await fetch('/api/cluster-stats');
+                const stats = await response.json();
+                currentNodeId = stats.node_id;
+                
+                // Get partition stats
+                const partitionResponse = await fetch('/api/partition-stats');
+                const partitionStats = await partitionResponse.json();
+                
+                // Update sidebar info
+                document.getElementById('nodeCount').textContent = stats.peer_list ? stats.peer_list.length + 1 : 1;
+                document.getElementById('rfDisplay').textContent = partitionStats.replication_factor || 3;
+                document.getElementById('totalFilesDisplay').textContent = partitionStats.total_files || 0;
+                document.getElementById('totalPartitionsDisplay').textContent = partitionStats.total_partitions || 0;
+                document.getElementById('underReplicatedDisplay').textContent = partitionStats.under_replicated || 0;
+                document.getElementById('localPartitionsDisplay').textContent = partitionStats.local_partitions || 0;
+                
+                // Update nodes
+                const newNodes = [];
+                
+                // Add this node
+                newNodes.push({
+                    id: stats.node_id,
+                    partitions: partitionStats.local_partitions || 0,
+                    online: true,
+                    x: nodes.find(n => n.id === stats.node_id)?.x || Math.random() * canvas.width,
+                    y: nodes.find(n => n.id === stats.node_id)?.y || Math.random() * canvas.height,
+                    vx: nodes.find(n => n.id === stats.node_id)?.vx || 0,
+                    vy: nodes.find(n => n.id === stats.node_id)?.vy || 0
+                });
+                
+                // Add peer nodes
+                if (stats.peer_list) {
+                    for (const peer of stats.peer_list) {
+                        try {
+                            // Try to get partition stats for this peer
+                            const peerPartitionResponse = await fetch(`http://${peer.address}:${peer.http_port}/api/partition-stats`);
+                            const peerPartitionStats = await peerPartitionResponse.json();
+                            
+                            newNodes.push({
+                                id: peer.node_id,
+                                partitions: peerPartitionStats.local_partitions || 0,
+                                online: Date.now() - (peer.last_seen * 1000) < 30000,
+                                x: nodes.find(n => n.id === peer.node_id)?.x || Math.random() * canvas.width,
+                                y: nodes.find(n => n.id === peer.node_id)?.y || Math.random() * canvas.height,
+                                vx: nodes.find(n => n.id === peer.node_id)?.vx || 0,
+                                vy: nodes.find(n => n.id === peer.node_id)?.vy || 0
+                            });
+                        } catch (e) {
+                            // Peer unreachable, add with 0 partitions
+                            newNodes.push({
+                                id: peer.node_id,
+                                partitions: 0,
+                                online: false,
+                                x: nodes.find(n => n.id === peer.node_id)?.x || Math.random() * canvas.width,
+                                y: nodes.find(n => n.id === peer.node_id)?.y || Math.random() * canvas.height,
+                                vx: nodes.find(n => n.id === peer.node_id)?.vx || 0,
+                                vy: nodes.find(n => n.id === peer.node_id)?.vy || 0
+                            });
+                        }
+                    }
+                }
+                
+                nodes = newNodes;
+                
+                // Get partition data from CRDT
+                try {
+                    const frogpondResponse = await fetch('/frogpond/fullstore');
+                    const frogpondData = await frogpondResponse.json();
+                    
+                    // Extract partition info from frogpond data
+                    const partitionMap = {};
+                    frogpondData.forEach(dp => {
+                        if (!dp.Deleted && dp.Key.startsWith('partitions/')) {
+                            try {
+                                const partitionInfo = JSON.parse(new TextDecoder().decode(new Uint8Array(dp.Value)));
+                                partitionMap[partitionInfo.id] = partitionInfo;
+                            } catch (e) {
+                                console.error('Failed to parse partition data:', e);
+                            }
+                        }
+                    });
+                    
+                    allPartitions = Object.values(partitionMap).map(p => ({
+                        id: p.id,
+                        holders: p.holders || [],
+                        file_count: p.file_count || 0,
+                        under_replicated: (p.holders || []).length < (partitionStats.replication_factor || 3),
+                        rf_target: partitionStats.replication_factor || 3
+                    }));
+                    
+                    // Sort for consistent display
+                    allPartitions.sort((a, b) => a.id.localeCompare(b.id));
+                    
+                    filterPartitions();
+                    
+                } catch (error) {
+                    console.error('Failed to fetch partition data:', error);
+                    allPartitions = [];
+                    partitions = [];
+                    updatePartitionList();
+                }
+                
+                // Initialize layout if this is the first time
+                if (nodes.length > 0 && (!nodes[0].x || nodes[0].x === 0)) {
+                    initializeLayout();
+                }
+                
+            } catch (error) {
+                console.error('Failed to fetch cluster data:', error);
+            }
+        }
+        
+        // Mouse interaction
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastMouse = { x: e.clientX, y: e.clientY };
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const dx = e.clientX - lastMouse.x;
+                const dy = e.clientY - lastMouse.y;
+                camera.x += dx;
+                camera.y += dy;
+                lastMouse = { x: e.clientX, y: e.clientY };
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+        
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+            camera.zoom *= zoomFactor;
+            camera.zoom = Math.max(0.1, Math.min(3, camera.zoom));
+        });
+        
+        // Bind search event
+        document.getElementById('partitionSearch').addEventListener('input', filterPartitions);
+        
+        // Initialize
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        
+        // Start the visualization
+        fetchClusterData();
+        setInterval(fetchClusterData, 5000); // Update every 5 seconds
+        animate();
+    </script>
+</body>
+</html>

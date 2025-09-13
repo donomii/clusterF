@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🐸 Cluster File Browser</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐸</text></svg>">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 30px;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 12px;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #3b82f6, #8b5cf6, #06b6d4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        .frog-logo { position: relative; display: inline-block; line-height: 1; margin-right: 6px; }
+        .frog-logo::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -3px; width: 1.1em; height: 0.3em; background: radial-gradient(ellipse at center, rgba(6,182,212,0.35), rgba(6,182,212,0.05)); border-radius: 50% / 60%; filter: blur(0.3px); }
+        .toolbar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .btn {
+            background: linear-gradient(45deg, #3b82f6, #8b5cf6);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .path-bar {
+            background: rgba(15, 23, 42, 0.8);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-family: 'SF Mono', Monaco, monospace;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+        }
+        .upload-zone {
+            border: 2px dashed rgba(59, 130, 246, 0.5);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            background: rgba(59, 130, 246, 0.05);
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        .upload-zone.dragover {
+            border-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.1);
+            transform: scale(1.02);
+        }
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .file-item {
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .file-item:hover {
+            border-color: #3b82f6;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        .file-item.directory {
+            background: rgba(139, 92, 246, 0.1);
+            border-color: rgba(139, 92, 246, 0.3);
+        }
+        .file-icon {
+            font-size: 2.5em;
+            margin-bottom: 8px;
+        }
+        .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; margin-bottom: 6px; border: 1px solid rgba(148,163,184,0.2); }
+        .file-name {
+            font-weight: 500;
+            margin-bottom: 4px;
+            word-break: break-word;
+        }
+        .file-size {
+            font-size: 0.8em;
+            color: #94a3b8;
+        }
+        .file-actions {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            display: none;
+            gap: 4px;
+        }
+        .file-item:hover .file-actions {
+            display: flex;
+        }
+        .file-action {
+            background: rgba(0, 0, 0, 0.7);
+            border: none;
+            color: white;
+            padding: 4px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .file-action:hover { background: rgba(239, 68, 68, 0.8); }
+        .modal {
+            display: none; /* will be set to flex when opened */
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px; /* keep some breathing room on small screens */
+        }
+        .modal-content {
+            background: #1e293b;
+            padding: 24px;
+            border-radius: 12px;
+            max-width: 90vw;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            max-height: 90vh; /* cap full modal height */
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* avoid scrollbars for media */
+        }
+        .modal-header {
+            margin-bottom: 20px;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            border-radius: 6px;
+            background: rgba(15, 23, 42, 0.9);
+            color: #e2e8f0;
+            font-size: 14px;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        .btn-secondary {
+            background: rgba(148, 163, 184, 0.2);
+            color: #e2e8f0;
+        }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 500;
+            z-index: 1001;
+            transform: translateX(400px);
+            transition: transform 0.3s ease;
+        }
+        .notification.show { transform: translateX(0); }
+        .notification.success { background: linear-gradient(45deg, #10b981, #059669); }
+        .notification.error { background: linear-gradient(45deg, #ef4444, #dc2626); }
+        .loading {
+            /* Full-screen overlay to hide UI until ready */
+            display: flex; /* visible by default; hidden after first load */
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.92);
+            color: #e2e8f0;
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+        .loading-inner { text-align: center; }
+        .loading-frog { font-size: clamp(48px, 10vw, 120px); line-height: 1; filter: drop-shadow(0 8px 24px rgba(6,182,212,0.35)); }
+        .loading-text { margin-top: 10px; font-size: clamp(24px, 6vw, 56px); font-weight: 800; letter-spacing: 0.4px;
+                         background: linear-gradient(45deg, #3b82f6, #8b5cf6, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        /* Preview modal */
+        .modal-content.wide { width: min(80vw, 1000px); }
+        .preview-body {
+            background: rgba(2,6,23,0.6);
+            border: 1px solid rgba(148,163,184,0.2);
+            padding: 12px;
+            border-radius: 8px;
+            flex: 1; /* take remaining height under header */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden; /* default: media scales, no scroll */
+            min-height: 0; /* allow flex child to shrink */
+        }
+        .preview-body.media img,
+        .preview-body.media video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* fully visible, preserve aspect */
+            border-radius: 6px;
+            display: block;
+        }
+        .preview-body.media audio { width: 90%; }
+        .preview-body.media iframe { width: 100%; height: 100%; border: none; border-radius: 6px; display: block; }
+        .preview-body.text { display: block; overflow: auto; }
+        .preview-body pre { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #e5e7eb; margin: 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><span class="frog-logo" aria-hidden="true">🐸</span>Cluster File Browser</h1>
+            <div id="nodeInfo">Node: Loading... | Port: ...</div>
+            <div style="margin-top:6px;"><a href="/" style="color:#06b6d4; text-decoration:none;">← Back to Home</a></div>
+        </div>
+
+        <div class="toolbar">
+            <button class="btn" onclick="refreshFiles()">
+                🔄 Refresh
+            </button>
+            <button class="btn" onclick="showCreateFolderModal()">
+                📁 New Folder
+            </button>
+            <button class="btn" onclick="navigateUp()">
+                ⬆️ Up
+            </button>
+            <button class="btn" onclick="goHome()">
+                🏠 Home
+            </button>
+        </div>
+
+        <div class="path-bar">
+            Current Path: <span id="currentPath">/</span>
+        </div>
+
+        <div class="upload-zone" id="uploadZone">
+            <div style="font-size: 3em; margin-bottom: 15px;">📤</div>
+            <div style="font-size: 1.2em; margin-bottom: 10px;">Drop files here to upload</div>
+            <div style="color: #94a3b8;">or click to select files</div>
+            <input type="file" id="fileInput" multiple style="display: none;">
+        </div>
+
+        <div id="fileGrid" class="file-grid">
+            <!-- Files will be loaded here -->
+        </div>
+    </div>
+
+    <!-- Create Folder Modal -->
+    <div id="createFolderModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">📁 Create New Folder</div>
+            <div class="form-group">
+                <label for="folderName">Folder Name:</label>
+                <input type="text" id="folderName" placeholder="Enter folder name">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('createFolderModal')">Cancel</button>
+                <button class="btn" onclick="createFolder()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Indicator -->
+    <div id="loading" class="loading">
+        <div class="loading-inner">
+            <div class="loading-frog" aria-hidden="true">🐸</div>
+            <div class="loading-text">Loading Frogpond…</div>
+        </div>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification"></div>
+
+    <!-- Preview Modal -->
+    <div id="previewModal" class="modal">
+        <div class="modal-content wide">
+            <div class="modal-header">👁️ Preview <span id="previewTitle" style="color:#94a3b8; font-size:14px;"></span></div>
+            <div id="previewBody" class="preview-body">Loading...</div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('previewModal')">Close</button>
+                <button class="btn" id="previewDownloadBtn">Download</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPath = '/';
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadNodeInfo();
+            refreshFiles();
+            setupUploadZone();
+
+            // Preview modal close helpers
+            const previewModal = document.getElementById('previewModal');
+            const previewBody = document.getElementById('previewBody');
+            const modalContent = previewModal.querySelector('.modal-content');
+            // Close when clicking backdrop
+            previewModal.addEventListener('click', function(e) {
+                if (e.target === previewModal) {
+                    closeModal('previewModal');
+                }
+            });
+            // Don't close when clicking inside content wrapper (buttons/controls)
+            modalContent.addEventListener('click', function(e) { e.stopPropagation(); });
+            // Close when clicking anywhere in preview body except on the media itself
+            previewBody.addEventListener('click', function(e) {
+                const tag = (e.target.tagName || '').toLowerCase();
+                if (['img','video','audio','iframe'].includes(tag)) {
+                    // allow interactions with media
+                    e.stopPropagation();
+                    return;
+                }
+                closeModal('previewModal');
+            });
+            // ESC to close
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') closeModal('previewModal');
+            });
+        });
+
+        function loadNodeInfo() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('nodeInfo').textContent = 
+                        'Node: ' + data.node_id + ' | Port: ' + data.http_port;
+                })
+                .catch(error => console.log('Could not load node info'));
+        }
+
+        function setupUploadZone() {
+            const uploadZone = document.getElementById('uploadZone');
+            const fileInput = document.getElementById('fileInput');
+
+            uploadZone.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', handleFileSelect);
+
+            // Drag and drop
+            uploadZone.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                uploadZone.classList.add('dragover');
+            });
+
+            uploadZone.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                uploadZone.classList.remove('dragover');
+            });
+
+            uploadZone.addEventListener('drop', function(e) {
+                e.preventDefault();
+                uploadZone.classList.remove('dragover');
+                handleFileSelect({ target: { files: e.dataTransfer.files } });
+            });
+        }
+
+        let firstLoad = true;
+
+        async function refreshFiles() {
+            if (firstLoad) showLoading(true);
+            try {
+                const response = await fetch("/api/files" + currentPath);
+                if (response.ok) {
+                    const data = await response.json();
+                    renderFiles(data.entries || []);
+                    document.getElementById('currentPath').textContent = currentPath;
+                } else {
+                    showNotification('Failed to load files', 'error');
+                }
+            } catch (error) {
+                showNotification('Error: ' + error.message, 'error');
+            }
+            if (firstLoad) {
+                showLoading(false);
+                firstLoad = false;
+            }
+        }
+
+        function renderFiles(files) {
+            const grid = document.getElementById('fileGrid');
+            grid.innerHTML = '';
+
+            files.forEach(file => {
+                const item = document.createElement('div');
+                item.className = 'file-item' + (file.is_directory ? ' directory' : '');
+                
+                const isImage = !file.is_directory && (file.content_type||'').startsWith('image/');
+                const icon = file.is_directory ? '📁' : (isImage ? '' : getFileIcon(file.name));
+                const size = file.is_directory ? 'Directory' : formatFileSize(file.size);
+                
+                const filePath = currentPath.endsWith('/') ? currentPath + file.name : currentPath + '/' + file.name;
+                const iconHTML = isImage ? ('<img class="thumb" src="' + ('/api/files' + filePath) + '" alt="thumb">') : ('<div class="file-icon">' + icon + '</div>');
+                item.innerHTML = iconHTML +
+                    '<div class="file-name">' + escapeHtml(file.name) + '</div>' +
+                    '<div class="file-size">' + size + '</div>' +
+                    '<div class="file-actions">' +
+                        (file.is_directory ? '' : '<button class="file-action" onclick="openPreview(\'' + escapeHtml(file.name) + '\', \'" + (file.content_type||"") + "\', " + (file.size||0) + ")" title="Preview">👁️</button>') +
+                        (file.is_directory ? '' : '<button class="file-action" onclick="downloadFile(\'' + escapeHtml(file.name) + '\')" title="Download">⬇️</button>') +
+                        '<button class="file-action" onclick="deleteFile(\'' + escapeHtml(file.name) + '\')" title="Delete">🗑️</button>' +
+                    '</div>';
+                
+                item.addEventListener('click', () => {
+                    if (file.is_directory) {
+                        navigateToFolder(file.name);
+                    } else {
+                        openPreview(file.name, file.content_type || '', file.size || 0);
+                    }
+                });
+                
+                grid.appendChild(item);
+            });
+        }
+
+        function escapeHtml(text) {
+            var div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function getFileIcon(filename) {
+            const ext = filename.toLowerCase().split('.').pop();
+            const iconMap = {
+                'txt': '📄', 'md': '📄', 'doc': '📄', 'docx': '📄',
+                'pdf': '📕', 'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️',
+                'mp3': '🎵', 'wav': '🎵', 'mp4': '🎬', 'avi': '🎬',
+                'zip': '📦', 'tar': '📦', 'gz': '📦',
+                'js': '⚡', 'html': '🌐', 'css': '🎨', 'json': '⚙️'
+            };
+            return iconMap[ext] || '📄';
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function navigateToFolder(folderName) {
+            currentPath = currentPath.endsWith('/') ? currentPath + folderName : currentPath + '/' + folderName;
+            refreshFiles();
+        }
+
+        function navigateUp() {
+            if (currentPath !== '/') {
+                const parts = currentPath.split('/');
+                parts.pop();
+                currentPath = parts.join('/') || '/';
+                refreshFiles();
+            }
+        }
+
+        function goHome() {
+            currentPath = '/';
+            refreshFiles();
+        }
+
+        async function handleFileSelect(event) {
+            const files = event.target.files;
+            if (!files.length) return;
+
+            for (const file of files) {
+                try {
+                    await uploadFile(file);
+                    showNotification('✅ Uploaded: ' + file.name, 'success');
+                } catch (error) {
+                    showNotification('❌ Failed to upload ' + file.name + ': ' + error.message, 'error');
+                }
+            }
+            refreshFiles();
+            
+            // Reset file input
+            event.target.value = '';
+        }
+
+        async function uploadFile(file) {
+            const filePath = currentPath.endsWith('/') ? currentPath + file.name : currentPath + '/' + file.name;
+            const response = await fetch('/api/files' + filePath, {
+                method: 'PUT',
+                body: file
+            });
+            
+            if (!response.ok) {
+                throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+            }
+        }
+
+        async function downloadFile(fileName) {
+            const filePath = currentPath.endsWith('/') ? currentPath + fileName : currentPath + '/' + fileName;
+            try {
+                const resp = await fetch('/api/files' + filePath + '?download=1');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                // Fallback to opening in new tab
+                window.open('/api/files' + filePath + '?download=1', '_blank');
+            }
+        }
+
+        function openPreview(fileName, contentType, size) {
+            const modal = document.getElementById('previewModal');
+            const body = document.getElementById('previewBody');
+            const title = document.getElementById('previewTitle');
+            const filePath = currentPath.endsWith('/') ? currentPath + fileName : currentPath + '/' + fileName;
+            title.textContent = ' ' + fileName;
+            body.innerHTML = 'Loading...';
+            // Centered modal that never goes offscreen
+            modal.style.display = 'flex';
+            const downloadBtn = document.getElementById('previewDownloadBtn');
+            downloadBtn.onclick = () => downloadFile(fileName);
+
+            const url = '/api/files' + filePath;
+            // Reset classes
+            body.classList.remove('media', 'text');
+            if (contentType.startsWith('image/')) {
+                body.classList.add('media');
+                body.innerHTML = '<img src="' + url + '" alt="preview">';
+            } else if (contentType.startsWith('video/')) {
+                body.classList.add('media');
+                body.innerHTML = '<video controls src="' + url + '"></video>';
+            } else if (contentType.startsWith('audio/')) {
+                body.classList.add('media');
+                body.innerHTML = '<audio controls src="' + url + '"></audio>';
+            } else if (contentType === 'application/pdf') {
+                body.classList.add('media');
+                body.innerHTML = '<iframe src="' + url + '" sandbox></iframe>';
+            } else if (contentType.startsWith('text/') || contentType === 'application/json' || contentType === 'application/xml') {
+                body.classList.add('text');
+                // Only fetch text previews up to 1MB
+                if (size > 1024*1024) {
+                    body.innerHTML = '<div style="color:#94a3b8;">File is large (' + formatFileSize(size) + '). Use Download to view.</div>';
+                } else {
+                    fetch(url).then(r => r.text()).then(text => {
+                        body.innerHTML = '<pre>' + escapeHtml(text) + '</pre>';
+                    }).catch(() => {
+                        body.innerHTML = '<div style="color:#ef4444;">Failed to load preview.</div>';
+                    });
+                }
+            } else {
+                body.classList.add('text');
+                body.innerHTML = '<div style="color:#94a3b8;">No preview available. Use Download to open this file.</div>';
+            }
+        }
+
+        async function deleteFile(fileName) {
+            if (!confirm('Are you sure you want to delete "' + fileName + '"?')) return;
+            
+            try {
+                const filePath = currentPath.endsWith('/') ? currentPath + fileName : currentPath + '/' + fileName;
+                const response = await fetch('/api/files' + filePath, { method: 'DELETE' });
+                
+                if (response.ok) {
+                    showNotification('✅ Deleted: ' + fileName, 'success');
+                    refreshFiles();
+                } else {
+                    showNotification('❌ Failed to delete: ' + fileName, 'error');
+                }
+            } catch (error) {
+                showNotification('❌ Error: ' + error.message, 'error');
+            }
+        }
+
+        function showCreateFolderModal() {
+            document.getElementById('createFolderModal').style.display = 'block';
+            document.getElementById('folderName').focus();
+        }
+
+        async function createFolder() {
+            const folderName = document.getElementById('folderName').value.trim();
+            if (!folderName) {
+                showNotification('Please enter a folder name', 'error');
+                return;
+            }
+            
+            try {
+                const folderPath = currentPath.endsWith('/') ? currentPath + folderName : currentPath + '/' + folderName;
+                const response = await fetch('/api/files' + folderPath, {
+                    method: 'POST',
+                    headers: { 'X-Create-Directory': 'true' }
+                });
+                
+                if (response.ok) {
+                    showNotification('✅ Created folder: ' + folderName, 'success');
+                    closeModal('createFolderModal');
+                    refreshFiles();
+                    document.getElementById('folderName').value = '';
+                } else {
+                    showNotification('❌ Failed to create folder: ' + folderName, 'error');
+                }
+            } catch (error) {
+                showNotification('❌ Error: ' + error.message, 'error');
+            }
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+
+        function showNotification(message, type) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification ' + type + ' show';
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 4000);
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'flex' : 'none';
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey || e.metaKey) {
+                switch(e.key) {
+                    case 'r':
+                        e.preventDefault();
+                        refreshFiles();
+                        break;
+                    case 'u':
+                        e.preventDefault();
+                        document.getElementById('fileInput').click();
+                        break;
+                }
+            }
+            if (e.key === 'Escape') {
+                closeModal('createFolderModal');
+            }
+        });
+
+        // Handle modal enter key
+        document.getElementById('folderName').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                createFolder();
+            }
+        });
+    </script>
+</body>
+</html>
