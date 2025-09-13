@@ -32,7 +32,7 @@ func main() {
 	discoveryPort := flag.Int("discovery-port", 9999, "Discovery port for all nodes")
 	dataDir := flag.String("data-dir", "", "Base data directory for simulation")
 	nodeID := flag.String("node-id", "", "Node ID (if not specified, will be loaded from or generated for the data directory)")
-	desktopUI := flag.Bool("desktop", false, "Open a native Drop Window for drag-and-drop uploads")
+    noDesktop := flag.Bool("no-desktop", false, "Do not open the desktop drop window")
 	mountPoint := flag.String("mount", "", "[DISABLED] FUSE mounting not supported")
 	maxChunkSizeMB := flag.Int("max-chunk-size", 100, "[DEPRECATED] Maximum chunk size in MB - now uses partition-based storage")
 	exportDir := flag.String("export-dir", "", "Mirror cluster files to this local directory (share via macOS File Sharing for SMB)")
@@ -49,7 +49,7 @@ func main() {
 	if *simNodes > 0 {
 		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir)
 	} else {
-		runSingleNode(*desktopUI, *mountPoint, *maxChunkSizeMB, *exportDir, *nodeID, *dataDir, *httpPort, *debug)
+        runSingleNode(*noDesktop, *mountPoint, *maxChunkSizeMB, *exportDir, *nodeID, *dataDir, *httpPort, *debug)
 	}
 }
 
@@ -161,7 +161,7 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(openDesktop bool, mountPoint string, maxChunkSizeMB int, exportDir string, nodeID string, dataDir string, httpPort int, debug bool) {
+func runSingleNode(noDesktop bool, mountPoint string, maxChunkSizeMB int, exportDir string, nodeID string, dataDir string, httpPort int, debug bool) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:           nodeID,
@@ -180,15 +180,21 @@ func runSingleNode(openDesktop bool, mountPoint string, maxChunkSizeMB int, expo
 
 	// Start the cluster
 	cluster.Start()
-	// Optionally open the desktop drop window
-	if openDesktop {
-		// On macOS, the WebView must run on the main OS thread.
-		if runtime.GOOS == "darwin" {
-			StartDesktopUI(cluster.HTTPDataPort) // blocks until window closes
-		} else {
-			go StartDesktopUI(cluster.HTTPDataPort)
-		}
-	}
+    // Attempt to open the desktop drop window by default. If it fails, continue silently.
+    if !noDesktop {
+        if runtime.GOOS == "darwin" {
+            // macOS WebView must run on main thread; protect from panic to avoid crashing.
+            func() {
+                defer func() { _ = recover() }()
+                StartDesktopUI(cluster.HTTPDataPort) // blocks until window closes
+            }()
+        } else {
+            go func() {
+                defer func() { _ = recover() }()
+                StartDesktopUI(cluster.HTTPDataPort)
+            }()
+        }
+    }
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)

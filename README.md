@@ -32,6 +32,8 @@ go run .
 
 Or download the binary and double click on the frog.
 
+By default the desktop file browser window will attempt to open. Use `--no-desktop` to run purely in the terminal. On Linux, the desktop window requires WebKit/GTK (see dependencies below).
+
 ClusterF will start and immediately join the cluster on your local network.  If there is no cluster, the first node will create the cluster.
 
 ### Multi-Node Cluster
@@ -48,7 +50,7 @@ sh build.sh
 ./cluster --node-id node3
 ```
 
-Pin the HTTP port with `--http-port` and print version info with `--version`.
+Pin the HTTP port with `--http-port`, print version info with `--version`, and disable the desktop window with `--no-desktop`.
 
 ## API Usage
 
@@ -111,7 +113,7 @@ clusterF can be configured from the command line or through the web app.
 - `--export-dir`: Mirror cluster files to a local directory (e.g., for SMB sharing)
 - `--discovery-port`: UDP discovery port (default `9999`); also respects `CLUSTER_BCAST_PORT`
 - `--http-port`: HTTP port to bind (default dynamic near `30000` with fallback)
-- `--desktop`: Open the native desktop drop window (requires CGO + WebKit on Linux)
+- `--no-desktop`: Do not open the native desktop drop window (default is to attempt to open it; requires CGO + WebKit on Linux)
 - `--sim-nodes`: Start N simulated nodes (ports start at `--base-port`)
 - `--base-port`: Base port for simulation HTTP servers
 - `--max-chunk-size`: Deprecated; partition-based storage in use
@@ -132,7 +134,7 @@ The HTTP server binds to the configured `--http-port` if available; otherwise it
 
 The desktop drag-and-drop window uses WebKit via CGO. Building the headless server does not require these deps. In CI and headless builds, `CGO_ENABLED=0` disables the desktop UI.
 
-- macOS (Homebrew): `brew install webkit2gtk` (only needed if you build with `--desktop`)
+- macOS (Homebrew): `brew install webkit2gtk` (only needed if you want the desktop window)
 - Ubuntu/Debian (APT): `sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev`
 - Fedora (DNF): `sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config gtk3-devel webkit2gtk3-devel`
 
