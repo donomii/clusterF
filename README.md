@@ -1,4 +1,4 @@
-# clusterF
+# clusterF🐸
 
 The F stands for frog.
 
@@ -6,16 +6,9 @@ The F stands for frog.
 
 A zero-config, peer-to-peer storage cluster that automatically discovers nodes, and replicates data.  Plug and play storage management.
 
-> Not production-ready
->
-> - No auth/ACL; open HTTP API and CORS
-> - Debug/pprof endpoints exist
-> - LAN UDP discovery will announce to your local network
-> - No encryption in transit or at rest
->
-> Recommended: run on a trusted LAN, behind a firewall, and do not expose ports to the internet.
+ clusterF has no security at all.  It is designed for home networks.  Run on a trusted LAN, behind a firewall, and do not expose its ports to the internet.
 
-## ✨ Features
+## Features
 
 - **Zero Configuration**: Just run the binary, nodes auto-discover each other
 - **Self-Healing**: Automatically repairs data when nodes disappear
@@ -29,7 +22,7 @@ A zero-config, peer-to-peer storage cluster that automatically discovers nodes, 
 
 Note: The UDP discovery mechanism will connect to any other computer on the network. If that network is your local cafe, then it will be announcing itself to strangers. You have been warned.
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Single Node
 
@@ -57,7 +50,7 @@ sh build.sh
 
 Pin the HTTP port with `--http-port` and print version info with `--version`.
 
-## 📡 API Usage
+## API Usage
 
 ### File System Operations
 
@@ -148,7 +141,7 @@ Headless build example:
 CGO_ENABLED=0 go build .
 ```
 
-## 🧪 How It Works
+## How It Works
 
 ### 1. Discovery
 - Nodes broadcast their presence via UDP to `255.255.255.255:9999`
@@ -174,7 +167,7 @@ CGO_ENABLED=0 go build .
 
 Delete semantics: deletions create tombstones which propagate; peers will not resurrect deleted files once tombstones are observed.
 
-## 🧬 Architecture
+## Architecture
 
 ```
 ┌──────────────┐     Frogpond.     ┌──────────────┐
@@ -209,22 +202,21 @@ go build -o cluster
 ./cluster --sim-nodes 10
 ```
 
-## 💡 Use Cases
+## Use Cases
 
 - **Home NAS Replacement**: Plug in USB drives across multiple machines
 - **IoT Storage**: Raspberry Pis with attached storage auto-forming clusters
 
-## 🛣️ Roadmap
+## Roadmap
 
 
 - [x] Web UI for cluster management  
 - [x] File system layer with partition-based storage
-- [ ] macOS Finder integration via WebDAV
-- [ ] Encryption at rest and in transit
+- [ ] Desktop integration via WebDAV
 - [ ] Docker/Kubernetes deployment
 - [ ] Cross-platform binaries
 
-## 📄 License
+## License
 
 AGPL License - see LICENSE file for details.
 
