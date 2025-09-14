@@ -53,8 +53,12 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 
 // handleFileGet handles GET requests for files/directories
 func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path string) {
+    c.debugf("[FILES] GET request for path: %s", path)
+    
     // Try to get as file first
     if content, metadata, err := c.FileSystem.GetFile(path); err == nil {
+        c.debugf("[FILES] Retrieved file %s: %d bytes, content type: %s", path, len(content), metadata.ContentType)
+        
         // It's a file - serve it (optionally as download)
         download := r.URL.Query().Get("download")
         filename := filepath.Base(path)
@@ -75,6 +79,8 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
         w.WriteHeader(http.StatusOK)
         w.Write(content)
         return
+    } else {
+        c.debugf("[FILES] Failed to get file %s: %v", path, err)
     }
 
     // Try to list as directory

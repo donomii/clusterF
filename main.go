@@ -95,7 +95,7 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 				// Store a demo file with node-specific content (using file system instead of chunks)
 				demoContent := fmt.Sprintf("demo-data-from-%s-at-%d", nodeID, time.Now().Unix())
 				if err := node.FileSystem.StoreFile(fmt.Sprintf("/demo-%03d.txt", index), []byte(demoContent), "text/plain"); err != nil {
-					log.Printf("Failed to store demo file on %s: %v", nodeID, err)
+					log.Print(logerrf("Failed to store demo file on %s: %v", nodeID, err))
 				}
 
 				nodes[index] = node
@@ -175,7 +175,7 @@ func runSingleNode(noDesktop bool, mountPoint string, maxChunkSizeMB int, export
 
 	// Store a demo file to seed the cluster
 	if err := cluster.FileSystem.StoreFile("/README.md", []byte("Hello, distributed world!"), "text/plain"); err != nil {
-		log.Fatalf("Failed to store demo file: %v", err)
+		log.Fatal(logerrf("Failed to store demo file: %v", err))
 	}
 
 	// Start the cluster

@@ -49,35 +49,29 @@ func hashToPartition(filename string) PartitionID {
 	return PartitionID(fmt.Sprintf("p%05d", partitionNum))
 }
 
-// storeFileInPartition stores a file in its appropriate partition using existing KV store
-func (pm *PartitionManager) storeFileInPartition(filename string, content []byte, contentType string) error {
-	partitionID := hashToPartition(filename)
+// storeFileInPartition stores a file with metadata and content together
+func (pm *PartitionManager) storeFileInPartition(path string, metadataJSON []byte, fileContent []byte) error {
+	partitionID := hashToPartition(path)
 
-	// Create file metadata
-	metadata := map[string]interface{}{
-		"filename":     filename,
-		"content_type": contentType,
-		"size":         len(content),
-		"modified_at":  time.Now().Unix(),
+	// Store both metadata and content in a single combined structure
+	// Convert fileContent to a string to avoid base64 encoding by JSON
+	combinedData := map[string]interface{}{
+		"metadata": json.RawMessage(metadataJSON),
+		"content":  string(fileContent), // Store as string to avoid base64 encoding
 	}
-	metadataJSON, _ := json.Marshal(metadata)
+	combinedJSON, _ := json.Marshal(combinedData)
 
 	// Store in existing filesKV using partition-prefixed keys
-	contentKey := fmt.Sprintf("partition:%s:file:%s:content", partitionID, filename)
-	metadataKey := fmt.Sprintf("partition:%s:file:%s:metadata", partitionID, filename)
+	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
-	if err := pm.cluster.filesKV.Put([]byte(contentKey), content); err != nil {
-		return fmt.Errorf("failed to store file content: %v", err)
-	}
-
-	if err := pm.cluster.filesKV.Put([]byte(metadataKey), metadataJSON); err != nil {
-		return fmt.Errorf("failed to store file metadata: %v", err)
+	if err := pm.cluster.filesKV.Put([]byte(fileKey), combinedJSON); err != nil {
+		return fmt.Errorf("failed to store file: %v", err)
 	}
 
 	// Update partition metadata in CRDT
 	pm.updatePartitionMetadata(partitionID)
 
-	pm.cluster.Logger.Printf("[PARTITION] Stored file %s in partition %s (%d bytes)", filename, partitionID, len(content))
+	pm.cluster.Logger.Printf("[PARTITION] Stored file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
 	return nil
 }
 
@@ -111,12 +105,12 @@ func (pm *PartitionManager) getFileFromPartition(filename string) ([]byte, error
 	partition := pm.getPartitionInfo(partitionID)
 
 	if partition == nil {
-		return nil, fmt.Errorf("partition %s not found for file %s", partitionID, filename)
+		return nil, logerrf("partition %s not found for file %s", partitionID, filename)
 	}
 
 	holders := partition.Holders
 	if len(holders) == 0 {
-		return nil, fmt.Errorf("no holders found for partition %s", partitionID)
+		return nil, logerrf("no holders found for partition %s", partitionID)
 	}
 
 	peers := pm.cluster.DiscoveryManager.GetPeers()
@@ -136,41 +130,175 @@ func (pm *PartitionManager) getFileFromPartition(filename string) ([]byte, error
 	return nil, fmt.Errorf("failed to retrieve file %s from any holder", filename)
 }
 
-// getFileFromPartition retrieves a file from its partition using existing KV store
-func (pm *PartitionManager) getFileAndMetaFromPartition(filename string) ([]byte, map[string]interface{}, error) {
-	metadataPath := filename + ".metadata"
-	fileContent, err := pm.getFileFromPartition(filename)
-	if err != nil {
-		return nil, nil, err
+// getFileAndMetaFromPartition retrieves both metadata and content together
+func (pm *PartitionManager) getFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error) {
+	partitionID := hashToPartition(path)
+	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
+
+	// Get combined data from local KV first
+	combinedData, err := pm.cluster.filesKV.Get([]byte(fileKey))
+	if err == nil {
+		pm.cluster.debugf("[PARTITION] Found file %s locally in partition %s", path, partitionID)
+		// Parse combined data
+		var combined map[string]interface{}
+		if err := json.Unmarshal(combinedData, &combined); err != nil {
+			return nil, nil, fmt.Errorf("corrupt file data: %v", err)
+		}
+
+		// Extract metadata
+		metadataRaw, ok := combined["metadata"]
+		if !ok {
+			return nil, nil, fmt.Errorf("no metadata in file")
+		}
+		var metadata map[string]interface{}
+		metadataBytes, _ := json.Marshal(metadataRaw)
+		json.Unmarshal(metadataBytes, &metadata)
+
+		// Extract content - now stored as string to avoid base64 encoding
+		contentInterface, ok := combined["content"]
+		if !ok {
+			return nil, nil, fmt.Errorf("no content in file")
+		}
+		var content []byte
+		switch v := contentInterface.(type) {
+		case string:
+			// Content stored as string (current format)
+			content = []byte(v)
+		case []interface{}:
+			// Legacy: Array of numbers (JSON representation of byte array)
+			content = make([]byte, len(v))
+			for i, val := range v {
+				if num, ok := val.(float64); ok {
+					content[i] = byte(num)
+				}
+			}
+		case []byte:
+			// Direct byte array (should not happen in JSON but handle it)
+			content = v
+		default:
+			// Fallback: marshal back to JSON bytes
+			contentBytes, _ := json.Marshal(v)
+			content = contentBytes
+		}
+
+		pm.cluster.debugf("[PARTITION] Retrieved file %s: %d bytes content, content type: %T", path, len(content), contentInterface)
+		return content, metadata, nil
 	}
 
-	metaDataBytes, err := pm.getFileFromPartition(metadataPath)
-	if err != nil {
-		return nil, nil, err
-	}
+	pm.cluster.debugf("[PARTITION] File %s not found locally (err: %v), trying peers", path, err)
 
-	metaData := make(map[string]interface{})
-	json.Unmarshal(metaDataBytes, &metaData)
-
-	return fileContent, metaData, nil
+	// If not found locally, try to get from peers
+	return pm.getFileFromPeers(path)
 }
 
-// deleteFileFromPartition removes a file from its partition using existing KV store
-func (pm *PartitionManager) deleteFileFromPartition(filename string) error {
-	partitionID := hashToPartition(filename)
+// getFileFromPeers attempts to retrieve a file from peer nodes
+func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]interface{}, error) {
+	partitionID := hashToPartition(path)
+	partition := pm.getPartitionInfo(partitionID)
 
-	// Delete from existing filesKV using partition-prefixed keys
-	contentKey := fmt.Sprintf("partition:%s:file:%s:content", partitionID, filename)
-	metadataKey := fmt.Sprintf("partition:%s:file:%s:metadata", partitionID, filename)
+	if partition == nil {
+		return nil, nil, fmt.Errorf("partition %s not found for file %s", partitionID, path)
+	}
 
-	pm.cluster.filesKV.Delete([]byte(contentKey))
-	pm.cluster.filesKV.Delete([]byte(metadataKey))
+	holders := partition.Holders
+	if len(holders) == 0 {
+		return nil, nil, fmt.Errorf("no holders found for partition %s", partitionID)
+	}
+
+	peers := pm.cluster.DiscoveryManager.GetPeers()
+	for _, peer := range peers {
+		for _, n := range holders {
+			if NodeID(peer.NodeID) == n {
+				// Try to get from this peer via partition sync
+				url := fmt.Sprintf("http://%s:%d/api/partition-sync/%s", peer.Address, peer.HTTPPort, partitionID)
+				resp, err := pm.cluster.httpClient.Get(url)
+				if err != nil {
+					continue
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != http.StatusOK {
+					continue
+				}
+
+				// Parse response to find our file
+				decoder := json.NewDecoder(resp.Body)
+				targetKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
+
+				for {
+					var entry struct {
+						Key   string `json:"key"`
+						Value []byte `json:"value"`
+					}
+
+					if err := decoder.Decode(&entry); err != nil {
+						break
+					}
+
+					if entry.Key == targetKey {
+						// Found our file, parse it
+						var combined map[string]interface{}
+						if err := json.Unmarshal(entry.Value, &combined); err != nil {
+							continue
+						}
+
+						// Extract metadata
+						metadataRaw, ok := combined["metadata"]
+						if !ok {
+							continue
+						}
+						var metadata map[string]interface{}
+						metadataBytes, _ := json.Marshal(metadataRaw)
+						json.Unmarshal(metadataBytes, &metadata)
+
+						// Extract content - now stored as string
+						contentInterface, ok := combined["content"]
+						if !ok {
+							continue
+						}
+						var content []byte
+						switch v := contentInterface.(type) {
+						case string:
+							// Content stored as string (current format)
+							content = []byte(v)
+						case []interface{}:
+							// Legacy: Array of numbers (JSON representation of byte array)
+							content = make([]byte, len(v))
+							for i, val := range v {
+								if num, ok := val.(float64); ok {
+									content[i] = byte(num)
+								}
+							}
+						case []byte:
+							content = v
+						default:
+							contentBytes, _ := json.Marshal(v)
+							content = contentBytes
+						}
+
+						return content, metadata, nil
+					}
+				}
+			}
+		}
+	}
+
+	return nil, nil, fmt.Errorf("file %s not found in any peer", path)
+}
+
+// deleteFileFromPartition removes a file from its partition
+func (pm *PartitionManager) deleteFileFromPartition(path string) error {
+	partitionID := hashToPartition(path)
+
+	// Delete from existing filesKV
+	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
+	pm.cluster.filesKV.Delete([]byte(fileKey))
 
 	// Create tombstone
-	tombstoneKey := fmt.Sprintf("partition:%s:file:%s:tombstone", partitionID, filename)
+	tombstoneKey := fmt.Sprintf("partition:%s:tombstone:%s", partitionID, path)
 	tombstoneData := map[string]interface{}{
 		"deleted_at": time.Now().Unix(),
-		"filename":   filename,
+		"path":       path,
 	}
 	tombstoneJSON, _ := json.Marshal(tombstoneData)
 	pm.cluster.filesKV.Put([]byte(tombstoneKey), tombstoneJSON)
@@ -178,7 +306,7 @@ func (pm *PartitionManager) deleteFileFromPartition(filename string) error {
 	// Update partition metadata in CRDT
 	pm.updatePartitionMetadata(partitionID)
 
-	pm.cluster.Logger.Printf("[PARTITION] Deleted file %s from partition %s", filename, partitionID)
+	pm.cluster.Logger.Printf("[PARTITION] Deleted file %s from partition %s", path, partitionID)
 	return nil
 }
 
@@ -195,12 +323,12 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 
 	for k, _ := range files {
 		key := string(k)
-		if strings.HasPrefix(key, prefix) && strings.HasSuffix(key, ":metadata") {
-			// Check if this file has a tombstone
+		if strings.HasPrefix(key, prefix) && strings.Contains(key, ":file:") {
+			// Extract filename from key
 			parts := strings.Split(key, ":")
 			if len(parts) >= 4 {
-				filename := parts[3]
-				tombstoneKey := fmt.Sprintf("partition:%s:file:%s:tombstone", partitionID, filename)
+				filename := strings.Join(parts[3:], ":")
+				tombstoneKey := fmt.Sprintf("partition:%s:tombstone:%s", partitionID, filename)
 				if _, err := pm.cluster.filesKV.Get([]byte(tombstoneKey)); err != nil {
 					// No tombstone, count this file
 					fileCount++
@@ -287,7 +415,12 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 	}
 
 	if peerAddr == "" {
-		return fmt.Errorf("peer %s not found", peerID)
+		// List available peers for debugging
+		availablePeers := make([]string, 0, len(peers))
+		for _, peer := range peers {
+			availablePeers = append(availablePeers, fmt.Sprintf("%s@%s:%d", peer.NodeID, peer.Address, peer.HTTPPort))
+		}
+		return fmt.Errorf("syncPartitionFromPeer: peer '%s' not found for partition '%s'. Available peers: [%s]. Discovery may be incomplete or peer left cluster", peerID, partitionID, strings.Join(availablePeers, ", "))
 	}
 
 	pm.cluster.Logger.Printf("[PARTITION] Starting sync of %s from %s", partitionID, peerID)
@@ -297,12 +430,12 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 	longClient := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := longClient.Get(url)
 	if err != nil {
-		return fmt.Errorf("failed to request partition sync: %v", err)
+		return fmt.Errorf("syncPartitionFromPeer: failed to request partition sync from peer '%s' at '%s' for partition '%s': %v", peerID, url, partitionID, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("peer returned %s", resp.Status)
+		return fmt.Errorf("syncPartitionFromPeer: peer '%s' at '%s' returned error %d '%s' for partition '%s'", peerID, url, resp.StatusCode, resp.Status, partitionID)
 	}
 
 	// Read and apply the partition data to existing filesKV
@@ -318,7 +451,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 		if err := decoder.Decode(&entry); err == io.EOF {
 			break
 		} else if err != nil {
-			return fmt.Errorf("failed to decode sync entry: %v", err)
+			return fmt.Errorf("syncPartitionFromPeer: failed to decode sync entry from peer '%s' for partition '%s': %v", peerID, partitionID, err)
 		}
 
 		// Check if we need this data (simple timestamp-based sync)
@@ -346,7 +479,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 
 		if shouldUpdate {
 			if err := pm.cluster.filesKV.Put([]byte(entry.Key), entry.Value); err != nil {
-				pm.cluster.Logger.Printf("[PARTITION] Failed to store sync entry %s: %v", entry.Key, err)
+				pm.cluster.Logger.Printf("[PARTITION] syncPartitionFromPeer: failed to store sync entry '%s' from peer '%s' for partition '%s': %v", entry.Key, peerID, partitionID, err)
 			} else {
 				syncCount++
 			}

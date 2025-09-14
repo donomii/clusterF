@@ -57,11 +57,6 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		return err
 	}
 
-	// Store file content in partition system
-	if err := fs.cluster.PartitionManager.storeFileInPartition(path, content, contentType); err != nil {
-		return fmt.Errorf("failed to store file in partition: %v", err)
-	}
-
 	// Preserve CreatedAt if file exists
 	var createdAt time.Time
 	if oldMeta, err := fs.getMetadata(path); err == nil {
@@ -82,16 +77,15 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		IsDirectory: false,
 	}
 
-	// Store metadata in partition system (using metadata filename)
-	metadataPath := path + ".metadata"
+	// Store file and metadata together in partition system
 	metadataJSON, _ := json.Marshal(metadata)
-	if err := fs.cluster.PartitionManager.storeFileInPartition(metadataPath, metadataJSON, "application/json"); err != nil {
-		return fmt.Errorf("failed to store metadata: %v", err)
+	if err := fs.cluster.PartitionManager.storeFileInPartition(path, metadataJSON, content); err != nil {
+		return logerrf("failed to store file: %v", err)
 	}
 
 	// Update parent directory
 	if err := fs.addToDirectory(filepath.Dir(path), filepath.Base(path)); err != nil {
-		return fmt.Errorf("failed to update directory: %v", err)
+		return logerrf("failed to update directory: %v", err)
 	}
 
 	// Mirror to OS export directory if configured
@@ -106,20 +100,49 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 
 // GetFile retrieves a file from the partition system
 func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *FileMetadata, error) {
-	// Get file metadata
-	metadata, err := fs.getMetadata(path)
+	// Get file content and metadata together
+	content, metadataMap, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if metadata.IsDirectory {
-		return nil, nil, fmt.Errorf("path is a directory")
+	// Convert metadata map to struct
+	metadata := &FileMetadata{}
+	if name, ok := metadataMap["name"].(string); ok {
+		metadata.Name = name
+	}
+	if path, ok := metadataMap["path"].(string); ok {
+		metadata.Path = path
+	}
+	if sizeFloat, ok := metadataMap["size"].(float64); ok {
+		metadata.Size = int64(sizeFloat)
+	}
+	if contentType, ok := metadataMap["content_type"].(string); ok {
+		metadata.ContentType = contentType
+	}
+	if createdStr, ok := metadataMap["created_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, createdStr); err == nil {
+			metadata.CreatedAt = t
+		}
+	}
+	if modifiedStr, ok := metadataMap["modified_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, modifiedStr); err == nil {
+			metadata.ModifiedAt = t
+		}
+	}
+	if isDir, ok := metadataMap["is_directory"].(bool); ok {
+		metadata.IsDirectory = isDir
+	}
+	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
+		for _, c := range childrenIface {
+			if cstr, ok := c.(string); ok {
+				metadata.Children = append(metadata.Children, cstr)
+			}
+		}
 	}
 
-	// Retrieve file content from partition system
-	content, _, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to retrieve file: %v", err)
+	if metadata.IsDirectory {
+		return nil, nil, fmt.Errorf("path is a directory")
 	}
 
 	return content, metadata, nil
@@ -193,21 +216,14 @@ func (fs *ClusterFileSystem) DeleteFile(path string) error {
 		}
 	}
 
-	// Delete file content from partition system
+	// Delete from partition system
 	if err := fs.cluster.PartitionManager.deleteFileFromPartition(path); err != nil {
 		return fmt.Errorf("failed to delete file: %v", err)
 	}
 
-	// Delete metadata from partition system
-	metadataPath := path + ".metadata"
-	if err := fs.cluster.PartitionManager.deleteFileFromPartition(metadataPath); err != nil {
-		// Log but don't fail - metadata deletion is not critical
-		fs.cluster.Logger.Printf("[FILESYSTEM] Failed to delete metadata for %s: %v", path, err)
-	}
-
 	// Remove from parent directory
 	if err := fs.removeFromDirectory(filepath.Dir(path), filepath.Base(path)); err != nil {
-		return fmt.Errorf("failed to update directory: %v", err)
+		return logerrf("failed to update directory: %v", err)
 	}
 
 	// Mirror delete to OS export directory if configured
@@ -258,16 +274,15 @@ func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime tim
 		ModifiedAt:  modTime,
 	}
 
-	// Store metadata in partition system
-	metadataPath := path + ".metadata"
+	// Store directory metadata in partition system
 	metadataJSON, _ := json.Marshal(metadata)
-	if err := fs.cluster.PartitionManager.storeFileInPartition(metadataPath, metadataJSON, "application/json"); err != nil {
-		return fmt.Errorf("failed to store directory metadata: %v", err)
+	if err := fs.cluster.PartitionManager.storeFileInPartition(path, metadataJSON, []byte{}); err != nil {
+		return logerrf("failed to store directory metadata: %v", err)
 	}
 
 	// Update parent directory
 	if err := fs.addToDirectory(filepath.Dir(path), filepath.Base(path)); err != nil {
-		return fmt.Errorf("failed to update parent directory: %v", err)
+		return logerrf("failed to update parent directory: %v", err)
 	}
 
 	// Mirror to OS export directory if configured
@@ -300,57 +315,34 @@ func (fs *ClusterFileSystem) validatePath(path string) error {
 }
 
 func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
-	partitionID := hashToPartition(path)
 	// Try to get metadata from partition system
-	_, metadatamap, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
+	_, metadataMap, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
 	if err != nil {
-		// File not found in network, check local store
-
-		metadataKey := fmt.Sprintf("partition:%s:file:%s:metadata", partitionID, path)
-		metadataBytes, err := fs.cluster.filesKV.Get([]byte(metadataKey))
-		if err != nil {
-			return nil, fmt.Errorf("file not found")
-		}
-		metadatamap = make(map[string]interface{})
-		if err := json.Unmarshal(metadataBytes, &metadatamap); err != nil {
-			return nil, fmt.Errorf("corrupt metadata: %v", err)
-		}
-
+		return nil, fmt.Errorf("file not found")
 	}
 
-	/*
-			type FileMetadata struct {
-			Name        string    `json:"name"`
-			Path        string    `json:"path"` // Full path like "/docs/readme.txt"
-			Size        int64     `json:"size"` // Total file size in bytes
-			ContentType string    `json:"content_type"`
-			CreatedAt   time.Time `json:"created_at"`
-			ModifiedAt  time.Time `json:"modified_at"`
-			IsDirectory bool      `json:"is_directory"`
-			Children    []string  `json:"children,omitempty"` // For directories
-		}
-	*/
+	// Convert metadata map to struct
 	var metadata FileMetadata
-	metadata.Name, _ = metadatamap["name"].(string)
-	metadata.Path, _ = metadatamap["path"].(string)
-	if sizeFloat, ok := metadatamap["size"].(float64); ok {
+	metadata.Name, _ = metadataMap["name"].(string)
+	metadata.Path, _ = metadataMap["path"].(string)
+	if sizeFloat, ok := metadataMap["size"].(float64); ok {
 		metadata.Size = int64(sizeFloat)
 	}
-	metadata.ContentType, _ = metadatamap["content_type"].(string)
-	if createdStr, ok := metadatamap["created_at"].(string); ok {
+	metadata.ContentType, _ = metadataMap["content_type"].(string)
+	if createdStr, ok := metadataMap["created_at"].(string); ok {
 		if t, err := time.Parse(time.RFC3339, createdStr); err == nil {
 			metadata.CreatedAt = t
 		}
 	}
-	if modifiedStr, ok := metadatamap["modified_at"].(string); ok {
+	if modifiedStr, ok := metadataMap["modified_at"].(string); ok {
 		if t, err := time.Parse(time.RFC3339, modifiedStr); err == nil {
 			metadata.ModifiedAt = t
 		}
 	}
-	if isDir, ok := metadatamap["is_directory"].(bool); ok {
+	if isDir, ok := metadataMap["is_directory"].(bool); ok {
 		metadata.IsDirectory = isDir
 	}
-	if childrenIface, ok := metadatamap["children"].([]interface{}); ok {
+	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
 		for _, c := range childrenIface {
 			if cstr, ok := c.(string); ok {
 				metadata.Children = append(metadata.Children, cstr)
@@ -398,9 +390,8 @@ func (fs *ClusterFileSystem) ensureRootDirectory() error {
 	}
 
 	// Store root metadata in partition system
-	metadataPath := "/.metadata"
 	metadataJSON, _ := json.Marshal(metadata)
-	return fs.cluster.PartitionManager.storeFileInPartition(metadataPath, metadataJSON, "application/json")
+	return fs.cluster.PartitionManager.storeFileInPartition("/", metadataJSON, []byte{})
 }
 
 func (fs *ClusterFileSystem) addToDirectory(dirPath, childName string) error {
@@ -428,9 +419,8 @@ func (fs *ClusterFileSystem) addToDirectory(dirPath, childName string) error {
 	metadata.ModifiedAt = time.Now()
 
 	// Update directory metadata in partition system
-	metadataPath := dirPath + ".metadata"
 	metadataJSON, _ := json.Marshal(*metadata)
-	return fs.cluster.PartitionManager.storeFileInPartition(metadataPath, metadataJSON, "application/json")
+	return fs.cluster.PartitionManager.storeFileInPartition(dirPath, metadataJSON, []byte{})
 }
 
 func (fs *ClusterFileSystem) removeFromDirectory(dirPath, childName string) error {
@@ -459,7 +449,6 @@ func (fs *ClusterFileSystem) removeFromDirectory(dirPath, childName string) erro
 	metadata.ModifiedAt = time.Now()
 
 	// Update directory metadata in partition system
-	metadataPath := dirPath + ".metadata"
 	metadataJSON, _ := json.Marshal(*metadata)
-	return fs.cluster.PartitionManager.storeFileInPartition(metadataPath, metadataJSON, "application/json")
+	return fs.cluster.PartitionManager.storeFileInPartition(dirPath, metadataJSON, []byte{})
 }
