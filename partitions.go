@@ -393,13 +393,36 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 		}
 	}
 
-	// Create partition info for CRDT
+	// Create partition info for CRDT - merge with existing holders
+	existingInfo := pm.getPartitionInfo(partitionID)
+	var holders []NodeID
+	if existingInfo != nil {
+		// Start with existing holders
+		holders = make([]NodeID, len(existingInfo.Holders))
+		copy(holders, existingInfo.Holders)
+		
+		// Add ourselves if not already in the list
+		found := false
+		for _, holder := range holders {
+			if holder == pm.cluster.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			holders = append(holders, pm.cluster.ID)
+		}
+	} else {
+		// No existing info, we're the first holder
+		holders = []NodeID{pm.cluster.ID}
+	}
+
 	partitionInfo := PartitionInfo{
 		ID:           partitionID,
 		Version:      PartitionVersion(time.Now().UnixNano()),
 		LastModified: time.Now().Unix(),
 		FileCount:    fileCount,
-		Holders:      []NodeID{pm.cluster.ID}, // We hold this partition
+		Holders:      holders, // Merged holder list
 	}
 
 	partitionJSON, _ := json.Marshal(partitionInfo)
