@@ -222,10 +222,33 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 		return nil, nil, fmt.Errorf("no holders found for partition %s", partitionID)
 	}
 
+	pm.cluster.debugf("[PARTITION] Trying to get file %s from partition %s holders: %v", path, partitionID, holders)
+
 	peers := pm.cluster.DiscoveryManager.GetPeers()
+	pm.cluster.debugf("[PARTITION] Available peers: %d", len(peers))
+	
+	// Filter holders to only include currently available peers
+	availablePeerIDs := make(map[string]bool)
 	for _, peer := range peers {
-		for _, n := range holders {
-			if NodeID(peer.NodeID) == n {
+		availablePeerIDs[peer.NodeID] = true
+	}
+	
+	availableHolders := make([]NodeID, 0)
+	for _, holder := range holders {
+		if availablePeerIDs[string(holder)] {
+			availableHolders = append(availableHolders, holder)
+		}
+	}
+	
+	if len(availableHolders) == 0 {
+		pm.cluster.debugf("[PARTITION] No available holders for partition %s (holders: %v, available peers: %v)", partitionID, holders, availablePeerIDs)
+		return nil, nil, fmt.Errorf("no available holders found for partition %s", partitionID)
+	}
+	
+	pm.cluster.debugf("[PARTITION] Using available holders: %v (filtered from %v)", availableHolders, holders)
+	for _, peer := range peers {
+		for _, holder := range availableHolders {
+			if NodeID(peer.NodeID) == holder {
 				// Try to get from this peer via partition sync
 				url := fmt.Sprintf("http://%s:%d/api/partition-sync/%s", peer.Address, peer.HTTPPort, partitionID)
 				resp, err := pm.cluster.httpClient.Get(url)
