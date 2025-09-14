@@ -38,6 +38,7 @@ func main() {
 	exportDir := flag.String("export-dir", "", "Mirror cluster files to this local directory (share via macOS File Sharing for SMB)")
 	httpPort := flag.Int("http-port", 0, "HTTP port to bind (0 = dynamic near 30000)")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
+	noStore := flag.Bool("no-store", false, "Client mode: participate in CRDT but don't store partitions locally")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
 
@@ -49,7 +50,7 @@ func main() {
 	if *simNodes > 0 {
 		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir)
 	} else {
-		runSingleNode(*noDesktop, *mountPoint, *maxChunkSizeMB, *exportDir, *nodeID, *dataDir, *httpPort, *debug)
+		runSingleNode(*noDesktop, *mountPoint, *maxChunkSizeMB, *exportDir, *nodeID, *dataDir, *httpPort, *debug, *noStore)
 	}
 }
 
@@ -161,21 +162,29 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, maxChunkSizeMB int, exportDir string, nodeID string, dataDir string, httpPort int, debug bool) {
+func runSingleNode(noDesktop bool, mountPoint string, maxChunkSizeMB int, exportDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:           nodeID,
 		DataDir:      dataDir,
 		ExportDir:    exportDir,
 		HTTPDataPort: httpPort,
+		NoStore:      noStore,
 	})
 
 	// Enable debug logging if requested
 	cluster.Debug = debug
 
-	// Store a demo file to seed the cluster
-	if err := cluster.FileSystem.StoreFile("/README.md", []byte("Hello, distributed world!"), "text/plain"); err != nil {
-		log.Fatal(logerrf("Failed to store demo file: %v", err))
+	// Log no-store mode if active
+	if noStore {
+		cluster.Logger.Printf("📱 Running in CLIENT MODE (--no-store): participating in CRDT but not storing files locally")
+	}
+
+	// Store a demo file to seed the cluster (skip in no-store mode)
+	if !noStore {
+		if err := cluster.FileSystem.StoreFile("/README.md", []byte("Hello, distributed world!"), "text/plain"); err != nil {
+			log.Fatal(logerrf("Failed to store demo file: %v", err))
+		}
 	}
 
 	// Start the cluster
@@ -228,6 +237,7 @@ Try these commands:
    # Create directory
    curl -X POST -H "X-Create-Directory: true" http://localhost:%d/api/files/newfolder
 
+🔧 Client Mode: Use --no-store to connect without local storage
 
 Press Ctrl+C to stop...
 `, cluster.ID, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.DataDir,

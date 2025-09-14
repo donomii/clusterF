@@ -52,6 +52,12 @@ func hashToPartition(filename string) PartitionID {
 
 // storeFileInPartition stores a file with metadata and content together
 func (pm *PartitionManager) storeFileInPartition(path string, metadataJSON []byte, fileContent []byte) error {
+	// If in no-store mode, don't store locally
+	if pm.cluster.NoStore {
+		pm.cluster.debugf("[PARTITION] No-store mode: not storing file %s locally", path)
+		return nil
+	}
+
 	partitionID := hashToPartition(path)
 
 	// Store both metadata and content in a single combined structure
@@ -132,6 +138,12 @@ func (pm *PartitionManager) getFileFromPartition(filename string) ([]byte, error
 
 // getFileAndMetaFromPartition retrieves both metadata and content together
 func (pm *PartitionManager) getFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error) {
+	// If in no-store mode, always try peers first
+	if pm.cluster.NoStore {
+		pm.cluster.debugf("[PARTITION] No-store mode: getting file %s from peers", path)
+		return pm.getFileFromPeers(path)
+	}
+
 	partitionID := hashToPartition(path)
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
@@ -297,6 +309,12 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 
 // deleteFileFromPartition removes a file from its partition
 func (pm *PartitionManager) deleteFileFromPartition(path string) error {
+	// If in no-store mode, don't delete locally (we don't have it anyway)
+	if pm.cluster.NoStore {
+		pm.cluster.debugf("[PARTITION] No-store mode: not deleting file %s locally", path)
+		return nil
+	}
+
 	partitionID := hashToPartition(path)
 
 	// Delete from existing filesKV
@@ -321,6 +339,12 @@ func (pm *PartitionManager) deleteFileFromPartition(path string) error {
 
 // updatePartitionMetadata updates partition info in the CRDT
 func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
+	// In no-store mode, don't claim to hold partitions
+	if pm.cluster.NoStore {
+		pm.cluster.debugf("[PARTITION] No-store mode: not updating partition metadata for %s", partitionID)
+		return
+	}
+
 	// Count files in partition by scanning the existing filesKV
 	fileCount := 0
 	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
@@ -534,6 +558,12 @@ func (pm *PartitionManager) handlePartitionSync(w http.ResponseWriter, r *http.R
 
 // periodicPartitionCheck continuously syncs partitions one at a time
 func (pm *PartitionManager) periodicPartitionCheck(ctx context.Context) {
+	// Skip partition syncing if in no-store mode (client mode)
+	if pm.cluster.NoStore {
+		pm.cluster.debugf("[PARTITION] No-store mode: skipping partition sync")
+		return
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -565,6 +595,11 @@ func (pm *PartitionManager) periodicPartitionCheck(ctx context.Context) {
 
 // findNextPartitionToSync finds a single partition that needs syncing
 func (pm *PartitionManager) findNextPartitionToSync() (PartitionID, NodeID) {
+	// If in no-store mode, don't sync any partitions
+	if pm.cluster.NoStore {
+		return "", ""
+	}
+
 	allPartitions := pm.getAllPartitions()
 	currentRF := pm.cluster.getCurrentRF()
 

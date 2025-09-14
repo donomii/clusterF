@@ -55,6 +55,7 @@ type Cluster struct {
 	BroadcastIP   net.IP // usually net.IPv4bcast
 	Logger        *log.Logger
 	Debug         bool
+	NoStore       bool   // client mode: don't store partitions locally
 
 	// Chunk configuration
 	MaxChunkSize int // configurable max chunk size
@@ -115,6 +116,7 @@ type ClusterOpts struct {
 	Logger        *log.Logger
 	MaxChunkSize  int    // max chunk size in bytes
 	ExportDir     string // if set, mirror files to this directory for OS sharing
+	NoStore       bool   // if true, don't store partitions locally (client mode)
 }
 
 func NewCluster(opts ClusterOpts) *Cluster {
@@ -175,6 +177,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		Logger:        opts.Logger,
 		MaxChunkSize:  opts.MaxChunkSize,
 		ExportDir:     opts.ExportDir,
+		NoStore:       opts.NoStore,
 
 		chunkStorage: map[ChunkID]bool{},
 		clusterIndex: map[ChunkID][]NodeID{},
