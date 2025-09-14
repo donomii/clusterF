@@ -18,9 +18,9 @@ import (
 
 // Populated via -ldflags during build
 var (
-    version = "dev"
-    commit  = "none"
-    date    = "unknown"
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func main() {
@@ -32,7 +32,7 @@ func main() {
 	discoveryPort := flag.Int("discovery-port", 9999, "Discovery port for all nodes")
 	dataDir := flag.String("data-dir", "", "Base data directory for simulation")
 	nodeID := flag.String("node-id", "", "Node ID (if not specified, will be loaded from or generated for the data directory)")
-    noDesktop := flag.Bool("no-desktop", false, "Do not open the desktop drop window")
+	noDesktop := flag.Bool("no-desktop", false, "Do not open the desktop drop window")
 	mountPoint := flag.String("mount", "", "[DISABLED] FUSE mounting not supported")
 	maxChunkSizeMB := flag.Int("max-chunk-size", 100, "[DEPRECATED] Maximum chunk size in MB - now uses partition-based storage")
 	exportDir := flag.String("export-dir", "", "Mirror cluster files to this local directory (share via macOS File Sharing for SMB)")
@@ -49,7 +49,7 @@ func main() {
 	if *simNodes > 0 {
 		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir)
 	} else {
-        runSingleNode(*noDesktop, *mountPoint, *maxChunkSizeMB, *exportDir, *nodeID, *dataDir, *httpPort, *debug)
+		runSingleNode(*noDesktop, *mountPoint, *maxChunkSizeMB, *exportDir, *nodeID, *dataDir, *httpPort, *debug)
 	}
 }
 
@@ -95,7 +95,7 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 				// Store a demo file with node-specific content (using file system instead of chunks)
 				demoContent := fmt.Sprintf("demo-data-from-%s-at-%d", nodeID, time.Now().Unix())
 				if err := node.FileSystem.StoreFile(fmt.Sprintf("/demo-%03d.txt", index), []byte(demoContent), "text/plain"); err != nil {
-				log.Printf("Failed to store demo file on %s: %v", nodeID, err)
+					log.Printf("Failed to store demo file on %s: %v", nodeID, err)
 				}
 
 				nodes[index] = node
@@ -174,27 +174,27 @@ func runSingleNode(noDesktop bool, mountPoint string, maxChunkSizeMB int, export
 	cluster.Debug = debug
 
 	// Store a demo file to seed the cluster
-	if err := cluster.FileSystem.StoreFile("/demo.txt", []byte("Hello, distributed world!"), "text/plain"); err != nil {
+	if err := cluster.FileSystem.StoreFile("/README.md", []byte("Hello, distributed world!"), "text/plain"); err != nil {
 		log.Fatalf("Failed to store demo file: %v", err)
 	}
 
 	// Start the cluster
 	cluster.Start()
-    // Attempt to open the desktop drop window by default. If it fails, continue silently.
-    if !noDesktop {
-        if runtime.GOOS == "darwin" {
-            // macOS WebView must run on main thread; protect from panic to avoid crashing.
-            func() {
-                defer func() { _ = recover() }()
-                StartDesktopUI(cluster.HTTPDataPort) // blocks until window closes
-            }()
-        } else {
-            go func() {
-                defer func() { _ = recover() }()
-                StartDesktopUI(cluster.HTTPDataPort)
-            }()
-        }
-    }
+	// Attempt to open the desktop drop window by default. If it fails, continue silently.
+	if !noDesktop {
+		if runtime.GOOS == "darwin" {
+			// macOS WebView must run on main thread; protect from panic to avoid crashing.
+			func() {
+				defer func() { _ = recover() }()
+				StartDesktopUI(cluster.HTTPDataPort) // blocks until window closes
+			}()
+		} else {
+			go func() {
+				defer func() { _ = recover() }()
+				StartDesktopUI(cluster.HTTPDataPort)
+			}()
+		}
+	}
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)

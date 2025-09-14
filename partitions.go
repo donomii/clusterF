@@ -8,7 +8,6 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +43,7 @@ func NewPartitionManager(c *Cluster) *PartitionManager {
 }
 
 // hashToPartition calculates which partition a filename belongs to
-func (pm *PartitionManager) hashToPartition(filename string) PartitionID {
+func hashToPartition(filename string) PartitionID {
 	h := crc32.ChecksumIEEE([]byte(filename))
 	partitionNum := h % DefaultPartitionCount
 	return PartitionID(fmt.Sprintf("p%05d", partitionNum))
@@ -52,7 +51,7 @@ func (pm *PartitionManager) hashToPartition(filename string) PartitionID {
 
 // storeFileInPartition stores a file in its appropriate partition using existing KV store
 func (pm *PartitionManager) storeFileInPartition(filename string, content []byte, contentType string) error {
-	partitionID := pm.hashToPartition(filename)
+	partitionID := hashToPartition(filename)
 
 	// Create file metadata
 	metadata := map[string]interface{}{
@@ -82,33 +81,83 @@ func (pm *PartitionManager) storeFileInPartition(filename string, content []byte
 	return nil
 }
 
+func (pm *PartitionManager) fetchFileFromPeer(peer *PeerInfo, filename string) ([]byte, error) {
+	// Try to get from this peer
+	url := fmt.Sprintf("http://%s:%d/api/file/%s", peer.Address, peer.HTTPPort, filename)
+	resp, err := pm.cluster.httpClient.Get(url)
+	if err != nil {
+		pm.cluster.debugf("[PARTITION] Failed to get file %s from %s: %v", filename, peer.NodeID, err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	if resp.StatusCode != http.StatusOK {
+		pm.cluster.debugf("[PARTITION] Peer %s returned %s for file %s", peer.NodeID, resp.Status, filename)
+		return nil, fmt.Errorf("peer returned %s", resp.Status)
+	}
+	// Read content
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		pm.cluster.debugf("[PARTITION] Failed to read file %s from %s: %v", filename, peer.NodeID, err)
+		return nil, err
+	}
+	return content, nil
+}
+
+func (pm *PartitionManager) getFileFromPartition(filename string) ([]byte, error) {
+	partitionID := hashToPartition(filename)
+
+	partition := pm.getPartitionInfo(partitionID)
+
+	if partition == nil {
+		return nil, fmt.Errorf("partition %s not found for file %s", partitionID, filename)
+	}
+
+	holders := partition.Holders
+	if len(holders) == 0 {
+		return nil, fmt.Errorf("no holders found for partition %s", partitionID)
+	}
+
+	peers := pm.cluster.DiscoveryManager.GetPeers()
+	for _, peer := range peers {
+		for _, n := range holders {
+			if NodeID(peer.NodeID) == n {
+				// Try to get from this peer
+				content, err := pm.fetchFileFromPeer(peer, filename)
+				if err == nil {
+					// Successfully fetched
+					return content, nil
+				}
+
+			}
+		}
+	}
+	return nil, fmt.Errorf("failed to retrieve file %s from any holder", filename)
+}
+
 // getFileFromPartition retrieves a file from its partition using existing KV store
-func (pm *PartitionManager) getFileFromPartition(filename string) ([]byte, map[string]interface{}, error) {
-	partitionID := pm.hashToPartition(filename)
-
-	// Get from existing filesKV using partition-prefixed keys
-	contentKey := fmt.Sprintf("partition:%s:file:%s:content", partitionID, filename)
-	metadataKey := fmt.Sprintf("partition:%s:file:%s:metadata", partitionID, filename)
-
-	content, err := pm.cluster.filesKV.Get([]byte(contentKey))
+func (pm *PartitionManager) getFileAndMetaFromPartition(filename string) ([]byte, map[string]interface{}, error) {
+	metadataPath := filename + ".metadata"
+	fileContent, err := pm.getFileFromPartition(filename)
 	if err != nil {
-		return nil, nil, fmt.Errorf("file not found: %v", err)
+		return nil, nil, err
 	}
 
-	metadataBytes, err := pm.cluster.filesKV.Get([]byte(metadataKey))
+	metaDataBytes, err := pm.getFileFromPartition(metadataPath)
 	if err != nil {
-		return content, nil, nil // Return content even if metadata is missing
+		return nil, nil, err
 	}
 
-	var metadata map[string]interface{}
-	json.Unmarshal(metadataBytes, &metadata)
+	metaData := make(map[string]interface{})
+	json.Unmarshal(metaDataBytes, &metaData)
 
-	return content, metadata, nil
+	return fileContent, metaData, nil
 }
 
 // deleteFileFromPartition removes a file from its partition using existing KV store
 func (pm *PartitionManager) deleteFileFromPartition(filename string) error {
-	partitionID := pm.hashToPartition(filename)
+	partitionID := hashToPartition(filename)
 
 	// Delete from existing filesKV using partition-prefixed keys
 	contentKey := fmt.Sprintf("partition:%s:file:%s:content", partitionID, filename)
@@ -131,34 +180,6 @@ func (pm *PartitionManager) deleteFileFromPartition(filename string) error {
 
 	pm.cluster.Logger.Printf("[PARTITION] Deleted file %s from partition %s", filename, partitionID)
 	return nil
-}
-
-// listFilesInPartition lists all files in a specific partition using existing KV store
-func (pm *PartitionManager) listFilesInPartition(partitionID PartitionID) ([]string, error) {
-	var files []string
-	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
-
-	pm.cluster.filesKV.MapFunc(func(k, v []byte) error {
-		key := string(k)
-		if strings.HasPrefix(key, prefix) && strings.HasSuffix(key, ":metadata") {
-			// Extract filename from "partition:pXXXXX:file:{filename}:metadata"
-			parts := strings.Split(key, ":")
-			if len(parts) >= 4 {
-				filename := parts[3]
-
-				// Check if file has tombstone
-				tombstoneKey := fmt.Sprintf("partition:%s:file:%s:tombstone", partitionID, filename)
-				if _, err := pm.cluster.filesKV.Get([]byte(tombstoneKey)); err != nil {
-					// No tombstone, file exists
-					files = append(files, filename)
-				}
-			}
-		}
-		return nil
-	})
-
-	sort.Strings(files)
-	return files, nil
 }
 
 // updatePartitionMetadata updates partition info in the CRDT
@@ -426,14 +447,21 @@ func (pm *PartitionManager) findNextPartitionToSync() (PartitionID, NodeID) {
 			continue // We already have it
 		}
 
-		// Find a holder to sync from
-		if len(info.Holders) > 0 {
-			for _, holderID := range info.Holders {
-				if holderID != pm.cluster.ID {
-					return partitionID, holderID
-				}
+		// Find a holder to sync from (must be a different node)
+		var otherHolders []NodeID
+		for _, holderID := range info.Holders {
+			if holderID != pm.cluster.ID {
+				otherHolders = append(otherHolders, holderID)
 			}
 		}
+
+		// Only try to sync if there are other holders
+		if len(otherHolders) > 0 {
+			return partitionID, otherHolders[0]
+		}
+
+		// If we reach here, partition is under-replicated but we're the only holder
+		// This is normal - we're the source, not the destination
 	}
 
 	return "", "" // Nothing to sync
