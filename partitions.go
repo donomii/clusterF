@@ -626,8 +626,11 @@ func (pm *PartitionManager) findNextPartitionToSync() (PartitionID, NodeID) {
 	allPartitions := pm.getAllPartitions()
 	currentRF := pm.cluster.getCurrentRF()
 
+	pm.cluster.debugf("[PARTITION] Checking %d partitions for sync (RF=%d)", len(allPartitions), currentRF)
+
 	// Find partitions that are under-replicated
 	for partitionID, info := range allPartitions {
+		pm.cluster.debugf("[PARTITION] Partition %s has %d holders (need %d): %v", partitionID, len(info.Holders), currentRF, info.Holders)
 		if len(info.Holders) >= currentRF {
 			continue // Already properly replicated
 		}
