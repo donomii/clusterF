@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
@@ -54,10 +55,9 @@ func (pm *PartitionManager) storeFileInPartition(path string, metadataJSON []byt
 	partitionID := hashToPartition(path)
 
 	// Store both metadata and content in a single combined structure
-	// Convert fileContent to a string to avoid base64 encoding by JSON
 	combinedData := map[string]interface{}{
 		"metadata": json.RawMessage(metadataJSON),
-		"content":  string(fileContent), // Store as string to avoid base64 encoding
+		"content":  fileContent, // Will be base64 encoded by JSON
 	}
 	combinedJSON, _ := json.Marshal(combinedData)
 
@@ -154,7 +154,7 @@ func (pm *PartitionManager) getFileAndMetaFromPartition(path string) ([]byte, ma
 		metadataBytes, _ := json.Marshal(metadataRaw)
 		json.Unmarshal(metadataBytes, &metadata)
 
-		// Extract content - now stored as string to avoid base64 encoding
+		// Extract content - properly decode base64 encoded content
 		contentInterface, ok := combined["content"]
 		if !ok {
 			return nil, nil, fmt.Errorf("no content in file")
@@ -162,8 +162,13 @@ func (pm *PartitionManager) getFileAndMetaFromPartition(path string) ([]byte, ma
 		var content []byte
 		switch v := contentInterface.(type) {
 		case string:
-			// Content stored as string (current format)
-			content = []byte(v)
+			// Content is base64 encoded by JSON marshaling of []byte - decode it
+			if decoded, err := base64.StdEncoding.DecodeString(v); err == nil {
+				content = decoded
+			} else {
+				// If base64 decode fails, treat as raw string
+				content = []byte(v)
+			}
 		case []interface{}:
 			// Legacy: Array of numbers (JSON representation of byte array)
 			content = make([]byte, len(v))
@@ -251,7 +256,7 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 						metadataBytes, _ := json.Marshal(metadataRaw)
 						json.Unmarshal(metadataBytes, &metadata)
 
-						// Extract content - now stored as string
+						// Extract content - properly decode base64
 						contentInterface, ok := combined["content"]
 						if !ok {
 							continue
@@ -259,10 +264,14 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 						var content []byte
 						switch v := contentInterface.(type) {
 						case string:
-							// Content stored as string (current format)
-							content = []byte(v)
+							// Content is base64 encoded - decode it
+							if decoded, err := base64.StdEncoding.DecodeString(v); err == nil {
+								content = decoded
+							} else {
+								content = []byte(v)
+							}
 						case []interface{}:
-							// Legacy: Array of numbers (JSON representation of byte array)
+							// Array of numbers (JSON representation of byte array)
 							content = make([]byte, len(v))
 							for i, val := range v {
 								if num, ok := val.(float64); ok {
