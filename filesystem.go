@@ -80,7 +80,19 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 	}
 
 	// Store file and metadata together in partition system
-	metadataJSON, _ := json.Marshal(metadata)
+	// Create enhanced metadata for CRDT
+	enhancedMetadata := map[string]interface{}{
+		"name":         metadata.Name,
+		"path":         metadata.Path,
+		"size":         metadata.Size,
+		"content_type": metadata.ContentType,
+		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
+		"modified_at":  modTime.Unix(),
+		"is_directory": metadata.IsDirectory,
+		"version":      float64(modTime.UnixNano()),
+		"deleted":      false,
+	}
+	metadataJSON, _ := json.Marshal(enhancedMetadata)
 	
 	// For no-store clients, forward uploads to storage nodes
 	if fs.cluster.NoStore {
@@ -162,6 +174,11 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *FileMetadata, error)
 	content, metadataMap, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// Check if file is marked as deleted
+	if deleted, ok := metadataMap["deleted"].(bool); ok && deleted {
+		return nil, nil, fmt.Errorf("file not found")
 	}
 
 	// Convert metadata map to struct
@@ -333,7 +350,19 @@ func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime tim
 	}
 
 	// Store directory metadata in partition system
-	metadataJSON, _ := json.Marshal(metadata)
+	// Create enhanced metadata for CRDT
+	enhancedMetadata := map[string]interface{}{
+		"name":         metadata.Name,
+		"path":         metadata.Path,
+		"size":         metadata.Size,
+		"is_directory": metadata.IsDirectory,
+		"children":     metadata.Children,
+		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
+		"modified_at":  modTime.Unix(),
+		"version":      float64(modTime.UnixNano()),
+		"deleted":      false,
+	}
+	metadataJSON, _ := json.Marshal(enhancedMetadata)
 	if err := fs.cluster.PartitionManager.storeFileInPartition(path, metadataJSON, []byte{}); err != nil {
 		return logerrf("failed to store directory metadata: %v", err)
 	}
@@ -376,6 +405,11 @@ func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
 	// Try to get metadata from partition system
 	_, metadataMap, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
 	if err != nil {
+		return nil, fmt.Errorf("file not found")
+	}
+
+	// Check if file is marked as deleted
+	if deleted, ok := metadataMap["deleted"].(bool); ok && deleted {
 		return nil, fmt.Errorf("file not found")
 	}
 
@@ -448,7 +482,19 @@ func (fs *ClusterFileSystem) ensureRootDirectory() error {
 	}
 
 	// Store root metadata in partition system
-	metadataJSON, _ := json.Marshal(metadata)
+	// Create enhanced metadata for CRDT
+	enhancedMetadata := map[string]interface{}{
+		"name":         metadata.Name,
+		"path":         metadata.Path,
+		"size":         metadata.Size,
+		"is_directory": metadata.IsDirectory,
+		"children":     metadata.Children,
+		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
+		"modified_at":  metadata.ModifiedAt.Unix(),
+		"version":      float64(metadata.ModifiedAt.UnixNano()),
+		"deleted":      false,
+	}
+	metadataJSON, _ := json.Marshal(enhancedMetadata)
 	return fs.cluster.PartitionManager.storeFileInPartition("/", metadataJSON, []byte{})
 }
 
@@ -476,8 +522,19 @@ func (fs *ClusterFileSystem) addToDirectory(dirPath, childName string) error {
 	metadata.Children = append(metadata.Children, childName)
 	metadata.ModifiedAt = time.Now()
 
-	// Update directory metadata in partition system
-	metadataJSON, _ := json.Marshal(*metadata)
+	// Update directory metadata in partition system with enhanced format
+	enhancedMetadata := map[string]interface{}{
+		"name":         metadata.Name,
+		"path":         metadata.Path,
+		"size":         metadata.Size,
+		"is_directory": metadata.IsDirectory,
+		"children":     metadata.Children,
+		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
+		"modified_at":  metadata.ModifiedAt.Unix(),
+		"version":      float64(metadata.ModifiedAt.UnixNano()),
+		"deleted":      false,
+	}
+	metadataJSON, _ := json.Marshal(enhancedMetadata)
 	return fs.cluster.PartitionManager.storeFileInPartition(dirPath, metadataJSON, []byte{})
 }
 
@@ -506,7 +563,18 @@ func (fs *ClusterFileSystem) removeFromDirectory(dirPath, childName string) erro
 	metadata.Children = newChildren
 	metadata.ModifiedAt = time.Now()
 
-	// Update directory metadata in partition system
-	metadataJSON, _ := json.Marshal(*metadata)
+	// Update directory metadata in partition system with enhanced format
+	enhancedMetadata := map[string]interface{}{
+		"name":         metadata.Name,
+		"path":         metadata.Path,
+		"size":         metadata.Size,
+		"is_directory": metadata.IsDirectory,
+		"children":     metadata.Children,
+		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
+		"modified_at":  metadata.ModifiedAt.Unix(),
+		"version":      float64(metadata.ModifiedAt.UnixNano()),
+		"deleted":      false,
+	}
+	metadataJSON, _ := json.Marshal(enhancedMetadata)
 	return fs.cluster.PartitionManager.storeFileInPartition(dirPath, metadataJSON, []byte{})
 }

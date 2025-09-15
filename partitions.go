@@ -339,24 +339,60 @@ func (pm *PartitionManager) deleteFileFromPartition(path string) error {
 	}
 
 	partitionID := hashToPartition(path)
-
-	// Delete from existing filesKV
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
-	pm.cluster.filesKV.Delete([]byte(fileKey))
 
-	// Create tombstone
-	tombstoneKey := fmt.Sprintf("partition:%s:tombstone:%s", partitionID, path)
-	tombstoneData := map[string]interface{}{
-		"deleted_at": time.Now().Unix(),
-		"path":       path,
+	// Get existing file data
+	existingData, err := pm.cluster.filesKV.Get([]byte(fileKey))
+	if err != nil {
+		// File doesn't exist locally, but still create tombstone for CRDT
+		pm.cluster.debugf("[PARTITION] File %s not found locally, creating tombstone anyway", path)
 	}
-	tombstoneJSON, _ := json.Marshal(tombstoneData)
-	pm.cluster.filesKV.Put([]byte(tombstoneKey), tombstoneJSON)
+
+	// Create tombstone by marking metadata as deleted
+	var combined map[string]interface{}
+	if err == nil {
+		// Parse existing data
+		json.Unmarshal(existingData, &combined)
+	} else {
+		// Create minimal structure for tombstone
+		combined = map[string]interface{}{
+			"metadata": map[string]interface{}{},
+			"content":  []byte{},
+		}
+	}
+
+	// Update metadata to mark as deleted
+	var metadata map[string]interface{}
+	if meta, ok := combined["metadata"]; ok {
+		if metaBytes, err := json.Marshal(meta); err == nil {
+			json.Unmarshal(metaBytes, &metadata)
+		}
+	} else {
+		metadata = make(map[string]interface{})
+	}
+
+	// Mark as deleted in metadata
+	metadata["deleted"] = true
+	metadata["deleted_at"] = time.Now().Unix()
+	metadata["modified_at"] = time.Now().Unix()
+	if version, ok := metadata["version"].(float64); ok {
+		metadata["version"] = version + 1
+	} else {
+		metadata["version"] = float64(1)
+	}
+
+	// Update combined data
+	combined["metadata"] = metadata
+	combined["content"] = []byte{} // Clear content for tombstone
+
+	// Store tombstone
+	tombstoneJSON, _ := json.Marshal(combined)
+	pm.cluster.filesKV.Put([]byte(fileKey), tombstoneJSON)
 
 	// Update partition metadata in CRDT
 	pm.updatePartitionMetadata(partitionID)
 
-	pm.cluster.Logger.Printf("[PARTITION] Deleted file %s from partition %s", path, partitionID)
+	pm.cluster.Logger.Printf("[PARTITION] Marked file %s as deleted in partition %s", path, partitionID)
 	return nil
 }
 
@@ -371,29 +407,33 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	// Count files in partition by scanning the existing filesKV
 	fileCount := 0
 	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
-	files, err := pm.cluster.filesKV.MapFunc(func(k, v []byte) error { return nil })
-	if err != nil {
-		pm.cluster.debugf("[PARTITION] Failed to count files in %s: %v", partitionID, err)
-		return
-	}
-
-	pm.cluster.debugf("[PARTITION] Scanning for files in %s with prefix %s, found %d total keys", partitionID, prefix, len(files))
-
-	for k, _ := range files {
+	
+	// Use MapFunc correctly - it calls the function for each key-value pair
+	pm.cluster.filesKV.MapFunc(func(k, v []byte) error {
 		key := string(k)
 		if strings.HasPrefix(key, prefix) && strings.Contains(key, ":file:") {
-			// Extract filename from key
-			parts := strings.Split(key, ":")
-			if len(parts) >= 4 {
-				filename := strings.Join(parts[3:], ":")
-				tombstoneKey := fmt.Sprintf("partition:%s:tombstone:%s", partitionID, filename)
-				if _, err := pm.cluster.filesKV.Get([]byte(tombstoneKey)); err != nil {
-					// No tombstone, count this file
+			// Parse the file data to check if it's deleted
+			var combined map[string]interface{}
+			if err := json.Unmarshal(v, &combined); err == nil {
+				if meta, ok := combined["metadata"]; ok {
+					if metaBytes, err := json.Marshal(meta); err == nil {
+						var metadata map[string]interface{}
+						if json.Unmarshal(metaBytes, &metadata) == nil {
+							// Check if file is marked as deleted
+							if deleted, ok := metadata["deleted"].(bool); !ok || !deleted {
+								// File is not deleted, count it
+								fileCount++
+							}
+						}
+					}
+				} else {
+					// No metadata or old format - count as existing file
 					fileCount++
 				}
 			}
 		}
-	}
+		return nil
+	})
 
 	// If we have no files for this partition, remove ourselves as a holder
 	if fileCount == 0 {
@@ -618,7 +658,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 			return fmt.Errorf("syncPartitionFromPeer: failed to decode sync entry from peer '%s' for partition '%s': %v", peerID, partitionID, err)
 		}
 
-		// Check if we need this data (simple timestamp-based sync)
+		// Check if we need this data using CRDT merge rules for files only
 		localValue, err := pm.cluster.filesKV.Get([]byte(entry.Key))
 		shouldUpdate := false
 
@@ -626,18 +666,49 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 			// We don't have this key, add it
 			shouldUpdate = true
 		} else {
-			// Compare timestamps if this is metadata
-			if strings.Contains(entry.Key, ":metadata") {
-				var remoteMetadata, localMetadata map[string]interface{}
-				json.Unmarshal(entry.Value, &remoteMetadata)
-				json.Unmarshal(localValue, &localMetadata)
-
-				remoteTime, _ := remoteMetadata["modified_at"].(float64)
-				localTime, _ := localMetadata["modified_at"].(float64)
-
-				if remoteTime > localTime {
-					shouldUpdate = true
+			// Use CRDT merge rules - only for files, ignore directories
+			if strings.Contains(entry.Key, ":file:") {
+				// Parse both local and remote file data
+				var remoteData, localData map[string]interface{}
+				if json.Unmarshal(entry.Value, &remoteData) == nil && json.Unmarshal(localValue, &localData) == nil {
+					// Extract metadata for comparison
+					var remoteMetadata, localMetadata map[string]interface{}
+					if rmeta, ok := remoteData["metadata"]; ok {
+						if rmetaBytes, err := json.Marshal(rmeta); err == nil {
+							json.Unmarshal(rmetaBytes, &remoteMetadata)
+						}
+					}
+					if lmeta, ok := localData["metadata"]; ok {
+						if lmetaBytes, err := json.Marshal(lmeta); err == nil {
+							json.Unmarshal(lmetaBytes, &localMetadata)
+						}
+					}
+					
+					// CRDT rule: use latest timestamp, break ties with version
+					// Also handle deleted_at timestamps for tombstones
+					remoteTime, _ := remoteMetadata["modified_at"].(float64)
+					localTime, _ := localMetadata["modified_at"].(float64)
+					remoteDeletedAt, _ := remoteMetadata["deleted_at"].(float64)
+					localDeletedAt, _ := localMetadata["deleted_at"].(float64)
+					
+					// Use the latest of modified_at or deleted_at
+					if remoteDeletedAt > remoteTime {
+						remoteTime = remoteDeletedAt
+					}
+					if localDeletedAt > localTime {
+						localTime = localDeletedAt
+					}
+					
+					remoteVersion, _ := remoteMetadata["version"].(float64)
+					localVersion, _ := localMetadata["version"].(float64)
+					
+					if remoteTime > localTime || (remoteTime == localTime && remoteVersion > localVersion) {
+						shouldUpdate = true
+					}
 				}
+			} else {
+				// For non-file entries, just accept newer data
+				shouldUpdate = true
 			}
 		}
 
