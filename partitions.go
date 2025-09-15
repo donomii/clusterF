@@ -395,95 +395,173 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 		}
 	}
 
-	// Create partition info for CRDT - merge with existing holders
-	existingInfo := pm.getPartitionInfo(partitionID)
-	var holders []NodeID
-	if existingInfo != nil {
-		pm.cluster.debugf("[PARTITION] Found existing metadata for %s: holders=%v", partitionID, existingInfo.Holders)
-		// Start with existing holders
-		holders = make([]NodeID, len(existingInfo.Holders))
-		copy(holders, existingInfo.Holders)
-		
-		// Add ourselves if not already in the list
-		found := false
-		for _, holder := range holders {
-			if holder == pm.cluster.ID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			pm.cluster.debugf("[PARTITION] Adding %s to holders for %s", pm.cluster.ID, partitionID)
-			holders = append(holders, pm.cluster.ID)
-		} else {
-			pm.cluster.debugf("[PARTITION] %s already in holders for %s", pm.cluster.ID, partitionID)
-		}
-	} else {
-		pm.cluster.debugf("[PARTITION] No existing metadata for %s, creating new with holder %s", partitionID, pm.cluster.ID)
-		// No existing info, we're the first holder
-		holders = []NodeID{pm.cluster.ID}
+	// If we have no files for this partition, remove ourselves as a holder
+	if fileCount == 0 {
+		pm.removePartitionHolder(partitionID)
+		return
 	}
 
-	partitionInfo := PartitionInfo{
-		ID:           partitionID,
-		Version:      PartitionVersion(time.Now().UnixNano()),
-		LastModified: time.Now().Unix(),
-		FileCount:    fileCount,
-		Holders:      holders, // Merged holder list
-	}
-
-	partitionJSON, _ := json.Marshal(partitionInfo)
+	// Update partition metadata in CRDT using individual keys per holder
+	// This prevents overwriting other nodes' holder entries
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-
-	updates := pm.cluster.frogpond.SetDataPoint(partitionKey, partitionJSON)
+	
+	// Add ourselves as a holder
+	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.cluster.ID)
+	holderData := map[string]interface{}{
+		"joined_at": time.Now().Unix(),
+		"file_count": fileCount,
+	}
+	holderJSON, _ := json.Marshal(holderData)
+	
+	// Update file count metadata
+	metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
+	fileCountJSON, _ := json.Marshal(fileCount)
+	
+	// Send both updates to CRDT
+	updates1 := pm.cluster.frogpond.SetDataPoint(holderKey, holderJSON)
+	updates2 := pm.cluster.frogpond.SetDataPoint(metadataKey, fileCountJSON)
+	
 	if pm.cluster.crdtKV != nil {
-		pm.cluster.crdtKV.Put([]byte(partitionKey), partitionJSON)
+		pm.cluster.crdtKV.Put([]byte(holderKey), holderJSON)
+		pm.cluster.crdtKV.Put([]byte(metadataKey), fileCountJSON)
+	}
+	
+	// Send updates to peers
+	pm.cluster.sendUpdatesToPeers(updates1)
+	pm.cluster.sendUpdatesToPeers(updates2)
+	
+	pm.cluster.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.cluster.ID, partitionID, fileCount)
+}
+
+// removePartitionHolder removes this node as a holder for a partition
+func (pm *PartitionManager) removePartitionHolder(partitionID PartitionID) {
+	if pm.cluster.NoStore {
+		return // No-store nodes don't claim to hold partitions
+	}
+	
+	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
+	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.cluster.ID)
+	
+	// Remove ourselves as a holder by setting a tombstone
+	updates := pm.cluster.frogpond.SetDataPoint(holderKey, nil) // nil = delete
+	if pm.cluster.crdtKV != nil {
+		pm.cluster.crdtKV.Delete([]byte(holderKey))
 	}
 	pm.cluster.sendUpdatesToPeers(updates)
-
-	pm.cluster.debugf("[PARTITION] Updated metadata for %s: %d files, holders: %v", partitionID, fileCount, holders)
+	
+	pm.cluster.debugf("[PARTITION] Removed %s as holder for %s", pm.cluster.ID, partitionID)
 }
 
-// getPartitionInfo retrieves partition info from CRDT
+// getPartitionInfo retrieves partition info from CRDT using individual holder keys
 func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *PartitionInfo {
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-	data := pm.cluster.frogpond.GetDataPoint(partitionKey)
-
-	if data.Deleted || len(data.Value) == 0 {
-		return nil
-	}
-
-	var partitionInfo PartitionInfo
-	// Make a defensive copy before unmarshalling in case the underlying buffer is reused
-	safe := append([]byte(nil), data.Value...)
-	if err := json.Unmarshal(safe, &partitionInfo); err != nil {
-		return nil
-	}
-
-	return &partitionInfo
-}
-
-// getAllPartitions returns all known partitions from CRDT
-func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
-	dataPoints := pm.cluster.frogpond.GetAllMatchingPrefix("partitions/")
-	partitions := make(map[PartitionID]*PartitionInfo)
-
+	
+	// Get all holder entries for this partition
+	holderPrefix := fmt.Sprintf("%s/holders/", partitionKey)
+	dataPoints := pm.cluster.frogpond.GetAllMatchingPrefix(holderPrefix)
+	
+	var holders []NodeID
+	var totalFiles int
+	maxTimestamp := int64(0)
+	
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
 		}
+		
+		// Extract node ID from key
+		nodeID := strings.TrimPrefix(string(dp.Key), holderPrefix)
+		holders = append(holders, NodeID(nodeID))
+		
+		// Parse holder data
+		var holderData map[string]interface{}
+		if err := json.Unmarshal(dp.Value, &holderData); err == nil {
+			if joinedAt, ok := holderData["joined_at"].(float64); ok {
+				if int64(joinedAt) > maxTimestamp {
+					maxTimestamp = int64(joinedAt)
+				}
+			}
+			if fileCount, ok := holderData["file_count"].(float64); ok {
+				totalFiles = int(fileCount) // Use the latest file count
+			}
+		}
+	}
+	
+	if len(holders) == 0 {
+		return nil
+	}
+	
+	return &PartitionInfo{
+		ID:           partitionID,
+		Version:      PartitionVersion(maxTimestamp),
+		LastModified: maxTimestamp,
+		FileCount:    totalFiles,
+		Holders:      holders,
+	}
+}
 
-		var partitionInfo PartitionInfo
-		// Defensive copy to avoid unmarshalling over a buffer that may be mutated concurrently
-		safe := append([]byte{}, dp.Value...)
-		if err := json.Unmarshal(safe, &partitionInfo); err != nil {
+// getAllPartitions returns all known partitions from CRDT using individual holder keys
+func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
+	// Get all partition holder entries
+	dataPoints := pm.cluster.frogpond.GetAllMatchingPrefix("partitions/")
+	partitionMap := make(map[string]map[string]interface{}) // partitionID -> nodeID -> data
+	
+	for _, dp := range dataPoints {
+		if dp.Deleted || len(dp.Value) == 0 {
 			continue
 		}
-
-		partitions[partitionInfo.ID] = &partitionInfo
+		
+		// Parse key: partitions/p12345/holders/node-name
+		parts := strings.Split(string(dp.Key), "/")
+		if len(parts) < 4 || parts[0] != "partitions" || parts[2] != "holders" {
+			continue
+		}
+		
+		partitionID := parts[1]
+		nodeID := parts[3]
+		
+		if partitionMap[partitionID] == nil {
+			partitionMap[partitionID] = make(map[string]interface{})
+		}
+		
+		var holderData map[string]interface{}
+		if err := json.Unmarshal(dp.Value, &holderData); err == nil {
+			partitionMap[partitionID][nodeID] = holderData
+		}
 	}
-
-	return partitions
+	
+	// Convert to PartitionInfo objects
+	result := make(map[PartitionID]*PartitionInfo)
+	for partitionID, nodeData := range partitionMap {
+		var holders []NodeID
+		var totalFiles int
+		maxTimestamp := int64(0)
+		
+		for nodeID, data := range nodeData {
+			holders = append(holders, NodeID(nodeID))
+			
+			if holderData, ok := data.(map[string]interface{}); ok {
+				if joinedAt, ok := holderData["joined_at"].(float64); ok {
+					if int64(joinedAt) > maxTimestamp {
+						maxTimestamp = int64(joinedAt)
+					}
+				}
+				if fileCount, ok := holderData["file_count"].(float64); ok {
+					totalFiles = int(fileCount)
+				}
+			}
+		}
+		
+		result[PartitionID(partitionID)] = &PartitionInfo{
+			ID:           PartitionID(partitionID),
+			Version:      PartitionVersion(maxTimestamp),
+			LastModified: maxTimestamp,
+			FileCount:    totalFiles,
+			Holders:      holders,
+		}
+	}
+	
+	return result
 }
 
 // syncPartitionFromPeer synchronizes a partition from a peer node using existing KV stores
