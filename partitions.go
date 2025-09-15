@@ -618,11 +618,20 @@ func (pm *PartitionManager) periodicPartitionCheck(ctx context.Context) {
 			return
 		default:
 			// Find next partition that needs syncing
-			if partitionID, holderID := pm.findNextPartitionToSync(); partitionID != "" {
-				pm.cluster.Logger.Printf("[PARTITION] Syncing %s from %s", partitionID, holderID)
-				if err := pm.syncPartitionFromPeer(partitionID, holderID); err != nil {
-					pm.cluster.Logger.Printf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
-					// Brief pause on error to avoid tight error loops
+			if partitionID, holders := pm.findNextPartitionToSyncWithHolders(); partitionID != "" {
+				// Try all available holders for this partition
+				syncSuccess := false
+				for _, holderID := range holders {
+					pm.cluster.Logger.Printf("[PARTITION] Syncing %s from %s", partitionID, holderID)
+					if err := pm.syncPartitionFromPeer(partitionID, holderID); err != nil {
+						pm.cluster.Logger.Printf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
+					} else {
+						syncSuccess = true
+						break // Successfully synced, move to next partition
+					}
+				}
+				if !syncSuccess {
+					// Brief pause after failing all holders to avoid tight error loops
 					select {
 					case <-ctx.Done():
 						return
@@ -641,17 +650,24 @@ func (pm *PartitionManager) periodicPartitionCheck(ctx context.Context) {
 	}
 }
 
-// findNextPartitionToSync finds a single partition that needs syncing
-func (pm *PartitionManager) findNextPartitionToSync() (PartitionID, NodeID) {
+// findNextPartitionToSyncWithHolders finds a single partition that needs syncing and returns all available holders
+func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, []NodeID) {
 	// If in no-store mode, don't sync any partitions
 	if pm.cluster.NoStore {
-		return "", ""
+		return "", nil
 	}
 
 	allPartitions := pm.getAllPartitions()
 	currentRF := pm.cluster.getCurrentRF()
 
 	pm.cluster.debugf("[PARTITION] Checking %d partitions for sync (RF=%d)", len(allPartitions), currentRF)
+
+	// Get available peers once
+	peers := pm.cluster.DiscoveryManager.GetPeers()
+	availablePeerIDs := make(map[string]bool)
+	for _, peer := range peers {
+		availablePeerIDs[peer.NodeID] = true
+	}
 
 	// Find partitions that are under-replicated
 	for partitionID, info := range allPartitions {
@@ -675,24 +691,32 @@ func (pm *PartitionManager) findNextPartitionToSync() (PartitionID, NodeID) {
 			continue // We already have it
 		}
 
-		// Find a holder to sync from (must be a different node)
-		var otherHolders []NodeID
+		// Find all available holders to sync from (must be different nodes and currently available)
+		var availableHolders []NodeID
 		for _, holderID := range info.Holders {
-			if holderID != pm.cluster.ID {
-				otherHolders = append(otherHolders, holderID)
+			if holderID != pm.cluster.ID && availablePeerIDs[string(holderID)] {
+				availableHolders = append(availableHolders, holderID)
 			}
 		}
-
-		// Only try to sync if there are other holders
-		if len(otherHolders) > 0 {
-			return partitionID, otherHolders[0]
+		
+		if len(availableHolders) == 0 {
+			pm.cluster.debugf("[PARTITION] No available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs)
+			continue // No available peers to sync from
 		}
-
-		// If we reach here, partition is under-replicated but we're the only holder
-		// This is normal - we're the source, not the destination
+		
+		return partitionID, availableHolders
 	}
 
-	return "", "" // Nothing to sync
+	return "", nil // Nothing to sync
+}
+
+// findNextPartitionToSync finds a single partition that needs syncing (legacy function)
+func (pm *PartitionManager) findNextPartitionToSync() (PartitionID, NodeID) {
+	partitionID, holders := pm.findNextPartitionToSyncWithHolders()
+	if partitionID != "" && len(holders) > 0 {
+		return partitionID, holders[0]
+	}
+	return "", ""
 }
 
 // getPartitionStats returns statistics about partitions
