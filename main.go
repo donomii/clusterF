@@ -180,13 +180,6 @@ func runSingleNode(noDesktop bool, mountPoint string, maxChunkSizeMB int, export
 		cluster.Logger.Printf("📱 Running in CLIENT MODE (--no-store): participating in CRDT but not storing files locally")
 	}
 
-	// Store a demo file to seed the cluster (skip in no-store mode)
-	if !noStore {
-		if err := cluster.FileSystem.StoreFile("/README.md", []byte("Hello, distributed world!"), "text/plain"); err != nil {
-			log.Fatal(logerrf("Failed to store demo file: %v", err))
-		}
-	}
-
 	// Start the cluster
 	cluster.Start()
 	// Attempt to open the desktop drop window by default. If it fails, continue silently.
