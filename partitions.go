@@ -687,6 +687,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 			return nil
 		})
 
+		pm.cluster.debugf("[PARTITION] Partition %s: hasPartition=%v (checked prefix %s)", partitionID, hasPartition, prefix)
 		if hasPartition {
 			continue // We already have it
 		}
