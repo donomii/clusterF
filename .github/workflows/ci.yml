@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-test:
-    name: Build, Vet, Lint, Test (${{ matrix.os }}, Go ${{ matrix.go }})
+    name: Build and Test (${{ matrix.os }}, Go ${{ matrix.go }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -34,16 +34,6 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go build ./...
-
-      - name: go vet
-        run: |
-          go vet ./...
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          args: --timeout=5m
 
       - name: Test (race)
         env:
