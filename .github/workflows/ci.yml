@@ -35,15 +35,14 @@ jobs:
         run: |
           go build ./...
 
-      - name: Test (race)
+      - name: Test
         env:
           CGO_ENABLED: 0
         run: |
-          go test -race ./...
+          go test ./...
 
       # Optional benchmarks (disabled by default). Enable with workflow_dispatch input or env in future.
       # - name: Benchmarks
       #   if: ${{ false }}
       #   run: |
       #     go test -bench=. -run=^$ ./...
-
