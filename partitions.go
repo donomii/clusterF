@@ -377,6 +377,8 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 		return
 	}
 
+	pm.cluster.debugf("[PARTITION] Scanning for files in %s with prefix %s, found %d total keys", partitionID, prefix, len(files))
+
 	for k, _ := range files {
 		key := string(k)
 		if strings.HasPrefix(key, prefix) && strings.Contains(key, ":file:") {
@@ -434,7 +436,7 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	}
 	pm.cluster.sendUpdatesToPeers(updates)
 
-	pm.cluster.debugf("[PARTITION] Updated metadata for %s: %d files", partitionID, fileCount)
+	pm.cluster.debugf("[PARTITION] Updated metadata for %s: %d files, holders: %v", partitionID, fileCount, holders)
 }
 
 // getPartitionInfo retrieves partition info from CRDT
