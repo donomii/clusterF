@@ -54,6 +54,27 @@ func main() {
 	}
 }
 
+// hasGraphicsEnvironment checks if a graphics environment is available
+func hasGraphicsEnvironment() bool {
+	switch runtime.GOOS {
+	case "linux":
+		// Check for X11 or Wayland
+		if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
+			return true
+		}
+		return false
+	case "darwin":
+		// macOS should always have graphics in typical use
+		return true
+	case "windows":
+		// Windows should always have graphics in typical use
+		return true
+	default:
+		// Conservative: assume no graphics for unknown platforms
+		return false
+	}
+}
+
 // runSimulation starts multiple nodes in simulation mode
 func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir string) {
 	log.Printf("🐸 Starting cluster simulation with %d nodes...", nodeCount)
@@ -184,17 +205,22 @@ func runSingleNode(noDesktop bool, mountPoint string, maxChunkSizeMB int, export
 	cluster.Start()
 	// Attempt to open the desktop drop window by default. If it fails, continue silently.
 	if !noDesktop {
-		if runtime.GOOS == "darwin" {
-			// macOS WebView must run on main thread; protect from panic to avoid crashing.
-			func() {
-				defer func() { _ = recover() }()
-				StartDesktopUI(cluster.HTTPDataPort) // blocks until window closes
-			}()
+		// Check if we have a display environment before attempting desktop UI
+		if hasGraphicsEnvironment() {
+			if runtime.GOOS == "darwin" {
+				// macOS WebView must run on main thread; protect from panic to avoid crashing.
+				func() {
+					defer func() { _ = recover() }()
+					StartDesktopUI(cluster.HTTPDataPort) // blocks until window closes
+				}()
+			} else {
+				go func() {
+					defer func() { _ = recover() }()
+					StartDesktopUI(cluster.HTTPDataPort)
+				}()
+			}
 		} else {
-			go func() {
-				defer func() { _ = recover() }()
-				StartDesktopUI(cluster.HTTPDataPort)
-			}()
+			cluster.Logger.Printf("[UI] No graphics environment detected, skipping desktop UI")
 		}
 	}
 

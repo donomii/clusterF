@@ -654,6 +654,10 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 	pm.updatePartitionMetadata(partitionID)
 
 	pm.cluster.Logger.Printf("[PARTITION] Completed sync of %s from %s (%d entries updated)", partitionID, peerID, syncCount)
+	
+	// Notify frontend that file list may have changed
+	pm.cluster.notifyFileListChanged()
+	
 	return nil
 }
 

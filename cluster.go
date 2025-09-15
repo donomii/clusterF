@@ -39,6 +39,37 @@ type Metadata struct {
 	Timestamp int64             `json:"timestamp"`
 }
 
+// notifyFileListChanged signals all subscribers that the file list has changed
+func (c *Cluster) notifyFileListChanged() {
+	c.fileListMu.RLock()
+	defer c.fileListMu.RUnlock()
+	
+	for ch := range c.fileListSubs {
+		select {
+		case ch <- struct{}{}:
+		default: // Non-blocking send, skip if channel is full
+		}
+	}
+}
+
+// subscribeToFileListChanges creates a subscription channel for file list changes
+func (c *Cluster) subscribeToFileListChanges() chan struct{} {
+	c.fileListMu.Lock()
+	defer c.fileListMu.Unlock()
+	
+	ch := make(chan struct{}, 1) // Buffered to prevent blocking
+	c.fileListSubs[ch] = true
+	return ch
+}
+
+// unsubscribeFromFileListChanges removes a subscription
+func (c *Cluster) unsubscribeFromFileListChanges(ch chan struct{}) {
+	c.fileListMu.Lock()
+	defer c.fileListMu.Unlock()
+	
+	delete(c.fileListSubs, ch)
+	close(ch)
+
 type GossipMessage struct {
 	From     NodeID   `json:"from"`
 	Metadata Metadata `json:"metadata"`
@@ -83,6 +114,10 @@ type Cluster struct {
 	peerAddrs    map[NodeID]*PeerInfo // peers (now using PeerInfo from discovery)
 	tombstones   map[ChunkID]int64    // chunk -> delete ts (ns)
 	writes       map[ChunkID]int64    // chunk -> last write ts (ns)
+
+	// File list change notification system
+	fileListSubs map[chan struct{}]bool
+	fileListMu   sync.RWMutex
 
 	// Server shutdown
 	ctx    context.Context
@@ -184,6 +219,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		peerAddrs:    map[NodeID]*PeerInfo{},
 		tombstones:   map[ChunkID]int64{},
 		writes:       map[ChunkID]int64{},
+		fileListSubs: map[chan struct{}]bool{},
 
 		ctx:    ctx,
 		cancel: cancel,
