@@ -43,7 +43,7 @@ type Metadata struct {
 func (c *Cluster) notifyFileListChanged() {
 	c.fileListMu.RLock()
 	defer c.fileListMu.RUnlock()
-	
+
 	for ch := range c.fileListSubs {
 		select {
 		case ch <- struct{}{}:
@@ -56,19 +56,11 @@ func (c *Cluster) notifyFileListChanged() {
 func (c *Cluster) subscribeToFileListChanges() chan struct{} {
 	c.fileListMu.Lock()
 	defer c.fileListMu.Unlock()
-	
+
 	ch := make(chan struct{}, 1) // Buffered to prevent blocking
 	c.fileListSubs[ch] = true
 	return ch
 }
-
-// unsubscribeFromFileListChanges removes a subscription
-func (c *Cluster) unsubscribeFromFileListChanges(ch chan struct{}) {
-	c.fileListMu.Lock()
-	defer c.fileListMu.Unlock()
-	
-	delete(c.fileListSubs, ch)
-	close(ch)
 
 type GossipMessage struct {
 	From     NodeID   `json:"from"`
@@ -86,7 +78,7 @@ type Cluster struct {
 	BroadcastIP   net.IP // usually net.IPv4bcast
 	Logger        *log.Logger
 	Debug         bool
-	NoStore       bool   // client mode: don't store partitions locally
+	NoStore       bool // client mode: don't store partitions locally
 
 	// Chunk configuration
 	MaxChunkSize int // configurable max chunk size
