@@ -399,6 +399,7 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	existingInfo := pm.getPartitionInfo(partitionID)
 	var holders []NodeID
 	if existingInfo != nil {
+		pm.cluster.debugf("[PARTITION] Found existing metadata for %s: holders=%v", partitionID, existingInfo.Holders)
 		// Start with existing holders
 		holders = make([]NodeID, len(existingInfo.Holders))
 		copy(holders, existingInfo.Holders)
@@ -412,9 +413,13 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 			}
 		}
 		if !found {
+			pm.cluster.debugf("[PARTITION] Adding %s to holders for %s", pm.cluster.ID, partitionID)
 			holders = append(holders, pm.cluster.ID)
+		} else {
+			pm.cluster.debugf("[PARTITION] %s already in holders for %s", pm.cluster.ID, partitionID)
 		}
 	} else {
+		pm.cluster.debugf("[PARTITION] No existing metadata for %s, creating new with holder %s", partitionID, pm.cluster.ID)
 		// No existing info, we're the first holder
 		holders = []NodeID{pm.cluster.ID}
 	}
