@@ -2,8 +2,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -79,13 +81,21 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 
 	// Store file and metadata together in partition system
 	metadataJSON, _ := json.Marshal(metadata)
+	
+	// For no-store clients, forward uploads to storage nodes
+	if fs.cluster.NoStore {
+		return fs.forwardUploadToStorageNode(path, metadataJSON, content, contentType)
+	}
+	
 	if err := fs.cluster.PartitionManager.storeFileInPartition(path, metadataJSON, content); err != nil {
 		return logerrf("failed to store file: %v", err)
 	}
 
-	// Update parent directory
-	if err := fs.addToDirectory(filepath.Dir(path), filepath.Base(path)); err != nil {
-		return logerrf("failed to update directory: %v", err)
+	// Update parent directory (skip for no-store clients)
+	if !fs.cluster.NoStore {
+		if err := fs.addToDirectory(filepath.Dir(path), filepath.Base(path)); err != nil {
+			return logerrf("failed to update directory: %v", err)
+		}
 	}
 
 	// Mirror to OS export directory if configured
@@ -96,6 +106,54 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 	}
 
 	return nil
+}
+
+// forwardUploadToStorageNode forwards file uploads from no-store clients to storage nodes
+func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSON []byte, content []byte, contentType string) error {
+	// Find storage nodes that can hold this file
+	peers := fs.cluster.DiscoveryManager.GetPeers()
+	var storageNodes []*PeerInfo
+	
+	for _, peer := range peers {
+		// Only forward to peers that are not no-store clients
+		// We can't easily detect if a peer is no-store, so try all peers
+		storageNodes = append(storageNodes, peer)
+	}
+	
+	if len(storageNodes) == 0 {
+		return fmt.Errorf("no storage nodes available to forward upload")
+	}
+	
+	// Try forwarding to storage nodes until one succeeds
+	var lastErr error
+	for _, peer := range storageNodes {
+		url := fmt.Sprintf("http://%s:%d/api/files%s", peer.Address, peer.HTTPPort, path)
+		
+		req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(content))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("X-Forwarded-From", string(fs.cluster.ID))
+		
+		resp, err := fs.cluster.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		defer resp.Body.Close()
+		
+		if resp.StatusCode == http.StatusCreated {
+			fs.cluster.Logger.Printf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
+			return nil // Success
+		}
+		
+		lastErr = fmt.Errorf("peer %s returned %d", peer.NodeID, resp.StatusCode)
+	}
+	
+	return fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
 }
 
 // GetFile retrieves a file from the partition system
