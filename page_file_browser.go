@@ -79,6 +79,17 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
         w.WriteHeader(http.StatusOK)
         w.Write(content)
         return
+    } else {
+        // Check if this might be a file that was deleted or doesn't exist
+        // If the path doesn't end with / and isn't clearly a directory path, return 404
+        if !strings.HasSuffix(path, "/") && !strings.Contains(filepath.Base(path), ".") {
+            // Could be a directory, try listing
+        } else if strings.Contains(filepath.Base(path), ".") {
+            // Looks like a file that doesn't exist
+            c.debugf("[FILES] File %s not found: %v", path, err)
+            http.Error(w, "File not found", http.StatusNotFound)
+            return
+        }
     }
 
     // Not a file, so show directory view

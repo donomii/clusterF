@@ -156,6 +156,11 @@ func (pm *PartitionManager) getFileAndMetaFromPartition(path string) ([]byte, ma
 		return nil, nil, fmt.Errorf("corrupt file metadata: %v", err)
 	}
 
+	// Check if file is marked as deleted
+	if deleted, ok := metadata["deleted"].(bool); ok && deleted {
+		return nil, nil, fmt.Errorf("file not found")
+	}
+
 	// Get content from crdtKV (data store) using same key
 	content, err := pm.cluster.crdtKV.Get([]byte(fileKey))
 	if err != nil {
@@ -245,6 +250,10 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 						if entry.Store == "metadata" {
 							// Found metadata
 							if err := json.Unmarshal(entry.Value, &foundMetadata); err != nil {
+								continue
+							}
+							// Check if file is marked as deleted
+							if deleted, ok := foundMetadata["deleted"].(bool); ok && deleted {
 								continue
 							}
 						} else if entry.Store == "content" {
