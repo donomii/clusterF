@@ -53,54 +53,69 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 
 // handleFileGet handles GET requests for files/directories
 func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path string) {
-    c.debugf("[FILES] GET request for path: %s", path)
-    
-    // Try to get as file first
-    if content, metadata, err := c.FileSystem.GetFile(path); err == nil {
-        c.debugf("[FILES] Retrieved file %s: %d bytes, content type: %s", path, len(content), metadata.ContentType)
-        
-        // It's a file - serve it (optionally as download)
-        download := r.URL.Query().Get("download")
-        filename := filepath.Base(path)
-        if download == "1" || download == "true" {
-            // Force download
-            w.Header().Set("Content-Type", "application/octet-stream")
-            w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
-        } else {
-            // Inline
-            ct := metadata.ContentType
-            if ct == "" {
-                ct = "application/octet-stream"
-            }
-            w.Header().Set("Content-Type", ct)
-        }
-        w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
-        w.Header().Set("Last-Modified", metadata.ModifiedAt.Format(http.TimeFormat))
-        w.WriteHeader(http.StatusOK)
-        w.Write(content)
-        return
-    } else {
-        // Check if this might be a file that was deleted or doesn't exist
-        // If the path doesn't end with / and isn't clearly a directory path, return 404
-        if !strings.HasSuffix(path, "/") && !strings.Contains(filepath.Base(path), ".") {
-            // Could be a directory, try listing
-        } else if strings.Contains(filepath.Base(path), ".") {
-            // Looks like a file that doesn't exist
-            c.debugf("[FILES] File %s not found: %v", path, err)
-            http.Error(w, "File not found", http.StatusNotFound)
-            return
-        }
-    }
+	c.debugf("[FILES] GET request for path: %s", path)
+	
+	// If path ends with /, it's clearly a directory request
+	if strings.HasSuffix(path, "/") {
+		c.debugf("[FILES] Directory request for: %s", path)
+		// Show directory view
+		entries, _ := c.FileSystem.ListDirectory(path)
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"path":    path,
+			"entries": entries,
+			"count":   len(entries),
+		}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+	
+	// Try to get as file first
+	if content, metadata, err := c.FileSystem.GetFile(path); err == nil {
+		c.debugf("[FILES] Retrieved file %s: %d bytes, content type: %s", path, len(content), metadata.ContentType)
+		
+		// It's a file - serve it (optionally as download)
+		download := r.URL.Query().Get("download")
+		filename := filepath.Base(path)
+		if download == "1" || download == "true" {
+			// Force download
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+		} else {
+			// Inline
+			ct := metadata.ContentType
+			if ct == "" {
+				ct = "application/octet-stream"
+			}
+			w.Header().Set("Content-Type", ct)
+		}
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
+		w.Header().Set("Last-Modified", metadata.ModifiedAt.Format(http.TimeFormat))
+		w.WriteHeader(http.StatusOK)
+		w.Write(content)
+		return
+	} else {
+		// GetFile failed - could be a directory or truly missing file
+		// Try as directory first
+		c.debugf("[FILES] File lookup failed for %s, trying as directory: %v", path, err)
+	}
 
-    // Not a file, so show directory view
-    entries, _ := c.FileSystem.ListDirectory(path)
-    w.Header().Set("Content-Type", "application/json")
-    response := map[string]interface{}{
-        "path":    path,
-        "entries": entries,
-        "count":   len(entries),
-    }
-    json.NewEncoder(w).Encode(response)
+	// Not a file, so try directory view
+	entries, err := c.FileSystem.ListDirectory(path)
+	if err != nil {
+		// Neither file nor directory - return 404
+		c.debugf("[FILES] Path %s not found as file or directory", path)
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"path":    path,
+		"entries": entries,
+		"count":   len(entries),
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleFilePut handles PUT requests for uploading files
