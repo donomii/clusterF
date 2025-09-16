@@ -1264,11 +1264,65 @@ func (c *Cluster) performInitialSyncWithPeer(peer *PeerInfo) {
 
 	c.Logger.Printf("[INITIAL_SYNC] Starting full sync with new peer %s", peer.NodeID)
 
-	// First, send our full store to the peer
-	c.sendFullStoreToAPeer(peer)
+	// Start retry thread
+	c.ThreadManager.StartThread("initial-sync-retry", func(ctx context.Context) {
+		// First, retry initial sync until we get one successful full sync
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 
-	// Then, request their full store
-	c.requestFullStoreFromPeer(peer)
+			peers := c.DiscoveryManager.GetPeers()
+			if len(peers) == 0 {
+				time.Sleep(10 * time.Second)
+				continue
+			}
+
+			// Try a random peer
+			peer := peers[rand.Intn(len(peers))]
+			c.Logger.Printf("[SYNC_RETRY] Attempting full sync with %s", peer.NodeID)
+
+			if c.requestFullStoreFromPeer(peer) {
+				c.Logger.Printf("[SYNC_RETRY] Successfully synced with %s", peer.NodeID)
+				break
+			}
+
+			c.Logger.Printf("[SYNC_RETRY] Failed to sync with %s, retrying in 10s", peer.NodeID)
+			time.Sleep(10 * time.Second)
+		}
+
+		// Now do another full sync in 10 minutes
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Minute):
+		}
+
+		// Then sync with a random peer every hour
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				peers := c.DiscoveryManager.GetPeers()
+				if len(peers) == 0 {
+					continue
+				}
+
+				peer := peers[rand.Intn(len(peers))]
+				c.Logger.Printf("[HOURLY_SYNC] Full sync with random peer %s", peer.NodeID)
+
+				if !c.requestFullStoreFromPeer(peer) {
+					c.Logger.Printf("[HOURLY_SYNC] Failed to sync with %s", peer.NodeID)
+				}
+			}
+		}
+	})
 }
 
 // sendFullStoreToAPeer sends our complete frogpond store to a specific peer
@@ -1289,32 +1343,33 @@ func (c *Cluster) sendFullStoreToAPeer(peer *PeerInfo) {
 }
 
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
-func (c *Cluster) requestFullStoreFromPeer(peer *PeerInfo) {
+// Returns true on success, false on failure
+func (c *Cluster) requestFullStoreFromPeer(peer *PeerInfo) bool {
 	url := fmt.Sprintf("http://%s:%d/frogpond/fullstore", peer.Address, peer.HTTPPort)
 
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		c.Logger.Printf("[INITIAL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		c.Logger.Printf("[INITIAL_SYNC] Peer %s returned %s", peer.NodeID, resp.Status)
-		return
+		return false
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		c.Logger.Printf("[INITIAL_SYNC] Failed to read response from %s: %v", peer.NodeID, err)
-		return
+		return false
 	}
 
 	// Parse and apply the full store
 	var peerData []frogpond.DataPoint
 	if err := json.Unmarshal(body, &peerData); err != nil {
 		c.Logger.Printf("[INITIAL_SYNC] Failed to parse data from %s: %v", peer.NodeID, err)
-		return
+		return false
 	}
 
 	// Apply the peer's data and get any resulting updates
@@ -1322,6 +1377,7 @@ func (c *Cluster) requestFullStoreFromPeer(peer *PeerInfo) {
 	c.sendUpdatesToPeers(resultingUpdates)
 
 	c.Logger.Printf("[INITIAL_SYNC] Successfully synced %d data points from %s", len(peerData), peer.NodeID)
+	return true
 }
 
 // reconcileCRDTAndStorage ensures that holder records reflect actual local chunks
