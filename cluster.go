@@ -1347,7 +1347,12 @@ func (c *Cluster) sendFullStoreToAPeer(peer *PeerInfo) {
 func (c *Cluster) requestFullStoreFromPeer(peer *PeerInfo) bool {
 	url := fmt.Sprintf("http://%s:%d/frogpond/fullstore", peer.Address, peer.HTTPPort)
 
-	resp, err := c.httpClient.Get(url)
+	// Create a client with no timeout for full sync
+	client := &http.Client{
+		Timeout: 0, // No timeout
+	}
+
+	resp, err := client.Get(url)
 	if err != nil {
 		c.Logger.Printf("[INITIAL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
 		return false
