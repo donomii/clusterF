@@ -79,28 +79,17 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
         w.WriteHeader(http.StatusOK)
         w.Write(content)
         return
-    } else {
-        c.debugf("[FILES] Failed to get file %s: %v", path, err)
     }
 
-    // Try to list as directory (but only if path looks like a directory)
-    // Skip directory listing for paths that look like files (have extensions)
-    if !strings.Contains(filepath.Base(path), ".") || strings.HasSuffix(path, "/") {
-        if entries, err := c.FileSystem.ListDirectory(path); err == nil {
-            // It's a directory - return JSON listing
-            w.Header().Set("Content-Type", "application/json")
-            response := map[string]interface{}{
-                "path":    path,
-                "entries": entries,
-                "count":   len(entries),
-            }
-            json.NewEncoder(w).Encode(response)
-            return
-        }
+    // Not a file, so show directory view
+    entries, _ := c.FileSystem.ListDirectory(path)
+    w.Header().Set("Content-Type", "application/json")
+    response := map[string]interface{}{
+        "path":    path,
+        "entries": entries,
+        "count":   len(entries),
     }
-
-    // Neither file nor directory found
-    http.NotFound(w, r)
+    json.NewEncoder(w).Encode(response)
 }
 
 // handleFilePut handles PUT requests for uploading files
@@ -109,6 +98,18 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
     content, err := io.ReadAll(r.Body)
     if err != nil {
         http.Error(w, "Failed to read request body", http.StatusBadRequest)
+        return
+    }
+
+    // If content is empty and no content type, this might be a directory - ignore it
+    if len(content) == 0 && r.Header.Get("Content-Type") == "" {
+        c.debugf("[FILES] Ignoring empty upload for %s (likely directory)", path)
+        w.WriteHeader(http.StatusOK)
+        json.NewEncoder(w).Encode(map[string]interface{}{
+            "success": true,
+            "path":    path,
+            "message": "Directory ignored",
+        })
         return
     }
 
@@ -135,24 +136,20 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 
 // handleFilePost handles POST requests for creating directories
 func (c *Cluster) handleFilePost(w http.ResponseWriter, r *http.Request, path string) {
-    // Check if this is a directory creation request
-    if r.Header.Get("X-Create-Directory") == "true" {
-        if err := c.FileSystem.CreateDirectory(path); err != nil {
-            http.Error(w, fmt.Sprintf("Failed to create directory: %v", err), http.StatusInternalServerError)
-            return
-        }
+	// Check if this is a directory creation request
+	if r.Header.Get("X-Create-Directory") == "true" {
+		// Directory creation is a no-op - just return success
+		c.Logger.Printf("[FILES] Created directory %s (no-op)", path)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"path":    path,
+			"type":    "directory",
+		})
+		return
+	}
 
-        c.Logger.Printf("[FILES] Created directory %s", path)
-        w.WriteHeader(http.StatusCreated)
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "success": true,
-            "path":    path,
-            "type":    "directory",
-        })
-        return
-    }
-
-    http.Error(w, "Invalid POST request", http.StatusBadRequest)
+	http.Error(w, "Invalid POST request", http.StatusBadRequest)
 }
 
 // handleFileDelete handles DELETE requests for files/directories

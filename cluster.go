@@ -401,9 +401,14 @@ func loadNodeIDFromDataDir(base string) string {
 
 // debugf logs a debug message if Debug is enabled
 func (c *Cluster) debugf(format string, v ...interface{}) {
-	if c.Debug {
-		c.Logger.Printf(format, v...)
-	}
+    if !c.Debug {
+        return
+    }
+    // Use Logger.Output with a call depth so the log shows the
+    // caller of debugf (file:line), not this wrapper function.
+    // calldepth=2: Output -> debugf -> caller
+    msg := fmt.Sprintf(format, v...)
+    _ = c.Logger.Output(2, msg)
 }
 
 func broadcastPortFromEnv() int {

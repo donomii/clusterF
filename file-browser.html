@@ -282,7 +282,7 @@
             <div style="font-size: 3em; margin-bottom: 15px;">📤</div>
             <div style="font-size: 1.2em; margin-bottom: 10px;">Drop files here to upload</div>
             <div style="color: #94a3b8;">or click to select files</div>
-            <input type="file" id="fileInput" multiple style="display: none;">
+            <input type="file" id="fileInput" multiple webkitdirectory style="display: none;">
         </div>
 
         <div id="fileGrid" class="file-grid">
@@ -521,7 +521,13 @@
         }
 
         async function uploadFile(file) {
-            const filePath = currentPath.endsWith('/') ? currentPath + file.name : currentPath + '/' + file.name;
+            const filePath = currentPath.endsWith('/') ? currentPath + file.webkitRelativePath : currentPath + '/' + file.webkitRelativePath;
+            
+            // If this looks like a directory (empty file with path containing /), skip it
+            if (file.size === 0 && file.webkitRelativePath.includes('/')) {
+                return; // Don't upload directory entries
+            }
+            
             const response = await fetch('/api/files' + filePath, {
                 method: 'PUT',
                 body: file
