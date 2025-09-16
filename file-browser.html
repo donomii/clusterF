@@ -411,7 +411,7 @@
                     renderFiles(data.entries || []);
                     document.getElementById('currentPath').textContent = currentPath;
                 } else {
-                    showNotification('Failed to load files', 'error');
+                    showNotification('Failed to load files: ' + response.status, 'error');
                 }
             } catch (error) {
                 showNotification('Error: ' + error.message, 'error');

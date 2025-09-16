@@ -62,11 +62,6 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []SearchResult {
 		}
 		filePath := parts[1]
 		
-		// Skip root directory metadata when doing directory searches
-		if filePath == "/" && req.Mode == SearchModeDirectory {
-			return nil
-		}
-		
 		// Parse the file data
 		var combined map[string]interface{}
 		if err := json.Unmarshal(v, &combined); err != nil {
@@ -308,6 +303,8 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*FileMetadata, error)
 		path += "/"
 	}
 	
+	c.debugf("[SEARCH] ListDirectory for path: %s", path)
+	
 	// Create search request for directory mode
 	req := SearchRequest{
 		Mode:  SearchModeDirectory,
@@ -317,6 +314,7 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*FileMetadata, error)
 	
 	// Search all peers
 	results := c.searchAllPeers(req)
+	c.debugf("[SEARCH] Found %d results for %s", len(results), path)
 	
 	// Convert to FileMetadata format
 	var fileMetadata []*FileMetadata
