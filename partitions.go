@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
@@ -50,7 +49,7 @@ func hashToPartition(filename string) PartitionID {
 	return PartitionID(fmt.Sprintf("p%05d", partitionNum))
 }
 
-// storeFileInPartition stores a file with metadata and content together
+// storeFileInPartition stores a file with metadata and content in separate stores
 func (pm *PartitionManager) storeFileInPartition(path string, metadataJSON []byte, fileContent []byte) error {
 	// If in no-store mode, don't store locally
 	if pm.cluster.NoStore {
@@ -59,19 +58,16 @@ func (pm *PartitionManager) storeFileInPartition(path string, metadataJSON []byt
 	}
 
 	partitionID := hashToPartition(path)
-
-	// Store both metadata and content in a single combined structure
-	combinedData := map[string]interface{}{
-		"metadata": json.RawMessage(metadataJSON),
-		"content":  fileContent, // Will be base64 encoded by JSON
-	}
-	combinedJSON, _ := json.Marshal(combinedData)
-
-	// Store in existing filesKV using partition-prefixed keys
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
-	if err := pm.cluster.filesKV.Put([]byte(fileKey), combinedJSON); err != nil {
-		return fmt.Errorf("failed to store file: %v", err)
+	// Store metadata in filesKV (metadata store)
+	if err := pm.cluster.filesKV.Put([]byte(fileKey), metadataJSON); err != nil {
+		return fmt.Errorf("failed to store file metadata: %v", err)
+	}
+
+	// Store content in crdtKV (data store) using same key
+	if err := pm.cluster.crdtKV.Put([]byte(fileKey), fileContent); err != nil {
+		return fmt.Errorf("failed to store file content: %v", err)
 	}
 
 	// Update partition metadata in CRDT
@@ -136,7 +132,7 @@ func (pm *PartitionManager) getFileFromPartition(filename string) ([]byte, error
 	return nil, fmt.Errorf("failed to retrieve file %s from any holder", filename)
 }
 
-// getFileAndMetaFromPartition retrieves both metadata and content together
+// getFileAndMetaFromPartition retrieves metadata and content from separate stores
 func (pm *PartitionManager) getFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error) {
 	// If in no-store mode, always try peers first
 	if pm.cluster.NoStore {
@@ -147,65 +143,29 @@ func (pm *PartitionManager) getFileAndMetaFromPartition(path string) ([]byte, ma
 	partitionID := hashToPartition(path)
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
-	// Get combined data from local KV first
-	combinedData, err := pm.cluster.filesKV.Get([]byte(fileKey))
-	if err == nil {
-		pm.cluster.debugf("[PARTITION] Found file %s locally in partition %s", path, partitionID)
-		// Parse combined data
-		var combined map[string]interface{}
-		if err := json.Unmarshal(combinedData, &combined); err != nil {
-			return nil, nil, fmt.Errorf("corrupt file data: %v", err)
-		}
-
-		// Extract metadata
-		metadataRaw, ok := combined["metadata"]
-		if !ok {
-			return nil, nil, fmt.Errorf("no metadata in file")
-		}
-		var metadata map[string]interface{}
-		metadataBytes, _ := json.Marshal(metadataRaw)
-		json.Unmarshal(metadataBytes, &metadata)
-
-		// Extract content - properly decode base64 encoded content
-		contentInterface, ok := combined["content"]
-		if !ok {
-			return nil, nil, fmt.Errorf("no content in file")
-		}
-		var content []byte
-		switch v := contentInterface.(type) {
-		case string:
-			// Content is base64 encoded by JSON marshaling of []byte - decode it
-			if decoded, err := base64.StdEncoding.DecodeString(v); err == nil {
-				content = decoded
-			} else {
-				// If base64 decode fails, treat as raw string
-				content = []byte(v)
-			}
-		case []interface{}:
-			// Legacy: Array of numbers (JSON representation of byte array)
-			content = make([]byte, len(v))
-			for i, val := range v {
-				if num, ok := val.(float64); ok {
-					content[i] = byte(num)
-				}
-			}
-		case []byte:
-			// Direct byte array (should not happen in JSON but handle it)
-			content = v
-		default:
-			// Fallback: marshal back to JSON bytes
-			contentBytes, _ := json.Marshal(v)
-			content = contentBytes
-		}
-
-		pm.cluster.debugf("[PARTITION] Retrieved file %s: %d bytes content, content type: %T", path, len(content), contentInterface)
-		return content, metadata, nil
+	// Get metadata from filesKV (metadata store)
+	metadataData, err := pm.cluster.filesKV.Get([]byte(fileKey))
+	if err != nil {
+		pm.cluster.debugf("[PARTITION] File %s metadata not found locally (err: %v), trying peers", path, err)
+		return pm.getFileFromPeers(path)
 	}
 
-	pm.cluster.debugf("[PARTITION] File %s not found locally (err: %v), trying peers", path, err)
+	// Parse metadata
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(metadataData, &metadata); err != nil {
+		return nil, nil, fmt.Errorf("corrupt file metadata: %v", err)
+	}
 
-	// If not found locally, try to get from peers
-	return pm.getFileFromPeers(path)
+	// Get content from crdtKV (data store) using same key
+	content, err := pm.cluster.crdtKV.Get([]byte(fileKey))
+	if err != nil {
+		pm.cluster.debugf("[PARTITION] File %s content not found locally (err: %v), trying peers", path, err)
+		return pm.getFileFromPeers(path)
+	}
+
+	pm.cluster.debugf("[PARTITION] Found file %s locally in partition %s", path, partitionID)
+	pm.cluster.debugf("[PARTITION] Retrieved file %s: %d bytes content", path, len(content))
+	return content, metadata, nil
 }
 
 // getFileFromPeers attempts to retrieve a file from peer nodes
@@ -226,25 +186,25 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 
 	peers := pm.cluster.DiscoveryManager.GetPeers()
 	pm.cluster.debugf("[PARTITION] Available peers: %d", len(peers))
-	
+
 	// Filter holders to only include currently available peers
 	availablePeerIDs := make(map[string]bool)
 	for _, peer := range peers {
 		availablePeerIDs[peer.NodeID] = true
 	}
-	
+
 	availableHolders := make([]NodeID, 0)
 	for _, holder := range holders {
 		if availablePeerIDs[string(holder)] {
 			availableHolders = append(availableHolders, holder)
 		}
 	}
-	
+
 	if len(availableHolders) == 0 {
 		pm.cluster.debugf("[PARTITION] No available holders for partition %s (holders: %v, available peers: %v)", partitionID, holders, availablePeerIDs)
 		return nil, nil, fmt.Errorf("no available holders found for partition %s", partitionID)
 	}
-	
+
 	pm.cluster.debugf("[PARTITION] Using available holders: %v (filtered from %v)", availableHolders, holders)
 	for _, peer := range peers {
 		for _, holder := range availableHolders {
@@ -261,67 +221,47 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 					continue
 				}
 
-				// Parse response to find our file
+				// Parse response to find our file metadata and content
 				decoder := json.NewDecoder(resp.Body)
-				targetKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
+				metadataKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
+
+				var foundMetadata map[string]interface{}
+				var foundContent []byte
+				entryCount := 0
 
 				for {
 					var entry struct {
 						Key   string `json:"key"`
 						Value []byte `json:"value"`
+						Store string `json:"store"` // "metadata" or "content"
 					}
 
 					if err := decoder.Decode(&entry); err != nil {
 						break
 					}
+					entryCount++
 
-					if entry.Key == targetKey {
-						// Found our file, parse it
-						var combined map[string]interface{}
-						if err := json.Unmarshal(entry.Value, &combined); err != nil {
-							continue
-						}
-
-						// Extract metadata
-						metadataRaw, ok := combined["metadata"]
-						if !ok {
-							continue
-						}
-						var metadata map[string]interface{}
-						metadataBytes, _ := json.Marshal(metadataRaw)
-						json.Unmarshal(metadataBytes, &metadata)
-
-						// Extract content - properly decode base64
-						contentInterface, ok := combined["content"]
-						if !ok {
-							continue
-						}
-						var content []byte
-						switch v := contentInterface.(type) {
-						case string:
-							// Content is base64 encoded - decode it
-							if decoded, err := base64.StdEncoding.DecodeString(v); err == nil {
-								content = decoded
-							} else {
-								content = []byte(v)
+					if entry.Key == metadataKey {
+						if entry.Store == "metadata" {
+							// Found metadata
+							if err := json.Unmarshal(entry.Value, &foundMetadata); err != nil {
+								continue
 							}
-						case []interface{}:
-							// Array of numbers (JSON representation of byte array)
-							content = make([]byte, len(v))
-							for i, val := range v {
-								if num, ok := val.(float64); ok {
-									content[i] = byte(num)
-								}
-							}
-						case []byte:
-							content = v
-						default:
-							contentBytes, _ := json.Marshal(v)
-							content = contentBytes
+						} else if entry.Store == "content" {
+							// Found content
+							foundContent = entry.Value
 						}
 
-						return content, metadata, nil
+						// If we have both metadata and content, return them
+						if foundMetadata != nil && foundContent != nil {
+							return foundContent, foundMetadata, nil
+						}
 					}
+				}
+
+				// If we found some entries but not both metadata and content, continue to next peer
+				if entryCount > 0 {
+					pm.cluster.debugf("[PARTITION] Found %d entries from peer %s but missing metadata or content for %s", entryCount, holder, path)
 				}
 			}
 		}
@@ -341,33 +281,15 @@ func (pm *PartitionManager) deleteFileFromPartition(path string) error {
 	partitionID := hashToPartition(path)
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
-	// Get existing file data
-	existingData, err := pm.cluster.filesKV.Get([]byte(fileKey))
-	if err != nil {
+	// Get existing metadata
+	existingMetadata, err := pm.cluster.filesKV.Get([]byte(fileKey))
+	var metadata map[string]interface{}
+	if err == nil {
+		// Parse existing metadata
+		json.Unmarshal(existingMetadata, &metadata)
+	} else {
 		// File doesn't exist locally, but still create tombstone for CRDT
 		pm.cluster.debugf("[PARTITION] File %s not found locally, creating tombstone anyway", path)
-	}
-
-	// Create tombstone by marking metadata as deleted
-	var combined map[string]interface{}
-	if err == nil {
-		// Parse existing data
-		json.Unmarshal(existingData, &combined)
-	} else {
-		// Create minimal structure for tombstone
-		combined = map[string]interface{}{
-			"metadata": map[string]interface{}{},
-			"content":  []byte{},
-		}
-	}
-
-	// Update metadata to mark as deleted
-	var metadata map[string]interface{}
-	if meta, ok := combined["metadata"]; ok {
-		if metaBytes, err := json.Marshal(meta); err == nil {
-			json.Unmarshal(metaBytes, &metadata)
-		}
-	} else {
 		metadata = make(map[string]interface{})
 	}
 
@@ -381,13 +303,12 @@ func (pm *PartitionManager) deleteFileFromPartition(path string) error {
 		metadata["version"] = float64(1)
 	}
 
-	// Update combined data
-	combined["metadata"] = metadata
-	combined["content"] = []byte{} // Clear content for tombstone
-
-	// Store tombstone
-	tombstoneJSON, _ := json.Marshal(combined)
+	// Store tombstone metadata
+	tombstoneJSON, _ := json.Marshal(metadata)
 	pm.cluster.filesKV.Put([]byte(fileKey), tombstoneJSON)
+
+	// Remove content from data store
+	pm.cluster.crdtKV.Delete([]byte(fileKey))
 
 	// Update partition metadata in CRDT
 	pm.updatePartitionMetadata(partitionID)
@@ -407,29 +328,22 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	// Count files in partition by scanning the existing filesKV
 	fileCount := 0
 	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
-	
+
 	// Use MapFunc correctly - it calls the function for each key-value pair
 	pm.cluster.filesKV.MapFunc(func(k, v []byte) error {
 		key := string(k)
 		if strings.HasPrefix(key, prefix) && strings.Contains(key, ":file:") {
-			// Parse the file data to check if it's deleted
-			var combined map[string]interface{}
-			if err := json.Unmarshal(v, &combined); err == nil {
-				if meta, ok := combined["metadata"]; ok {
-					if metaBytes, err := json.Marshal(meta); err == nil {
-						var metadata map[string]interface{}
-						if json.Unmarshal(metaBytes, &metadata) == nil {
-							// Check if file is marked as deleted
-							if deleted, ok := metadata["deleted"].(bool); !ok || !deleted {
-								// File is not deleted, count it
-								fileCount++
-							}
-						}
-					}
-				} else {
-					// No metadata or old format - count as existing file
+			// Parse the metadata to check if it's deleted
+			var metadata map[string]interface{}
+			if err := json.Unmarshal(v, &metadata); err == nil {
+				// Check if file is marked as deleted
+				if deleted, ok := metadata["deleted"].(bool); !ok || !deleted {
+					// File is not deleted, count it
 					fileCount++
 				}
+			} else {
+				// Parse error - count as existing file
+				fileCount++
 			}
 		}
 		return nil
@@ -444,32 +358,32 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	// Update partition metadata in CRDT using individual keys per holder
 	// This prevents overwriting other nodes' holder entries
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-	
+
 	// Add ourselves as a holder
 	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.cluster.ID)
 	holderData := map[string]interface{}{
-		"joined_at": time.Now().Unix(),
+		"joined_at":  time.Now().Unix(),
 		"file_count": fileCount,
 	}
 	holderJSON, _ := json.Marshal(holderData)
-	
+
 	// Update file count metadata
 	metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
 	fileCountJSON, _ := json.Marshal(fileCount)
-	
+
 	// Send both updates to CRDT
 	updates1 := pm.cluster.frogpond.SetDataPoint(holderKey, holderJSON)
 	updates2 := pm.cluster.frogpond.SetDataPoint(metadataKey, fileCountJSON)
-	
+
 	if pm.cluster.crdtKV != nil {
 		pm.cluster.crdtKV.Put([]byte(holderKey), holderJSON)
 		pm.cluster.crdtKV.Put([]byte(metadataKey), fileCountJSON)
 	}
-	
+
 	// Send updates to peers
 	pm.cluster.sendUpdatesToPeers(updates1)
 	pm.cluster.sendUpdatesToPeers(updates2)
-	
+
 	pm.cluster.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.cluster.ID, partitionID, fileCount)
 }
 
@@ -478,41 +392,41 @@ func (pm *PartitionManager) removePartitionHolder(partitionID PartitionID) {
 	if pm.cluster.NoStore {
 		return // No-store nodes don't claim to hold partitions
 	}
-	
+
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.cluster.ID)
-	
+
 	// Remove ourselves as a holder by setting a tombstone
 	updates := pm.cluster.frogpond.SetDataPoint(holderKey, nil) // nil = delete
 	if pm.cluster.crdtKV != nil {
 		pm.cluster.crdtKV.Delete([]byte(holderKey))
 	}
 	pm.cluster.sendUpdatesToPeers(updates)
-	
+
 	pm.cluster.debugf("[PARTITION] Removed %s as holder for %s", pm.cluster.ID, partitionID)
 }
 
 // getPartitionInfo retrieves partition info from CRDT using individual holder keys
 func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *PartitionInfo {
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-	
+
 	// Get all holder entries for this partition
 	holderPrefix := fmt.Sprintf("%s/holders/", partitionKey)
 	dataPoints := pm.cluster.frogpond.GetAllMatchingPrefix(holderPrefix)
-	
+
 	var holders []NodeID
 	var totalFiles int
 	maxTimestamp := int64(0)
-	
+
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
 		}
-		
+
 		// Extract node ID from key
 		nodeID := strings.TrimPrefix(string(dp.Key), holderPrefix)
 		holders = append(holders, NodeID(nodeID))
-		
+
 		// Parse holder data
 		var holderData map[string]interface{}
 		if err := json.Unmarshal(dp.Value, &holderData); err == nil {
@@ -526,11 +440,11 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 			}
 		}
 	}
-	
+
 	if len(holders) == 0 {
 		return nil
 	}
-	
+
 	return &PartitionInfo{
 		ID:           partitionID,
 		Version:      PartitionVersion(maxTimestamp),
@@ -545,41 +459,41 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 	// Get all partition holder entries
 	dataPoints := pm.cluster.frogpond.GetAllMatchingPrefix("partitions/")
 	partitionMap := make(map[string]map[string]interface{}) // partitionID -> nodeID -> data
-	
+
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
 		}
-		
+
 		// Parse key: partitions/p12345/holders/node-name
 		parts := strings.Split(string(dp.Key), "/")
 		if len(parts) < 4 || parts[0] != "partitions" || parts[2] != "holders" {
 			continue
 		}
-		
+
 		partitionID := parts[1]
 		nodeID := parts[3]
-		
+
 		if partitionMap[partitionID] == nil {
 			partitionMap[partitionID] = make(map[string]interface{})
 		}
-		
+
 		var holderData map[string]interface{}
 		if err := json.Unmarshal(dp.Value, &holderData); err == nil {
 			partitionMap[partitionID][nodeID] = holderData
 		}
 	}
-	
+
 	// Convert to PartitionInfo objects
 	result := make(map[PartitionID]*PartitionInfo)
 	for partitionID, nodeData := range partitionMap {
 		var holders []NodeID
 		var totalFiles int
 		maxTimestamp := int64(0)
-		
+
 		for nodeID, data := range nodeData {
 			holders = append(holders, NodeID(nodeID))
-			
+
 			if holderData, ok := data.(map[string]interface{}); ok {
 				if joinedAt, ok := holderData["joined_at"].(float64); ok {
 					if int64(joinedAt) > maxTimestamp {
@@ -591,7 +505,7 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 				}
 			}
 		}
-		
+
 		result[PartitionID(partitionID)] = &PartitionInfo{
 			ID:           PartitionID(partitionID),
 			Version:      PartitionVersion(maxTimestamp),
@@ -600,7 +514,7 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 			Holders:      holders,
 		}
 	}
-	
+
 	return result
 }
 
@@ -642,7 +556,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 		return fmt.Errorf("syncPartitionFromPeer: peer '%s' at '%s' returned error %d '%s' for partition '%s'", peerID, url, resp.StatusCode, resp.Status, partitionID)
 	}
 
-	// Read and apply the partition data to existing filesKV
+	// Read and apply the partition data from both stores
 	decoder := json.NewDecoder(resp.Body)
 
 	syncCount := 0
@@ -650,6 +564,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 		var entry struct {
 			Key   string `json:"key"`
 			Value []byte `json:"value"`
+			Store string `json:"store"` // "metadata" or "content"
 		}
 
 		if err := decoder.Decode(&entry); err == io.EOF {
@@ -667,30 +582,17 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 			shouldUpdate = true
 		} else {
 			// Use CRDT merge rules - only for files, ignore directories
-			if strings.Contains(entry.Key, ":file:") {
-				// Parse both local and remote file data
-				var remoteData, localData map[string]interface{}
-				if json.Unmarshal(entry.Value, &remoteData) == nil && json.Unmarshal(localValue, &localData) == nil {
-					// Extract metadata for comparison
-					var remoteMetadata, localMetadata map[string]interface{}
-					if rmeta, ok := remoteData["metadata"]; ok {
-						if rmetaBytes, err := json.Marshal(rmeta); err == nil {
-							json.Unmarshal(rmetaBytes, &remoteMetadata)
-						}
-					}
-					if lmeta, ok := localData["metadata"]; ok {
-						if lmetaBytes, err := json.Marshal(lmeta); err == nil {
-							json.Unmarshal(lmetaBytes, &localMetadata)
-						}
-					}
-					
+			if strings.Contains(entry.Key, ":file:") && entry.Store == "metadata" {
+				// Parse both local and remote metadata for comparison
+				var remoteMetadata, localMetadata map[string]interface{}
+				if json.Unmarshal(entry.Value, &remoteMetadata) == nil && json.Unmarshal(localValue, &localMetadata) == nil {
 					// CRDT rule: use latest timestamp, break ties with version
 					// Also handle deleted_at timestamps for tombstones
 					remoteTime, _ := remoteMetadata["modified_at"].(float64)
 					localTime, _ := localMetadata["modified_at"].(float64)
 					remoteDeletedAt, _ := remoteMetadata["deleted_at"].(float64)
 					localDeletedAt, _ := localMetadata["deleted_at"].(float64)
-					
+
 					// Use the latest of modified_at or deleted_at
 					if remoteDeletedAt > remoteTime {
 						remoteTime = remoteDeletedAt
@@ -698,23 +600,29 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 					if localDeletedAt > localTime {
 						localTime = localDeletedAt
 					}
-					
+
 					remoteVersion, _ := remoteMetadata["version"].(float64)
 					localVersion, _ := localMetadata["version"].(float64)
-					
+
 					if remoteTime > localTime || (remoteTime == localTime && remoteVersion > localVersion) {
 						shouldUpdate = true
 					}
 				}
 			} else {
-				// For non-file entries, just accept newer data
+				// For content entries or non-file entries, just accept newer data
 				shouldUpdate = true
 			}
 		}
 
 		if shouldUpdate {
-			if err := pm.cluster.filesKV.Put([]byte(entry.Key), entry.Value); err != nil {
-				pm.cluster.Logger.Printf("[PARTITION] syncPartitionFromPeer: failed to store sync entry '%s' from peer '%s' for partition '%s': %v", entry.Key, peerID, partitionID, err)
+			var storeErr error
+			if entry.Store == "metadata" {
+				storeErr = pm.cluster.filesKV.Put([]byte(entry.Key), entry.Value)
+			} else if entry.Store == "content" {
+				storeErr = pm.cluster.crdtKV.Put([]byte(entry.Key), entry.Value)
+			}
+			if storeErr != nil {
+				pm.cluster.Logger.Printf("[PARTITION] syncPartitionFromPeer: failed to store sync entry '%s' from peer '%s' for partition '%s': %v", entry.Key, peerID, partitionID, storeErr)
 			} else {
 				syncCount++
 			}
@@ -725,14 +633,14 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 	pm.updatePartitionMetadata(partitionID)
 
 	pm.cluster.Logger.Printf("[PARTITION] Completed sync of %s from %s (%d entries updated)", partitionID, peerID, syncCount)
-	
+
 	// Notify frontend that file list may have changed
 	pm.cluster.notifyFileListChanged()
-	
+
 	return nil
 }
 
-// handlePartitionSync serves partition data to requesting peers using existing KV stores
+// handlePartitionSync serves partition data to requesting peers from both stores
 func (pm *PartitionManager) handlePartitionSync(w http.ResponseWriter, r *http.Request, partitionID PartitionID) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -744,7 +652,7 @@ func (pm *PartitionManager) handlePartitionSync(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json")
 	encoder := json.NewEncoder(w)
 
-	// Stream all key-value pairs for this partition from existing filesKV
+	// Stream metadata from filesKV (metadata store)
 	prefix := fmt.Sprintf("partition:%s:", partitionID)
 	pm.cluster.filesKV.MapFunc(func(k, v []byte) error {
 		key := string(k)
@@ -752,9 +660,29 @@ func (pm *PartitionManager) handlePartitionSync(w http.ResponseWriter, r *http.R
 			entry := struct {
 				Key   string `json:"key"`
 				Value []byte `json:"value"`
+				Store string `json:"store"`
 			}{
 				Key:   key,
 				Value: v,
+				Store: "metadata",
+			}
+			return encoder.Encode(entry)
+		}
+		return nil
+	})
+
+	// Stream content from crdtKV (data store)
+	pm.cluster.crdtKV.MapFunc(func(k, v []byte) error {
+		key := string(k)
+		if strings.HasPrefix(key, prefix) {
+			entry := struct {
+				Key   string `json:"key"`
+				Value []byte `json:"value"`
+				Store string `json:"store"`
+			}{
+				Key:   key,
+				Value: v,
+				Store: "content",
 			}
 			return encoder.Encode(entry)
 		}
@@ -834,7 +762,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 			continue // Already properly replicated
 		}
 
-		// Check if we already have this partition
+		// Check if we already have this partition by scanning metadata store
 		hasPartition := false
 		prefix := fmt.Sprintf("partition:%s:", partitionID)
 		pm.cluster.filesKV.MapFunc(func(k, v []byte) error {
@@ -857,12 +785,12 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 				availableHolders = append(availableHolders, holderID)
 			}
 		}
-		
+
 		if len(availableHolders) == 0 {
 			pm.cluster.debugf("[PARTITION] No available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs)
 			continue // No available peers to sync from
 		}
-		
+
 		return partitionID, availableHolders
 	}
 
@@ -880,7 +808,7 @@ func (pm *PartitionManager) findNextPartitionToSync() (PartitionID, NodeID) {
 
 // getPartitionStats returns statistics about partitions
 func (pm *PartitionManager) getPartitionStats() map[string]interface{} {
-	// Count local partitions by scanning existing filesKV
+	// Count local partitions by scanning metadata store
 	localPartitions := make(map[string]bool)
 	pm.cluster.filesKV.MapFunc(func(k, v []byte) error {
 		key := string(k)

@@ -62,18 +62,10 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []SearchResult {
 		}
 		filePath := parts[1]
 		
-		// Parse the file data
-		var combined map[string]interface{}
-		if err := json.Unmarshal(v, &combined); err != nil {
-			return nil
-		}
-		
-		// Extract metadata
+		// Parse the metadata
 		var metadata map[string]interface{}
-		if meta, ok := combined["metadata"]; ok {
-			if metaBytes, err := json.Marshal(meta); err == nil {
-				json.Unmarshal(metaBytes, &metadata)
-			}
+		if err := json.Unmarshal(v, &metadata); err != nil {
+			return nil
 		}
 		
 		// Skip deleted files
