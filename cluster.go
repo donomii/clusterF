@@ -792,6 +792,8 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	// Partition sync endpoints
 	mux.HandleFunc("/api/partition-sync/", corsMiddleware(c.handlePartitionSyncAPI))
 	mux.HandleFunc("/api/partition-stats", corsMiddleware(c.handlePartitionStats))
+	// Search API
+	mux.HandleFunc("/api/search", corsMiddleware(c.handleSearchAPI))
 
 	server = &http.Server{
 		Handler: mux,

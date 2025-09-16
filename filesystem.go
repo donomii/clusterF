@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,27 +53,13 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		return err
 	}
 
-	// Ensure parent directories exist
-	if err := fs.ensureDirectoryPath(filepath.Dir(path)); err != nil {
-		return err
-	}
-
-	// Preserve CreatedAt if file exists
-	var createdAt time.Time
-	if oldMeta, err := fs.getMetadata(path); err == nil {
-		createdAt = oldMeta.CreatedAt
-	}
-	if createdAt.IsZero() {
-		createdAt = modTime
-	}
-
 	// Create file metadata for the file system layer
 	metadata := FileMetadata{
 		Name:        filepath.Base(path),
 		Path:        path,
 		Size:        int64(len(content)),
 		ContentType: contentType,
-		CreatedAt:   createdAt,
+		CreatedAt:   modTime,
 		ModifiedAt:  modTime,
 		IsDirectory: false,
 	}
@@ -103,13 +88,6 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		return logerrf("failed to store file: %v", err)
 	}
 
-	// Update parent directory (skip for no-store clients)
-	if !fs.cluster.NoStore {
-		if err := fs.addToDirectory(filepath.Dir(path), filepath.Base(path)); err != nil {
-			return logerrf("failed to update directory: %v", err)
-		}
-	}
-
 	// Mirror to OS export directory if configured
 	if fs.cluster != nil && fs.cluster.exporter != nil {
 		if err := fs.cluster.exporter.WriteFile(path, content, modTime); err != nil {
@@ -125,46 +103,46 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	// Find storage nodes that can hold this file
 	peers := fs.cluster.DiscoveryManager.GetPeers()
 	var storageNodes []*PeerInfo
-	
+
 	for _, peer := range peers {
 		// Only forward to peers that are not no-store clients
 		// We can't easily detect if a peer is no-store, so try all peers
 		storageNodes = append(storageNodes, peer)
 	}
-	
+
 	if len(storageNodes) == 0 {
 		return fmt.Errorf("no storage nodes available to forward upload")
 	}
-	
+
 	// Try forwarding to storage nodes until one succeeds
 	var lastErr error
 	for _, peer := range storageNodes {
 		url := fmt.Sprintf("http://%s:%d/api/files%s", peer.Address, peer.HTTPPort, path)
-		
+
 		req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(content))
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		
+
 		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("X-Forwarded-From", string(fs.cluster.ID))
-		
+
 		resp, err := fs.cluster.httpClient.Do(req)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		defer resp.Body.Close()
-		
+
 		if resp.StatusCode == http.StatusCreated {
 			fs.cluster.Logger.Printf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
 			return nil // Success
 		}
-		
+
 		lastErr = fmt.Errorf("peer %s returned %d", peer.NodeID, resp.StatusCode)
 	}
-	
+
 	return fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
 }
 
@@ -223,54 +201,9 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *FileMetadata, error)
 	return content, metadata, nil
 }
 
-// ListDirectory lists the contents of a directory
+// ListDirectory lists the contents of a directory using search API
 func (fs *ClusterFileSystem) ListDirectory(path string) ([]*FileMetadata, error) {
-	if path == "" {
-		path = "/"
-	}
-
-	// Normalize path
-	path = filepath.Clean(path)
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-
-	// Get directory metadata
-	metadata, err := fs.getMetadata(path)
-	if err != nil {
-		// If root directory doesn't exist, return empty listing
-		if path == "/" {
-			return []*FileMetadata{}, nil
-		}
-		return nil, err
-	}
-
-	if !metadata.IsDirectory {
-		return nil, fmt.Errorf("path is not a directory")
-	}
-
-	// Get metadata for each child
-	var results []*FileMetadata
-	for _, childName := range metadata.Children {
-		childPath := filepath.Join(path, childName)
-		childMeta, err := fs.getMetadata(childPath)
-		if err != nil {
-			// Skip missing children
-			continue
-		}
-		results = append(results, childMeta)
-	}
-
-	// Sort by name
-	sort.Slice(results, func(i, j int) bool {
-		// Directories first, then files
-		if results[i].IsDirectory != results[j].IsDirectory {
-			return results[i].IsDirectory
-		}
-		return results[i].Name < results[j].Name
-	})
-
-	return results, nil
+	return fs.cluster.ListDirectoryUsingSearch(path)
 }
 
 // DeleteFile removes a file from the cluster
@@ -296,10 +229,7 @@ func (fs *ClusterFileSystem) DeleteFile(path string) error {
 		return fmt.Errorf("failed to delete file: %v", err)
 	}
 
-	// Remove from parent directory
-	if err := fs.removeFromDirectory(filepath.Dir(path), filepath.Base(path)); err != nil {
-		return logerrf("failed to update directory: %v", err)
-	}
+	// Directory updates are no longer needed since we use search-based directory listing
 
 	// Mirror delete to OS export directory if configured
 	if fs.cluster != nil && fs.cluster.exporter != nil {
@@ -311,71 +241,6 @@ func (fs *ClusterFileSystem) DeleteFile(path string) error {
 			if err := fs.cluster.exporter.RemoveFile(path); err != nil {
 				fs.cluster.Logger.Printf("[EXPORT] RemoveFile mirror failed for %s: %v", path, err)
 			}
-		}
-	}
-
-	return nil
-}
-
-// CreateDirectory creates a new directory
-func (fs *ClusterFileSystem) CreateDirectory(path string) error {
-	return fs.CreateDirectoryWithModTime(path, time.Now())
-}
-
-// CreateDirectoryWithModTime creates a directory with specified modification time
-func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime time.Time) error {
-	if err := fs.validatePath(path); err != nil {
-		return err
-	}
-
-	// Check if already exists
-	if _, err := fs.getMetadata(path); err == nil {
-		return fmt.Errorf("path already exists")
-	}
-
-	// Ensure parent directories exist
-	if err := fs.ensureDirectoryPath(filepath.Dir(path)); err != nil {
-		return err
-	}
-
-	// Create directory metadata
-	metadata := FileMetadata{
-		Name:        filepath.Base(path),
-		Path:        path,
-		Size:        0,
-		IsDirectory: true,
-		Children:    []string{},
-		CreatedAt:   modTime,
-		ModifiedAt:  modTime,
-	}
-
-	// Store directory metadata in partition system
-	// Create enhanced metadata for CRDT
-	enhancedMetadata := map[string]interface{}{
-		"name":         metadata.Name,
-		"path":         metadata.Path,
-		"size":         metadata.Size,
-		"is_directory": metadata.IsDirectory,
-		"children":     metadata.Children,
-		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
-		"modified_at":  modTime.Unix(),
-		"version":      float64(modTime.UnixNano()),
-		"deleted":      false,
-	}
-	metadataJSON, _ := json.Marshal(enhancedMetadata)
-	if err := fs.cluster.PartitionManager.storeFileInPartition(path, metadataJSON, []byte{}); err != nil {
-		return logerrf("failed to store directory metadata: %v", err)
-	}
-
-	// Update parent directory
-	if err := fs.addToDirectory(filepath.Dir(path), filepath.Base(path)); err != nil {
-		return logerrf("failed to update parent directory: %v", err)
-	}
-
-	// Mirror to OS export directory if configured
-	if fs.cluster != nil && fs.cluster.exporter != nil {
-		if err := fs.cluster.exporter.MkdirWithModTime(path, modTime); err != nil {
-			fs.cluster.Logger.Printf("[EXPORT] Mkdir mirror failed for %s: %v", path, err)
 		}
 	}
 
@@ -445,136 +310,12 @@ func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
 	return &metadata, nil
 }
 
-func (fs *ClusterFileSystem) ensureDirectoryPath(path string) error {
-	if path == "/" || path == "." {
-		return fs.ensureRootDirectory()
-	}
-
-	// Check if directory exists
-	if _, err := fs.getMetadata(path); err == nil {
-		return nil // Already exists
-	}
-
-	// Ensure parent exists first
-	parent := filepath.Dir(path)
-	if err := fs.ensureDirectoryPath(parent); err != nil {
-		return err
-	}
-
-	// Create this directory
-	return fs.CreateDirectory(path)
+// CreateDirectory is a no-op since directories are inferred from file paths
+func (fs *ClusterFileSystem) CreateDirectory(path string) error {
+	return nil // Directories are inferred from file paths
 }
 
-func (fs *ClusterFileSystem) ensureRootDirectory() error {
-	if _, err := fs.getMetadata("/"); err == nil {
-		return nil // Root exists
-	}
-
-	// Create root directory
-	metadata := FileMetadata{
-		Name:        "/",
-		Path:        "/",
-		Size:        0,
-		IsDirectory: true,
-		Children:    []string{},
-		CreatedAt:   time.Now(),
-		ModifiedAt:  time.Now(),
-	}
-
-	// Store root metadata in partition system
-	// Create enhanced metadata for CRDT
-	enhancedMetadata := map[string]interface{}{
-		"name":         metadata.Name,
-		"path":         metadata.Path,
-		"size":         metadata.Size,
-		"is_directory": metadata.IsDirectory,
-		"children":     metadata.Children,
-		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
-		"modified_at":  metadata.ModifiedAt.Unix(),
-		"version":      float64(metadata.ModifiedAt.UnixNano()),
-		"deleted":      false,
-	}
-	metadataJSON, _ := json.Marshal(enhancedMetadata)
-	return fs.cluster.PartitionManager.storeFileInPartition("/", metadataJSON, []byte{})
-}
-
-func (fs *ClusterFileSystem) addToDirectory(dirPath, childName string) error {
-	if dirPath == "." {
-		dirPath = "/"
-	}
-
-	metadata, err := fs.getMetadata(dirPath)
-	if err != nil {
-		return err
-	}
-
-	if !metadata.IsDirectory {
-		return fmt.Errorf("not a directory")
-	}
-
-	// Add child if not already present
-	for _, existing := range metadata.Children {
-		if existing == childName {
-			return nil // Already present
-		}
-	}
-
-	metadata.Children = append(metadata.Children, childName)
-	metadata.ModifiedAt = time.Now()
-
-	// Update directory metadata in partition system with enhanced format
-	enhancedMetadata := map[string]interface{}{
-		"name":         metadata.Name,
-		"path":         metadata.Path,
-		"size":         metadata.Size,
-		"is_directory": metadata.IsDirectory,
-		"children":     metadata.Children,
-		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
-		"modified_at":  metadata.ModifiedAt.Unix(),
-		"version":      float64(metadata.ModifiedAt.UnixNano()),
-		"deleted":      false,
-	}
-	metadataJSON, _ := json.Marshal(enhancedMetadata)
-	return fs.cluster.PartitionManager.storeFileInPartition(dirPath, metadataJSON, []byte{})
-}
-
-func (fs *ClusterFileSystem) removeFromDirectory(dirPath, childName string) error {
-	if dirPath == "." {
-		dirPath = "/"
-	}
-
-	metadata, err := fs.getMetadata(dirPath)
-	if err != nil {
-		return err
-	}
-
-	if !metadata.IsDirectory {
-		return fmt.Errorf("not a directory")
-	}
-
-	// Remove child
-	var newChildren []string
-	for _, existing := range metadata.Children {
-		if existing != childName {
-			newChildren = append(newChildren, existing)
-		}
-	}
-
-	metadata.Children = newChildren
-	metadata.ModifiedAt = time.Now()
-
-	// Update directory metadata in partition system with enhanced format
-	enhancedMetadata := map[string]interface{}{
-		"name":         metadata.Name,
-		"path":         metadata.Path,
-		"size":         metadata.Size,
-		"is_directory": metadata.IsDirectory,
-		"children":     metadata.Children,
-		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
-		"modified_at":  metadata.ModifiedAt.Unix(),
-		"version":      float64(metadata.ModifiedAt.UnixNano()),
-		"deleted":      false,
-	}
-	metadataJSON, _ := json.Marshal(enhancedMetadata)
-	return fs.cluster.PartitionManager.storeFileInPartition(dirPath, metadataJSON, []byte{})
+// CreateDirectoryWithModTime is a no-op since directories are inferred from file paths
+func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime time.Time) error {
+	return nil // Directories are inferred from file paths
 }

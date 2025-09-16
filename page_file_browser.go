@@ -83,17 +83,20 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
         c.debugf("[FILES] Failed to get file %s: %v", path, err)
     }
 
-    // Try to list as directory
-    if entries, err := c.FileSystem.ListDirectory(path); err == nil {
-        // It's a directory - return JSON listing
-        w.Header().Set("Content-Type", "application/json")
-        response := map[string]interface{}{
-            "path":    path,
-            "entries": entries,
-            "count":   len(entries),
+    // Try to list as directory (but only if path looks like a directory)
+    // Skip directory listing for paths that look like files (have extensions)
+    if !strings.Contains(filepath.Base(path), ".") || strings.HasSuffix(path, "/") {
+        if entries, err := c.FileSystem.ListDirectory(path); err == nil {
+            // It's a directory - return JSON listing
+            w.Header().Set("Content-Type", "application/json")
+            response := map[string]interface{}{
+                "path":    path,
+                "entries": entries,
+                "count":   len(entries),
+            }
+            json.NewEncoder(w).Encode(response)
+            return
         }
-        json.NewEncoder(w).Encode(response)
-        return
     }
 
     // Neither file nor directory found
