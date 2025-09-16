@@ -123,7 +123,7 @@ func (c *Cluster) addDirectorySearchResult(filePath, query string, metadata map[
 	if strings.Contains(remainder, "/") {
 		// File is in a subdirectory - create directory entry
 		dirName := strings.Split(remainder, "/")[0]
-		dirPath := query + dirName
+		dirPath := query + dirName + "/"  // Directories end with /
 		
 		if !seen[dirPath] {
 			seen[dirPath] = true

@@ -484,15 +484,27 @@
         }
 
         function navigateToFolder(folderName) {
-            currentPath = currentPath.endsWith('/') ? currentPath + folderName : currentPath + '/' + folderName;
+            // Directories end with /
+            if (currentPath === '/') {
+                currentPath = '/' + folderName + '/';
+            } else {
+                currentPath = currentPath + folderName + '/';
+            }
             refreshFiles();
         }
 
         function navigateUp() {
             if (currentPath !== '/') {
-                const parts = currentPath.split('/');
+                // Remove trailing / and split
+                const cleanPath = currentPath.replace(/\/$/, '');
+                const parts = cleanPath.split('/');
                 parts.pop();
-                currentPath = parts.join('/') || '/';
+                currentPath = parts.join('/') + '/';
+                if (currentPath === '/') {
+                    // Already root
+                } else if (currentPath === '//') {
+                    currentPath = '/';
+                }
                 refreshFiles();
             }
         }
@@ -521,7 +533,7 @@
         }
 
         async function uploadFile(file) {
-            const filePath = currentPath.endsWith('/') ? currentPath + file.webkitRelativePath : currentPath + '/' + file.webkitRelativePath;
+            const filePath = currentPath + file.webkitRelativePath;
             
             // If this looks like a directory (empty file with path containing /), skip it
             if (file.size === 0 && file.webkitRelativePath.includes('/')) {
@@ -634,7 +646,8 @@
             }
             
             try {
-                const folderPath = currentPath.endsWith('/') ? currentPath + folderName : currentPath + '/' + folderName;
+                // Directories end with /
+                const folderPath = currentPath + folderName + '/';
                 const response = await fetch('/api/files' + folderPath, {
                     method: 'POST',
                     headers: { 'X-Create-Directory': 'true' }
