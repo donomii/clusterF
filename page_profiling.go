@@ -48,27 +48,9 @@ func (c *Cluster) handleProfilingPage(w http.ResponseWriter, r *http.Request) {
     
     <div class="profiles">
         <div class="profile-card">
-            <h3>CPU Profile</h3>
-            <p>Shows CPU usage by function</p>
-            <a href="/debug/pprof/profile?seconds=30" target="_blank" class="btn">📊 View CPU</a>
-        </div>
-        
-        <div class="profile-card">
-            <h3>Memory Profile</h3>
-            <p>Shows memory allocation</p>
-            <a href="/debug/pprof/heap" target="_blank" class="btn">🧠 View Memory</a>
-        </div>
-        
-        <div class="profile-card">
-            <h3>Goroutine Profile</h3>
-            <p>Shows active goroutines</p>
-            <a href="/debug/pprof/goroutine" target="_blank" class="btn">🔄 View Goroutines</a>
-        </div>
-        
-        <div class="profile-card">
-            <h3>Block Profile</h3>
-            <p>Shows blocking operations</p>
-            <a href="/debug/pprof/block" target="_blank" class="btn">🚧 View Blocking</a>
+            <h3>CPU Flame Graph</h3>
+            <p>Click to generate and view flame graph</p>
+            <a href="/flamegraph" class="btn">🔥 Generate Flame Graph</a>
         </div>
     </div>
     
@@ -77,8 +59,7 @@ func (c *Cluster) handleProfilingPage(w http.ResponseWriter, r *http.Request) {
         <ul style="text-align: left; max-width: 600px; margin: 0 auto;">
             <li>Click "Start Profiling" to enable detailed profiling</li>
             <li>Use your application normally to generate load</li>
-            <li>Click profile links to view current data</li>
-            <li>CPU profiles capture 30 seconds of data</li>
+            <li>Click "Generate Flame Graph" to view CPU flame graph</li>
             <li>Click "Stop Profiling" to disable when done</li>
         </ul>
     </div>

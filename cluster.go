@@ -751,6 +751,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/frogpond/fullstore", corsMiddleware(c.handleFrogpondFullStore))
 	mux.HandleFunc("/api/replication-factor", corsMiddleware(c.handleReplicationFactor))
 	mux.HandleFunc("/api/max-chunk-size", corsMiddleware(c.handleMaxChunkSize))
+	mux.HandleFunc("/flamegraph", corsMiddleware(c.handleFlameGraph))
 	mux.HandleFunc("/profiling", corsMiddleware(c.handleProfilingPage))
 	mux.HandleFunc("/api/profiling", corsMiddleware(c.handleProfilingAPI))
 	// Add pprof endpoints manually
