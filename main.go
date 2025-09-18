@@ -34,7 +34,6 @@ func main() {
 	nodeID := flag.String("node-id", "", "Node ID (if not specified, will be loaded from or generated for the data directory)")
 	noDesktop := flag.Bool("no-desktop", false, "Do not open the desktop drop window")
 	mountPoint := flag.String("mount", "", "[DISABLED] FUSE mounting not supported")
-	maxChunkSizeMB := flag.Int("max-chunk-size", 100, "[DEPRECATED] Maximum chunk size in MB - now uses partition-based storage")
 	exportDir := flag.String("export-dir", "", "Mirror cluster files to this local directory (share via macOS File Sharing for SMB)")
 	httpPort := flag.Int("http-port", 0, "HTTP port to bind (0 = dynamic near 30000)")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
@@ -50,7 +49,7 @@ func main() {
 	if *simNodes > 0 {
 		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir)
 	} else {
-		runSingleNode(*noDesktop, *mountPoint, *maxChunkSizeMB, *exportDir, *nodeID, *dataDir, *httpPort, *debug, *noStore)
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *nodeID, *dataDir, *httpPort, *debug, *noStore)
 	}
 }
 
@@ -114,7 +113,7 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 				// Set fast discovery timings for simulation
 				node.DiscoveryManager.SetTimings(2*time.Second, 10*time.Second)
 
-				// Store a demo file with node-specific content (using file system instead of chunks)
+				// Store a demo file with node-specific content
 				demoContent := fmt.Sprintf("demo-data-from-%s-at-%d", nodeID, time.Now().Unix())
 				if err := node.FileSystem.StoreFile(fmt.Sprintf("/demo-%03d.txt", index), []byte(demoContent), "text/plain"); err != nil {
 					log.Print(logerrf("Failed to store demo file on %s: %v", nodeID, err))
@@ -183,7 +182,7 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, maxChunkSizeMB int, exportDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:           nodeID,

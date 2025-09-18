@@ -74,8 +74,8 @@ func waitForAllNodesReady(nodes []*Cluster, timeoutMs int) {
 // TestConfig holds configuration for cluster tests
 type TestConfig struct {
 	NodeCount         int
-	ChunkCount        int
-	ChunkSize         int
+	FileCount         int
+	FileSize          int
 	TestName          string
 	TimeoutMs         int
 	ReplicationFactor int
@@ -231,12 +231,12 @@ func createTestNodesParallel(t *testing.T, count int, tempDir string, discoveryP
 
 // ClusterTestResult holds results from cluster tests
 type ClusterTestResult struct {
-	Success          bool
-	Duration         time.Duration
-	NodesCreated     int
-	ChunksStored     int
-	ChunksReplicated int
-	Error            error
+	Success         bool
+	Duration        time.Duration
+	NodesCreated    int
+	FilesStored     int
+	FilesReplicated int
+	Error           error
 }
 
 // parallelMap applies a function to all elements in parallel, like Haskell's parMap
@@ -448,13 +448,13 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 	}
 	var client = &http.Client{Transport: tr, Timeout: 5 * time.Second}
 
-	chunksStored := 0
-	chunksReplicated := 0
-	errCh := make(chan error, config.ChunkCount*2)
+	filesStored := 0
+	filesReplicated := 0
+	errCh := make(chan error, config.FileCount*2)
 	var wg sync.WaitGroup
 
 	// Test storing chunks
-	for j := 0; j < config.ChunkCount; j++ {
+	for j := 0; j < config.FileCount; j++ {
 		wg.Add(1)
 		go func(i int) {
 			wg.Done()
@@ -463,7 +463,7 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 
 			// Use file system API instead of chunk API
 			filePath := fmt.Sprintf("/test-file-%d.txt", i)
-			testData := generateTestData(config.ChunkSize)
+			testData := generateTestData(config.FileSize)
 
 			var err error
 			var resp *http.Response
@@ -491,7 +491,7 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 				errCh <- fmt.Errorf("Expected 201, got %d", resp.StatusCode)
 				return
 			}
-			chunksStored++
+			filesStored++
 
 			// Verify retrieval from same node
 			success = CheckSuccessWithTimeout(func() bool {
@@ -536,15 +536,15 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 	// Note: In partition-based storage, files don't automatically replicate
 	// across nodes like chunks did. Each file belongs to a specific partition.
 	// Skip replication testing since it's not applicable to the new architecture.
-	chunksReplicated = config.ChunkCount // Mark as "replicated" to satisfy test expectations
+	filesReplicated = config.FileCount // Mark as "replicated" to satisfy test expectations
 
 	return ClusterTestResult{
-		Success:          firstErr == nil,
-		Duration:         time.Since(start),
-		NodesCreated:     len(nodes),
-		ChunksStored:     chunksStored,
-		ChunksReplicated: chunksReplicated,
-		Error:            firstErr,
+		Success:         firstErr == nil,
+		Duration:        time.Since(start),
+		NodesCreated:    len(nodes),
+		FilesStored:     filesStored,
+		FilesReplicated: filesReplicated,
+		Error:           firstErr,
 	}
 }
 
@@ -596,8 +596,8 @@ func testDiscoveryAndPeering(t *testing.T, config TestConfig) ClusterTestResult 
 func TestCluster_SingleNode(t *testing.T) {
 	result := testBasicOperations(t, TestConfig{
 		NodeCount:     1,
-		ChunkCount:    5,
-		ChunkSize:     1024,
+		FileCount:     5,
+		FileSize:      1024,
 		TestName:      "SingleNode",
 		TimeoutMs:     5000,
 		DiscoveryPort: 28000, // Unique port
@@ -607,15 +607,15 @@ func TestCluster_SingleNode(t *testing.T) {
 		t.Fatalf("Single node test failed: %v", result.Error)
 	}
 
-	t.Logf("Single node test passed: %d chunks stored in %v", result.ChunksStored, result.Duration)
+	t.Logf("Single node test passed: %d chunks stored in %v", result.FilesStored, result.Duration)
 }
 
 // Comprehensive scaling test that can be run with different parameters - now with concurrent subtests
 func TestCluster_Scaling(t *testing.T) {
 	testCases := []TestConfig{
-		{NodeCount: 1, ChunkCount: 10, ChunkSize: 1024, TestName: "Scale_1_Node", TimeoutMs: 5000},
-		{NodeCount: 10, ChunkCount: 50, ChunkSize: 1024, TestName: "Scale_10_Nodes", TimeoutMs: 30000},
-		{NodeCount: 30, ChunkCount: 50, ChunkSize: 1024, TestName: "Scale_30_Nodes", TimeoutMs: 120000},
+		{NodeCount: 1, FileCount: 10, FileSize: 1024, TestName: "Scale_1_Node", TimeoutMs: 5000},
+		{NodeCount: 10, FileCount: 50, FileSize: 1024, TestName: "Scale_10_Nodes", TimeoutMs: 30000},
+		{NodeCount: 30, FileCount: 50, FileSize: 1024, TestName: "Scale_30_Nodes", TimeoutMs: 120000},
 	}
 
 	// Run all test cases in parallel with different discovery ports
@@ -639,15 +639,15 @@ func TestCluster_Scaling(t *testing.T) {
 					t.Fatalf("Scaling test %s failed: %v", tc.TestName, result.Error)
 				}
 				t.Logf("Scaling test %s passed: %d nodes, %d chunks, %d replicated in %v",
-					tc.TestName, result.NodesCreated, result.ChunksStored, result.ChunksReplicated, result.Duration)
+					tc.TestName, result.NodesCreated, result.FilesStored, result.FilesReplicated, result.Duration)
 			}
 		})
 	}
 }
 
 // Test different chunk sizes - now parallel
-func TestCluster_ChunkSizes(t *testing.T) {
-	chunkSizes := []int{
+func TestCluster_FileSizes(t *testing.T) {
+	fileSizes := []int{
 		0, // Empty chunk
 		1,
 		64,      // 64 bytes
@@ -656,13 +656,13 @@ func TestCluster_ChunkSizes(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 
-	for i, size := range chunkSizes {
+	for i, size := range fileSizes {
 		// Capture range variable
 		wg.Add(1)
 		go func(i, size int) {
 			defer wg.Done()
-			// Run each chunk size test as a subtest
-			t.Run(fmt.Sprintf("ChunkSize_%d", size), func(t *testing.T) {
+			// Run each file size test as a subtest
+			t.Run(fmt.Sprintf("FileSize_%d", size), func(t *testing.T) {
 
 				// Adjust chunk count based on size to keep test duration reasonable
 				chunkCount := 10
@@ -674,8 +674,8 @@ func TestCluster_ChunkSizes(t *testing.T) {
 
 				result := testBasicOperations(t, TestConfig{
 					NodeCount:     3,
-					ChunkCount:    chunkCount,
-					ChunkSize:     size,
+					FileCount:     chunkCount,
+					FileSize:      size,
 					TestName:      fmt.Sprintf("ChunkSize_%d", size),
 					TimeoutMs:     30000,
 					DiscoveryPort: 17000 + (i * 10), // Unique port per test
@@ -686,7 +686,7 @@ func TestCluster_ChunkSizes(t *testing.T) {
 				}
 
 				t.Logf("Chunk size test passed: %d chunks of %d bytes in %v",
-					result.ChunksStored, size, result.Duration)
+					result.FilesStored, size, result.Duration)
 			})
 		}(i, size)
 
@@ -813,8 +813,8 @@ func TestParallelMap_ActuallyParallel(t *testing.T) {
 func TestCluster_BasicOperations(t *testing.T) {
 	config := TestConfig{
 		NodeCount:     1,
-		ChunkCount:    5,
-		ChunkSize:     1024,
+		FileCount:     5,
+		FileSize:      1024,
 		TestName:      "TestCluster_BasicOperations",
 		TimeoutMs:     5000,
 		DiscoveryPort: 27001, // Unique port to avoid conflicts

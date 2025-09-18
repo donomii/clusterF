@@ -163,7 +163,7 @@ func TestFileSystem_LargeFiles(t *testing.T) {
 
 	fs := cluster.FileSystem
 
-	// Create a large file (200KB - should be split into multiple chunks)
+	// Create a large file (200KB)
 	largeContent := make([]byte, 200*1024)
 	for i := range largeContent {
 		largeContent[i] = byte(i % 256)
@@ -184,7 +184,6 @@ func TestFileSystem_LargeFiles(t *testing.T) {
 		t.Fatalf("Large file content mismatch")
 	}
 
-	// Note: ChunkCount was removed since we moved to partition-based storage
 	// Just verify the file was stored correctly
 	t.Logf("✅ Large file test passed: %d bytes", len(content))
 }
@@ -281,8 +280,8 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 
 	config := TestConfig{
 		NodeCount:     3,
-		ChunkCount:    5,
-		ChunkSize:     1024,
+		FileCount:     5,
+		FileSize:      1024,
 		TestName:      "TestFileSystem_MultiNode_Replication",
 		TimeoutMs:     5000,
 		DiscoveryPort: 37001, // Unique port to avoid conflicts

@@ -100,7 +100,7 @@
 
         function renderHints() {
             const tree = document.getElementById('tree');
-            const hints = ['cluster', 'nodes', 'chunks', 'partitions'];
+            const hints = ['cluster', 'nodes', 'partitions'];
             const wrap = document.createElement('div');
             wrap.className = 'muted';
             wrap.innerHTML = 'Quick start: ' + hints.map(h => '<span class="chip" onclick="setPrefix(\''+h+'/\')">'+h+'/</span>').join('');
@@ -151,7 +151,7 @@
         <div class="panel">
             <h2>CRDT Browser</h2>
             <div class="tools">
-                <input id="prefix" placeholder="Prefix, e.g. partitions or chunks">
+                <input id="prefix" placeholder="Prefix, e.g. partitions">
                 <button class="btn" onclick="go()">Go</button>
                 <button class="btn" onclick="up()">Up</button>
                 <button class="btn" onclick="back()">Back</button>

@@ -1,15 +1,15 @@
 package main
 
 import (
-    "fmt"
-    "net/http"
+	"fmt"
+	"net/http"
 )
 
 // handleMonitorDashboard serves a simple cluster monitoring dashboard
 func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-    html := `<!DOCTYPE html>
+	html := `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -39,10 +39,6 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
     
     <div class="stats-grid" id="stats">
         <div class="stat-card">
-            <div class="stat-value" id="chunks">-</div>
-            <div class="stat-label">Local Chunks</div>
-        </div>
-        <div class="stat-card">
             <div class="stat-value" id="peers">-</div>
             <div class="stat-label">Connected Peers</div>
         </div>
@@ -57,10 +53,6 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
         <div class="stat-card">
             <div class="stat-value" id="under_replicated">-</div>
             <div class="stat-label">Under-Replicated</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value" id="max_chunk_size_mb">-</div>
-            <div class="stat-label">Max Chunk Size (MB)</div>
         </div>
         <div class="stat-card">
             <div class="stat-value" id="local_partitions">-</div>
@@ -83,7 +75,6 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
         <input type="number" id="rfInput" min="1" max="20" style="margin: 0 10px; padding: 8px; border-radius: 4px; border: 1px solid #3b82f6; background: #1a1a2e; color: white; width: 60px;" placeholder="RF">
         <button class="btn" onclick="setReplicationFactor()">🔧 Set RF</button>
         <input type="number" id="maxSizeInput" min="1" max="1000" style="margin: 0 10px; padding: 8px; border-radius: 4px; border: 1px solid #3b82f6; background: #1a1a2e; color: white; width: 80px;" placeholder="MB">
-        <button class="btn" onclick="setMaxChunkSize()">📁 Set Max Size</button>
     </div>
     
     <div class="info">
@@ -108,12 +99,12 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
                 const response = await fetch('/status');
                 const stats = await response.json();
                 
-                document.getElementById('chunks').textContent = stats.chunks || 0;
                 document.getElementById('peers').textContent = stats.peers || 0;
                 document.getElementById('replication_factor').textContent = stats.replication_factor || 3;
                 document.getElementById('tombstones').textContent = stats.tombstones || 0;
-                document.getElementById('under_replicated').textContent = stats.under_replicated || 0;
-                document.getElementById('max_chunk_size_mb').textContent = stats.max_chunk_size_mb || 100;
+                const partitionStats = stats.partition_stats || {};
+                const underReplicated = partitionStats.under_replicated ?? stats.under_replicated;
+                document.getElementById('under_replicated').textContent = underReplicated || 0;
                 
                 // Partition stats
                 if (stats.partition_stats) {
@@ -128,47 +119,18 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
                 
                 // Update input fields with current values
                 document.getElementById('rfInput').value = stats.replication_factor || 3;
-                document.getElementById('maxSizeInput').value = stats.max_chunk_size_mb || 100;
             } catch (error) {
                 console.error('Failed to fetch stats:', error);
             }
         }
         
-        async function setMaxChunkSize() {
-            try {
-                const maxSizeInput = document.getElementById('maxSizeInput');
-                const newMaxSize = parseInt(maxSizeInput.value);
-                
-                if (isNaN(newMaxSize) || newMaxSize < 1) {
-                    alert('❌ Max chunk size must be a number >= 1MB');
-                    return;
-                }
-                
-                const response = await fetch('/api/max-chunk-size', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ max_chunk_size_mb: newMaxSize })
-                });
-                
-                if (response.ok) {
-                    const result = await response.json();
-                    alert('✅ Max chunk size set to ' + result.max_chunk_size_mb + 'MB');
-                    refreshStats();
-                } else {
-                    const error = await response.text();
-                    alert('❌ Failed to set max chunk size: ' + error);
-                }
-            } catch (error) {
-                alert('Error: ' + error.message);
-            }
-        }
+       
         
         async function addTestData() {
             try {
-                const chunkId = 'test-chunk-' + Date.now();
                 const testData = 'Test data created at ' + new Date().toLocaleString();
                 
-                // Replace the chunk calls with equivalent file calls
+                
                 const fileName = 'test-' + Date.now() + '.txt';
                 const response = await fetch('/api/files/' + fileName, {
                     method: 'PUT',
@@ -177,7 +139,7 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
                 });
                 
                 if (response.ok) {
-                    alert('✅ Added test chunk: ' + chunkId);
+                    alert('✅ Added test file: ' + fileName);
                     refreshStats();
                 } else {
                     alert('❌ Failed to add test data');
@@ -227,6 +189,5 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
 </body>
 </html>`
 
-    w.Write([]byte(html))
+	w.Write([]byte(html))
 }
-

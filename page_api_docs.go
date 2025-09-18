@@ -1,19 +1,19 @@
 package main
 
 import (
-    "fmt"
-    "net/http"
+	"fmt"
+	"net/http"
 )
 
 // handleAPIDocs serves a human-friendly HTML page listing API endpoints
 func (c *Cluster) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
-    if r.URL.Path != "/api" { // keep exact match so /api/* routes work normally
-        http.NotFound(w, r)
-        return
-    }
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.URL.Path != "/api" { // keep exact match so /api/* routes work normally
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-    html := `<!DOCTYPE html>
+	html := `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -91,11 +91,7 @@ func (c *Cluster) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
                     <div class="ep"><span class="verb PUT">PUT</span> <span class="code">/api/replication-factor</span> { replication_factor }</div>
                     <div>Get/set replication factor.</div>
                 </div>
-                <div class="card">
-                    <div class="ep"><span class="verb GET">GET</span> <span class="code">/api/max-chunk-size</span></div>
-                    <div class="ep"><span class="verb PUT">PUT</span> <span class="code">/api/max-chunk-size</span> { max_chunk_size_mb }</div>
-                    <div>Get/set max chunk size.</div>
-                </div>
+               
             </div>
         </div>
 
@@ -123,16 +119,7 @@ func (c *Cluster) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
             </div>
         </div>
 
-        <div class="section">
-            <h2>Cluster Index</h2>
-            <div class="grid">
-                <div class="card">
-                    <div class="ep"><span class="verb GET">GET</span> <span class="code">/api/chunk-index?limit=100</span></div>
-                    <div>List chunks with holder nodes and replication status.</div>
-                    <div><a href="/api/chunk-index" target="_blank">Open</a></div>
-                </div>
-            </div>
-        </div>
+      
 
         <div class="section">
             <h2>Internal (Frogpond)</h2>
@@ -150,6 +137,5 @@ func (c *Cluster) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`
 
-    w.Write([]byte(html))
+	w.Write([]byte(html))
 }
-

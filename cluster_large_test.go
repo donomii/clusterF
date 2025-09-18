@@ -94,8 +94,8 @@ func TestCluster_Large_Scaling(t *testing.T) {
 				if !result.Success {
 					t.Fatalf("Scaling test %s failed: %v", tc.TestName, result.Error)
 				}
-				t.Logf("Scaling test %s passed: %d nodes, %d chunks, %d replicated in %v",
-					tc.TestName, result.NodesCreated, result.ChunksStored, result.ChunksReplicated, result.Duration)
+				t.Logf("Scaling test %s passed: %d nodes, %d replicated in %v",
+					tc.TestName, result.NodesCreated, result.ChunksStored, result.Duration)
 			}
 		})
 	}

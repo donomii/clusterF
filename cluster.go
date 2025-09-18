@@ -29,14 +29,11 @@ const (
 	DefaultRF            = 3 // Default Replication Factor
 )
 
-type ChunkID string
 type NodeID string
 
 type Metadata struct {
-	NodeID    NodeID            `json:"node_id"`
-	Deletes   map[ChunkID]int64 `json:"deletes"` // tombstones
-	Writes    map[ChunkID]int64 `json:"writes"`  // last successful PUT
-	Timestamp int64             `json:"timestamp"`
+	NodeID    NodeID `json:"node_id"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // notifyFileListChanged signals all subscribers that the file list has changed
@@ -50,16 +47,6 @@ func (c *Cluster) notifyFileListChanged() {
 		default: // Non-blocking send, skip if channel is full
 		}
 	}
-}
-
-// subscribeToFileListChanges creates a subscription channel for file list changes
-func (c *Cluster) subscribeToFileListChanges() chan struct{} {
-	c.fileListMu.Lock()
-	defer c.fileListMu.Unlock()
-
-	ch := make(chan struct{}, 1) // Buffered to prevent blocking
-	c.fileListSubs[ch] = true
-	return ch
 }
 
 type GossipMessage struct {
@@ -80,9 +67,6 @@ type Cluster struct {
 	Debug         bool
 	NoStore       bool // client mode: don't store partitions locally
 
-	// Chunk configuration
-	MaxChunkSize int // configurable max chunk size
-
 	// Discovery manager
 	DiscoveryManager *DiscoveryManager
 	ThreadManager    *ThreadManager
@@ -100,12 +84,7 @@ type Cluster struct {
 	httpClient *http.Client
 
 	// State (protected by mu)
-	mu           sync.RWMutex
-	chunkStorage map[ChunkID]bool     // local chunk presence
-	clusterIndex map[ChunkID][]NodeID // chunk -> holders
-	peerAddrs    map[NodeID]*PeerInfo // peers (now using PeerInfo from discovery)
-	tombstones   map[ChunkID]int64    // chunk -> delete ts (ns)
-	writes       map[ChunkID]int64    // chunk -> last write ts (ns)
+	mu sync.RWMutex
 
 	// File list change notification system
 	fileListSubs map[chan struct{}]bool
@@ -130,6 +109,9 @@ type Cluster struct {
 
 	// initial full-sync flag
 	initialSyncDone bool
+
+	// Peer addresses
+	peerAddrs map[NodeID]*PeerInfo
 }
 
 type ClusterOpts struct {
@@ -141,7 +123,6 @@ type ClusterOpts struct {
 	DiscoveryPort int
 	BroadcastIP   net.IP
 	Logger        *log.Logger
-	MaxChunkSize  int    // max chunk size in bytes
 	ExportDir     string // if set, mirror files to this directory for OS sharing
 	NoStore       bool   // if true, don't store partitions locally (client mode)
 }
@@ -191,10 +172,6 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		opts.BroadcastIP = net.IPv4bcast
 	}
 
-	if opts.MaxChunkSize <= 0 {
-		opts.MaxChunkSize = 64 * 1024 // 64KB default
-	}
-
 	c := &Cluster{
 		ID:            NodeID(id),
 		DataDir:       opts.DataDir,
@@ -202,15 +179,10 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		DiscoveryPort: opts.DiscoveryPort,
 		BroadcastIP:   opts.BroadcastIP,
 		Logger:        opts.Logger,
-		MaxChunkSize:  opts.MaxChunkSize,
 		ExportDir:     opts.ExportDir,
 		NoStore:       opts.NoStore,
+		peerAddrs:     make(map[NodeID]*PeerInfo),
 
-		chunkStorage: map[ChunkID]bool{},
-		clusterIndex: map[ChunkID][]NodeID{},
-		peerAddrs:    map[NodeID]*PeerInfo{},
-		tombstones:   map[ChunkID]int64{},
-		writes:       map[ChunkID]int64{},
 		fileListSubs: map[chan struct{}]bool{},
 
 		ctx:    ctx,
@@ -401,14 +373,14 @@ func loadNodeIDFromDataDir(base string) string {
 
 // debugf logs a debug message if Debug is enabled
 func (c *Cluster) debugf(format string, v ...interface{}) {
-    if !c.Debug {
-        return
-    }
-    // Use Logger.Output with a call depth so the log shows the
-    // caller of debugf (file:line), not this wrapper function.
-    // calldepth=2: Output -> debugf -> caller
-    msg := fmt.Sprintf(format, v...)
-    _ = c.Logger.Output(2, msg)
+	if !c.Debug {
+		return
+	}
+	// Use Logger.Output with a call depth so the log shows the
+	// caller of debugf (file:line), not this wrapper function.
+	// calldepth=2: Output -> debugf -> caller
+	msg := fmt.Sprintf(format, v...)
+	_ = c.Logger.Output(2, msg)
 }
 
 func broadcastPortFromEnv() int {
@@ -448,7 +420,6 @@ func storeNodeIDInDataDir(dataDir, nodeID string) error {
 // ---------- Lifecycle ----------
 
 func (c *Cluster) Start() {
-	c.scanLocal()
 	c.Logger.Printf("Starting node %s (HTTP:%d)", c.ID, c.HTTPDataPort)
 	c.debugf("Starting node %s (HTTP:%d)", c.ID, c.HTTPDataPort)
 
@@ -458,8 +429,6 @@ func (c *Cluster) Start() {
 	}
 	c.debugf("Started discovery manager")
 
-	// Run a one-time reconciliation of CRDT vs local storage before advertising
-	c.reconcileCRDTAndStorage()
 	c.debugf("Reconciled CRDT and local storage")
 
 	// Start all threads using ThreadManager
@@ -529,161 +498,6 @@ func (c *Cluster) Stop() {
 	c.debugf("Node %s stopped", c.ID)
 }
 
-// ---------- Local storage ----------
-
-func (c *Cluster) scanLocal() {
-	// Prefer KV enumeration if configured
-	if c.filesKV != nil {
-		c.mu.Lock()
-		c.chunkStorage = map[ChunkID]bool{}
-		c.mu.Unlock()
-		_, _ = c.filesKV.MapFunc(func(k, v []byte) error {
-			key := string(k)
-			// Only track real chunk objects (not partitions or metadata)
-			if strings.HasPrefix(key, "file_") {
-				c.mu.Lock()
-				c.chunkStorage[ChunkID(key)] = true
-				c.mu.Unlock()
-			}
-			return nil
-		})
-		c.Logger.Printf("Scanned %d local chunks (kv)", len(c.chunkStorage))
-		c.debugf("Scanned %d local chunks (kv)", len(c.chunkStorage))
-		return
-	}
-	entries, err := os.ReadDir(c.DataDir)
-	if err != nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		c.chunkStorage[ChunkID(e.Name())] = true
-	}
-	c.Logger.Printf("Scanned %d local chunks", len(c.chunkStorage))
-	c.debugf("Scanned %d local chunks", len(c.chunkStorage))
-}
-
-func (c *Cluster) chunkPath(id ChunkID) string {
-	return filepath.Join(c.DataDir, string(id))
-}
-
-func (c *Cluster) ListLocalChunks() []ChunkID {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	out := make([]ChunkID, 0, len(c.chunkStorage))
-	for id := range c.chunkStorage {
-		out = append(out, id)
-	}
-	return out
-}
-
-func (c *Cluster) HasChunk(id ChunkID) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if tts, deleted := c.tombstones[id]; deleted {
-		if wts, ok := c.writes[id]; ok && wts > tts {
-			return c.chunkStorage[id]
-		}
-		return false
-	}
-	return c.chunkStorage[id]
-}
-
-// shouldStoreChunk checks if we should store a chunk based on RF limits
-func (c *Cluster) shouldStoreChunk(id ChunkID, forceStore bool) bool {
-	// Always allow if forced (e.g., direct user upload)
-	if forceStore {
-		return true
-	}
-
-	// Always allow if we already have it (for updates)
-	if c.HasChunk(id) {
-		return true
-	}
-
-	// Check current replication level
-	holders := c.getChunkHoldersFromFrogpond(id)
-	currentRF := c.getCurrentRF()
-
-	// Only store if we're under the target RF
-	return len(holders) < currentRF
-}
-
-func (c *Cluster) StoreChunk(id ChunkID, data []byte) error {
-	return c.StoreChunkWithOptions(id, data, false)
-}
-
-// StoreChunkForced stores a chunk ignoring RF limits (for direct user uploads)
-func (c *Cluster) StoreChunkForced(id ChunkID, data []byte) error {
-	return c.StoreChunkWithOptions(id, data, true)
-}
-
-func (c *Cluster) StoreChunkWithOptions(id ChunkID, data []byte, forceStore bool) error {
-	// Check if we should store this chunk based on RF limits
-	if !c.shouldStoreChunk(id, forceStore) {
-		c.Logger.Printf("[STORE] Skipping %s - already at replication factor limit", id)
-		return nil
-	}
-
-	// Write to KV if configured, else local file
-	if c.filesKV != nil {
-		if err := c.filesKV.Put([]byte(string(id)), data); err != nil {
-			return err
-		}
-	} else {
-		if err := os.WriteFile(c.chunkPath(id), data, 0o644); err != nil {
-			return err
-		}
-	}
-
-	c.mu.Lock()
-	c.chunkStorage[id] = true
-	c.writes[id] = time.Now().UnixNano()
-	delete(c.tombstones, id)
-	c.clusterIndex[id] = appendUnique(c.clusterIndex[id], c.ID)
-	c.mu.Unlock()
-
-	// Update frogpond with chunk holder info
-	c.updateChunkMetadata(id, "add")
-
-	c.Logger.Printf("[STORE] %s (%d bytes)", id, len(data))
-	c.debugf("[STORE] %s (%d bytes)", id, len(data))
-	return nil
-}
-
-func (c *Cluster) GetChunk(id ChunkID) ([]byte, error) {
-	if c.filesKV != nil {
-		return c.filesKV.Get([]byte(string(id)))
-	}
-	return os.ReadFile(c.chunkPath(id))
-}
-
-func (c *Cluster) DeleteLocalChunk(id ChunkID) {
-	if c.filesKV != nil {
-		_ = c.filesKV.Delete([]byte(string(id)))
-	} else {
-		_ = os.Remove(c.chunkPath(id))
-	}
-	c.mu.Lock()
-	delete(c.chunkStorage, id)
-	c.mu.Unlock()
-}
-
-func (c *Cluster) markTombstone(id ChunkID) {
-	c.mu.Lock()
-	c.tombstones[id] = time.Now().UnixNano()
-	delete(c.clusterIndex, id)
-	c.mu.Unlock()
-	c.DeleteLocalChunk(id)
-
-	// Update frogpond with deletion
-	c.updateChunkMetadata(id, "remove")
-}
-
 // ---------- Repair ----------
 
 // corsMiddleware adds CORS headers to allow browser access
@@ -750,7 +564,6 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/frogpond/fullsync", corsMiddleware(c.handleFrogpondFullSync))
 	mux.HandleFunc("/frogpond/fullstore", corsMiddleware(c.handleFrogpondFullStore))
 	mux.HandleFunc("/api/replication-factor", corsMiddleware(c.handleReplicationFactor))
-	mux.HandleFunc("/api/max-chunk-size", corsMiddleware(c.handleMaxChunkSize))
 	mux.HandleFunc("/flamegraph", corsMiddleware(c.handleFlameGraph))
 	mux.HandleFunc("/profiling", corsMiddleware(c.handleProfilingPage))
 	mux.HandleFunc("/api/profiling", corsMiddleware(c.handleProfilingAPI))
@@ -784,7 +597,6 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	}))
 	mux.HandleFunc("/monitor", corsMiddleware(c.handleMonitorDashboard))
 	mux.HandleFunc("/api/cluster-stats", corsMiddleware(c.handleClusterStats))
-	mux.HandleFunc("/api/chunk-index", corsMiddleware(c.handleChunkIndex))
 	mux.HandleFunc("/cluster-visualizer.html", corsMiddleware(c.handleVisualizer))
 	// File system endpoints
 	mux.HandleFunc("/files/", corsMiddleware(c.handleFiles))
@@ -840,16 +652,9 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	partitionStats := c.PartitionManager.getPartitionStats()
 	status := map[string]interface{}{
 		"node_id":            c.ID,
-		"chunks":             len(c.chunkStorage),
-		"peers":              len(c.peerAddrs),
-		"tombstones":         len(c.tombstones),
 		"data_dir":           c.DataDir,
 		"http_port":          c.HTTPDataPort,
-		"cluster_index":      len(c.clusterIndex),
 		"replication_factor": c.getCurrentRF(),
-		"max_chunk_size":     c.getCurrentMaxChunkSize(),
-		"max_chunk_size_mb":  c.getCurrentMaxChunkSize() / (1024 * 1024),
-		"under_replicated":   c.getUnderReplicatedCount(),
 		"partition_stats":    partitionStats,
 	}
 	c.mu.RUnlock()
@@ -864,8 +669,6 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleCRDTSearch searches for keys containing a substring within a prefix.
 // This is on-demand and may scan the prefix; use with reasonable prefixes.
-
-// Deprecated: chunk listing has been removed in favor of partition/file APIs
 
 // handleWelcome serves the welcome/root page
 
@@ -885,10 +688,6 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	c.mu.RLock()
 	stats := map[string]interface{}{
 		"node_id":            c.ID,
-		"local_chunks":       len(c.chunkStorage),
-		"peers":              len(c.peerAddrs),
-		"tombstones":         len(c.tombstones),
-		"cluster_index":      len(c.clusterIndex),
 		"http_port":          c.HTTPDataPort,
 		"discovery_port":     c.DiscoveryPort,
 		"data_dir":           c.DataDir,
@@ -899,75 +698,6 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	c.mu.RUnlock()
 
 	json.NewEncoder(w).Encode(stats)
-}
-
-// handleChunkIndex returns a list of chunks with their current holders
-func (c *Cluster) handleChunkIndex(w http.ResponseWriter, r *http.Request) {
-	// Optional limit parameter
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = v
-		}
-	}
-
-	// Collect unique chunk IDs from frogpond store
-	dataPoints := c.frogpond.GetAllMatchingPrefix("chunks/")
-	seen := make(map[string]bool)
-	chunkIDs := make([]ChunkID, 0)
-	for _, dp := range dataPoints {
-		if dp.Deleted {
-			continue
-		}
-		parts := strings.Split(string(dp.Key), "/")
-		if len(parts) < 2 {
-			continue
-		}
-		idStr := parts[1]
-		if idStr == "" || seen[idStr] {
-			continue
-		}
-		// Skip entries that are clearly meta of other keys but count chunk by id only once
-		seen[idStr] = true
-		chunkIDs = append(chunkIDs, ChunkID(idStr))
-		if len(chunkIDs) >= limit {
-			break
-		}
-	}
-
-	rf := c.getCurrentRF()
-	result := make([]map[string]interface{}, 0, len(chunkIDs))
-	for _, cid := range chunkIDs {
-		holders := c.getChunkHoldersFromFrogpond(cid)
-		entry := map[string]interface{}{
-			"id":               string(cid),
-			"holders":          holders,
-			"replicas":         len(holders),
-			"rf_target":        rf,
-			"under_replicated": len(holders) < rf,
-		}
-		result = append(result, entry)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"count":  len(result),
-		"chunks": result,
-	})
-}
-
-// getPeerList returns a list of peer information
-func (c *Cluster) getPeerList() []map[string]interface{} {
-	peers := make([]map[string]interface{}, 0, len(c.peerAddrs))
-	for nodeID, peerInfo := range c.peerAddrs {
-		peers = append(peers, map[string]interface{}{
-			"node_id":   string(nodeID),
-			"address":   peerInfo.Address,
-			"http_port": peerInfo.HTTPPort,
-			"last_seen": peerInfo.LastSeen.Unix(),
-		})
-	}
-	return peers
 }
 
 // ---------- File System HTTP Handlers ----------
@@ -1014,15 +744,6 @@ func (c *Cluster) handlePartitionStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------- Utilities ----------
-
-func appendUnique(slice []NodeID, v NodeID) []NodeID {
-	for _, x := range slice {
-		if x == v {
-			return slice
-		}
-	}
-	return append(slice, v)
-}
 
 // periodicPeerSync syncs peer information from discovery manager
 func (c *Cluster) periodicPeerSync(ctx context.Context) {
@@ -1098,18 +819,6 @@ func (c *Cluster) initializeClusterSettings() {
 		c.Logger.Printf("[INIT] Set default replication factor to %d", DefaultRF)
 	}
 
-	// Initialize max chunk size if not set (100MB default)
-	maxSizeData := c.frogpond.GetDataPoint("cluster/max_chunk_size")
-	if maxSizeData.Deleted || len(maxSizeData.Value) == 0 {
-		defaultMaxSize := 100 * 1024 * 1024 // 100MB
-		maxSizeJSON, _ := json.Marshal(defaultMaxSize)
-		updates := c.frogpond.SetDataPoint("cluster/max_chunk_size", maxSizeJSON)
-		if c.crdtKV != nil {
-			_ = c.crdtKV.Put([]byte("cluster/max_chunk_size"), maxSizeJSON)
-		}
-		c.sendUpdatesToPeers(updates)
-		c.Logger.Printf("[INIT] Set default max chunk size to %d bytes (100MB)", defaultMaxSize)
-	}
 }
 
 // handleReplicationFactor handles GET/PUT requests for replication factor
@@ -1157,83 +866,6 @@ func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":            true,
 			"replication_factor": int(rf),
-		})
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// getCurrentMaxChunkSize gets the current max chunk size from frogpond
-func (c *Cluster) getCurrentMaxChunkSize() int {
-	data := c.frogpond.GetDataPoint("cluster/max_chunk_size")
-	if data.Deleted || len(data.Value) == 0 {
-		return 100 * 1024 * 1024 // 100MB default
-	}
-
-	var maxSize int
-	if err := json.Unmarshal(data.Value, &maxSize); err != nil {
-		return 100 * 1024 * 1024
-	}
-
-	return maxSize
-}
-
-// handleMaxChunkSize handles GET/PUT requests for max chunk size
-func (c *Cluster) handleMaxChunkSize(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		currentMaxSize := c.getCurrentMaxChunkSize()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"max_chunk_size":    currentMaxSize,
-			"max_chunk_size_mb": currentMaxSize / (1024 * 1024),
-		})
-
-	case http.MethodPut:
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusBadRequest)
-			return
-		}
-
-		var request map[string]interface{}
-		if err := json.Unmarshal(body, &request); err != nil {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
-			return
-		}
-
-		maxSizeValue, ok := request["max_chunk_size_mb"]
-		if !ok {
-			http.Error(w, "Missing max_chunk_size_mb field", http.StatusBadRequest)
-			return
-		}
-
-		maxSizeMB, ok := maxSizeValue.(float64)
-		if !ok {
-			http.Error(w, "max_chunk_size_mb must be a number", http.StatusBadRequest)
-			return
-		}
-
-		if maxSizeMB < 1 {
-			http.Error(w, "max_chunk_size_mb must be at least 1MB", http.StatusBadRequest)
-			return
-		}
-
-		maxSizeBytes := int(maxSizeMB * 1024 * 1024)
-		maxSizeJSON, _ := json.Marshal(maxSizeBytes)
-		updates := c.frogpond.SetDataPoint("cluster/max_chunk_size", maxSizeJSON)
-		if c.crdtKV != nil {
-			_ = c.crdtKV.Put([]byte("cluster/max_chunk_size"), maxSizeJSON)
-		}
-		c.sendUpdatesToPeers(updates)
-
-		c.Logger.Printf("[CONFIG] Set max chunk size to %d MB (%d bytes)", int(maxSizeMB), maxSizeBytes)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":           true,
-			"max_chunk_size":    maxSizeBytes,
-			"max_chunk_size_mb": int(maxSizeMB),
 		})
 
 	default:
@@ -1384,79 +1016,4 @@ func (c *Cluster) requestFullStoreFromPeer(peer *PeerInfo) bool {
 
 	c.Logger.Printf("[INITIAL_SYNC] Successfully synced %d data points from %s", len(peerData), peer.NodeID)
 	return true
-}
-
-// reconcileCRDTAndStorage ensures that holder records reflect actual local chunks
-func (c *Cluster) reconcileCRDTAndStorage() {
-	// Build a set of local chunk IDs
-	local := make(map[ChunkID]bool)
-	c.mu.RLock()
-	for id := range c.chunkStorage {
-		local[id] = true
-	}
-	c.mu.RUnlock()
-
-	// Ensure every local chunk has an active holder record
-	for id := range local {
-		// Only manage holders for actual chunk IDs
-		if !strings.HasPrefix(string(id), "file_") {
-			continue
-		}
-		holderKey := fmt.Sprintf("chunks/%s/holders/%s", id, c.ID)
-		dp := c.frogpond.GetDataPoint(holderKey)
-		needActivate := dp.Deleted || len(dp.Value) == 0
-		if !needActivate {
-			// Parse and verify active
-			var holder map[string]interface{}
-			if err := json.Unmarshal(dp.Value, &holder); err != nil {
-				needActivate = true
-			} else {
-				if act, ok := holder["active"].(bool); !ok || !act {
-					needActivate = true
-				}
-			}
-		}
-		if needActivate {
-			c.Logger.Printf("[RECONCILE] Activating holder for %s", id)
-			c.setHolderActive(id, true)
-		}
-	}
-
-	// Deactivate any holder records that claim we have a chunk we don't
-	prefix := fmt.Sprintf("chunks/")
-	dps := c.frogpond.GetAllMatchingPrefix(prefix)
-	nodeSuffix := "/holders/" + string(c.ID)
-	for _, dp := range dps {
-		if dp.Deleted || len(dp.Value) == 0 {
-			continue
-		}
-		key := string(dp.Key)
-		// Match holder entries for this node
-		if !strings.Contains(key, nodeSuffix) {
-			continue
-		}
-		// Extract chunk id between "chunks/" and "/holders/"
-		parts := strings.Split(key, "/")
-		if len(parts) < 4 {
-			continue
-		}
-		chunkID := ChunkID(parts[1])
-		// Only reconcile real chunk IDs, skip partition and other CRDT namespaces
-		if !strings.HasPrefix(string(chunkID), "file_") {
-			continue
-		}
-		if _, ok := local[chunkID]; !ok {
-			// We don't have this chunk locally -> deactivate holder
-			var holder map[string]interface{}
-			_ = json.Unmarshal(dp.Value, &holder)
-			active := true
-			if a, ok := holder["active"].(bool); ok {
-				active = a
-			}
-			if active {
-				c.Logger.Printf("[RECONCILE] Deactivating stale holder for %s", chunkID)
-				c.setHolderActive(chunkID, false)
-			}
-		}
-	}
 }
