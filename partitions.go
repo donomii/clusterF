@@ -656,7 +656,7 @@ func (pm *PartitionManager) handlePartitionSync(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	pm.cluster.Logger.Printf("[PARTITION] Serving sync data for %s", partitionID)
+	pm.cluster.debugf("[PARTITION] Serving sync data for %s", partitionID)
 
 	w.Header().Set("Content-Type", "application/json")
 	encoder := json.NewEncoder(w)
