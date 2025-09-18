@@ -551,13 +551,19 @@
         }
 
         async function uploadFile(file) {
-            const filePath = currentPath + file.webkitRelativePath;
-            
+            const relativePath = file.webkitRelativePath || file.name;
+            const sanitizedRelativePath = relativePath.replace(/^\/+/,'');
+            if (!sanitizedRelativePath) {
+                throw new Error('File path is empty');
+            }
+            const basePath = currentPath.replace(/\/$/, '');
+            const filePath = (basePath ? basePath + '/' : '/') + sanitizedRelativePath;
+
             // If this looks like a directory (empty file with path containing /), skip it
             if (file.size === 0 && file.webkitRelativePath.includes('/')) {
                 return; // Don't upload directory entries
             }
-            
+
             const response = await fetch('/api/files' + filePath, {
                 method: 'PUT',
                 body: file

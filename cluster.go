@@ -311,7 +311,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	if opts.Logger != nil {
 		c.debugf("Using data directory: %s", opts.DataDir)
 	} else {
-		log.Printf("Using data directory: %s", opts.DataDir)
+		c.debugf("Using data directory: %s", opts.DataDir)
 	}
 
 	return c
@@ -663,16 +663,16 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 }
 
 func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[STATUS] Handler called")
+	c.debugf("[STATUS] Handler called")
 
 	// Get partition stats without holding the main mutex
 	var partitionStats map[string]interface{}
 	if c.PartitionManager != nil {
-		log.Printf("[STATUS] Getting partition stats")
+		c.debugf("[STATUS] Getting partition stats")
 		partitionStats = c.PartitionManager.getPartitionStats()
-		log.Printf("[STATUS] Got partition stats: %+v", partitionStats)
+		c.debugf("[STATUS] Got partition stats: %+v", partitionStats)
 	} else {
-		log.Printf("[STATUS] PartitionManager is nil")
+		c.debugf("[STATUS] PartitionManager is nil")
 		partitionStats = map[string]interface{}{}
 	}
 
@@ -680,9 +680,9 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var rf interface{} = DefaultRF
 	if c.frogpond != nil {
 		rf = c.getCurrentRF()
-		log.Printf("[STATUS] Got RF: %v", rf)
+		c.debugf("[STATUS] Got RF: %v", rf)
 	} else {
-		log.Printf("[STATUS] frogpond is nil")
+		c.debugf("[STATUS] frogpond is nil")
 	}
 
 	// Read basic fields without mutex - they're set once at startup
@@ -695,15 +695,15 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debug: log what we're sending
-	log.Printf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.ID, status["replication_factor"], partitionStats)
+	c.debugf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.ID, status["replication_factor"], partitionStats)
 
 	w.Header().Set("Content-Type", "application/json")
-	log.Printf("[STATUS] Set headers")
+	c.debugf("[STATUS] Set headers")
 
 	if err := json.NewEncoder(w).Encode(status); err != nil {
-		log.Printf("[STATUS] JSON encode error: %v", err)
+		c.debugf("[STATUS] JSON encode error: %v", err)
 	} else {
-		log.Printf("[STATUS] Response sent successfully")
+		c.debugf("[STATUS] Response sent successfully")
 	}
 }
 
