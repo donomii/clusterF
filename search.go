@@ -21,9 +21,9 @@ const (
 
 // SearchRequest represents a search query
 type SearchRequest struct {
-	Mode   SearchMode `json:"mode"`
-	Query  string     `json:"query"`
-	Limit  int        `json:"limit,omitempty"`
+	Mode  SearchMode `json:"mode"`
+	Query string     `json:"query"`
+	Limit int        `json:"limit,omitempty"`
 }
 
 // SearchResult represents a search result entry
@@ -46,33 +46,33 @@ type SearchResponse struct {
 func (c *Cluster) performLocalSearch(req SearchRequest) []SearchResult {
 	var results []SearchResult
 	seen := make(map[string]bool) // Prevent duplicates
-	
-	c.filesKV.MapFunc(func(k, v []byte) error {
+
+	c.metadataKV.MapFunc(func(k, v []byte) error {
 		key := string(k)
-		
+
 		// Only process file entries, but skip root directory metadata
 		if !strings.Contains(key, ":file:") {
 			return nil
 		}
-		
+
 		// Extract file path from partition key
 		parts := strings.Split(key, ":file:")
 		if len(parts) != 2 {
 			return nil
 		}
 		filePath := parts[1]
-		
+
 		// Parse the metadata
 		var metadata map[string]interface{}
 		if err := json.Unmarshal(v, &metadata); err != nil {
 			return nil
 		}
-		
+
 		// Skip deleted files
 		if deleted, ok := metadata["deleted"].(bool); ok && deleted {
 			return nil
 		}
-		
+
 		// Apply search logic based on mode
 		switch req.Mode {
 		case SearchModeDirectory:
@@ -80,15 +80,15 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []SearchResult {
 		case SearchModeFile:
 			c.addFileSearchResult(filePath, req.Query, metadata, &results, seen)
 		}
-		
+
 		// Apply limit if specified
 		if req.Limit > 0 && len(results) >= req.Limit {
 			return fmt.Errorf("limit reached") // Break the loop
 		}
-		
+
 		return nil
 	})
-	
+
 	return results
 }
 
@@ -98,20 +98,20 @@ func (c *Cluster) addDirectorySearchResult(filePath, query string, metadata map[
 	if !strings.HasPrefix(filePath, query) {
 		return
 	}
-	
+
 	// Skip the query path itself
 	if filePath == query {
 		return
 	}
-	
+
 	// Get the part after the query prefix
 	remainder := strings.TrimPrefix(filePath, query)
-	
+
 	if strings.Contains(remainder, "/") {
 		// File is in a subdirectory - create directory entry
 		dirName := strings.Split(remainder, "/")[0]
-		dirPath := query + dirName + "/"  // Directories end with /
-		
+		dirPath := query + dirName + "/" // Directories end with /
+
 		if !seen[dirPath] {
 			seen[dirPath] = true
 			*results = append(*results, SearchResult{
@@ -142,7 +142,7 @@ func (c *Cluster) addFileSearchResult(filePath, query string, metadata map[strin
 	if !strings.HasSuffix(filePath, query) {
 		return
 	}
-	
+
 	if !seen[filePath] {
 		seen[filePath] = true
 		*results = append(*results, SearchResult{
@@ -182,7 +182,7 @@ func (c *Cluster) getMetadataModifiedAt(metadata map[string]interface{}) int64 {
 func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 	var allResults []SearchResult
 	seen := make(map[string]bool)
-	
+
 	// Search locally first
 	localResults := c.performLocalSearch(req)
 	for _, result := range localResults {
@@ -191,7 +191,7 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 			allResults = append(allResults, result)
 		}
 	}
-	
+
 	// Search all peers
 	peers := c.DiscoveryManager.GetPeers()
 	for _, peer := range peers {
@@ -203,7 +203,7 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 			}
 		}
 	}
-	
+
 	// Sort results (directories first, then files, both alphabetically)
 	sort.Slice(allResults, func(i, j int) bool {
 		if allResults[i].IsDirectory != allResults[j].IsDirectory {
@@ -211,19 +211,19 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 		}
 		return allResults[i].Name < allResults[j].Name
 	})
-	
+
 	// Apply limit if specified
 	if req.Limit > 0 && len(allResults) > req.Limit {
 		allResults = allResults[:req.Limit]
 	}
-	
+
 	return allResults
 }
 
 // searchPeer performs a search on a specific peer
 func (c *Cluster) searchPeer(peer *PeerInfo, req SearchRequest) []SearchResult {
 	url := fmt.Sprintf("http://%s:%d/api/search", peer.Address, peer.HTTPPort)
-	
+
 	reqJSON, _ := json.Marshal(req)
 	resp, err := c.httpClient.Post(url, "application/json", strings.NewReader(string(reqJSON)))
 	if err != nil {
@@ -231,18 +231,18 @@ func (c *Cluster) searchPeer(peer *PeerInfo, req SearchRequest) []SearchResult {
 		return nil
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		c.debugf("Peer %s search returned %d", peer.NodeID, resp.StatusCode)
 		return nil
 	}
-	
+
 	var response SearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		c.debugf("Failed to decode search response from %s: %v", peer.NodeID, err)
 		return nil
 	}
-	
+
 	return response.Results
 }
 
@@ -252,32 +252,32 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	var req SearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Validate request
 	if req.Mode != SearchModeDirectory && req.Mode != SearchModeFile {
 		http.Error(w, "invalid search mode", http.StatusBadRequest)
 		return
 	}
-	
+
 	if req.Query == "" {
 		http.Error(w, "query cannot be empty", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Perform local search only (peers will call this endpoint)
 	results := c.performLocalSearch(req)
-	
+
 	response := SearchResponse{
 		Results: results,
 		Count:   len(results),
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
@@ -294,20 +294,20 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*FileMetadata, error)
 	if !strings.HasSuffix(path, "/") {
 		path += "/"
 	}
-	
+
 	c.debugf("[SEARCH] ListDirectory for path: %s", path)
-	
+
 	// Create search request for directory mode
 	req := SearchRequest{
 		Mode:  SearchModeDirectory,
 		Query: path,
 		Limit: 1000, // Reasonable limit for directory listings
 	}
-	
+
 	// Search all peers
 	results := c.searchAllPeers(req)
 	c.debugf("[SEARCH] Found %d results for %s", len(results), path)
-	
+
 	// Convert to FileMetadata format
 	var fileMetadata []*FileMetadata
 	for _, result := range results {
@@ -318,14 +318,14 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*FileMetadata, error)
 			ContentType: result.ContentType,
 			IsDirectory: result.IsDirectory,
 		}
-		
+
 		if result.ModifiedAt > 0 {
 			metadata.ModifiedAt = time.Unix(result.ModifiedAt, 0)
 		}
-		
+
 		fileMetadata = append(fileMetadata, metadata)
 	}
-	
+
 	return fileMetadata, nil
 }
 
@@ -336,17 +336,17 @@ func (c *Cluster) SearchFiles(filename string) ([]*FileMetadata, error) {
 		Query: filename,
 		Limit: 100, // Reasonable limit for file search
 	}
-	
+
 	// Search all peers
 	results := c.searchAllPeers(req)
-	
+
 	// Convert to FileMetadata format
 	var fileMetadata []*FileMetadata
 	for _, result := range results {
 		if result.IsDirectory {
 			continue // Skip directories in file search results
 		}
-		
+
 		metadata := &FileMetadata{
 			Name:        result.Name,
 			Path:        result.Path,
@@ -354,13 +354,13 @@ func (c *Cluster) SearchFiles(filename string) ([]*FileMetadata, error) {
 			ContentType: result.ContentType,
 			IsDirectory: false,
 		}
-		
+
 		if result.ModifiedAt > 0 {
 			metadata.ModifiedAt = time.Unix(result.ModifiedAt, 0)
 		}
-		
+
 		fileMetadata = append(fileMetadata, metadata)
 	}
-	
+
 	return fileMetadata, nil
 }

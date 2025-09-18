@@ -14,12 +14,12 @@ func TestCluster_NoStoreMode(t *testing.T) {
 
 	// Create 3 nodes: 2 normal storage nodes + 1 no-store client
 	nodes := make([]*Cluster, 3)
-	
+
 	// Create normal storage nodes
 	for i := 0; i < 2; i++ {
 		nodeID := fmt.Sprintf("storage-node-%d", i)
 		dataDir := fmt.Sprintf("./test-data/nostore-test/%s", nodeID)
-		
+
 		nodes[i] = NewCluster(ClusterOpts{
 			ID:            nodeID,
 			DataDir:       dataDir,
@@ -31,7 +31,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 		nodes[i].DiscoveryManager.SetTimings(1*time.Second, 5*time.Second)
 		t.Logf("Created storage node %s", nodeID)
 	}
-	
+
 	// Create no-store client node
 	clientNodeID := "client-node"
 	nodes[2] = NewCluster(ClusterOpts{
@@ -69,13 +69,13 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	storeURL := fmt.Sprintf("http://localhost:%d/api/files%s", nodes[0].HTTPDataPort, testFileName)
 	req, _ := http.NewRequest(http.MethodPut, storeURL, bytes.NewReader(testData))
 	req.Header.Set("Content-Type", "text/plain")
-	
+
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Failed to store file on storage node: %v", err)
 	}
 	resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("Expected 201, got %d", resp.StatusCode)
 	}
@@ -96,7 +96,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 			}
 		}
 		t.Logf("Storage node %d has file locally: %v", i, hasFile)
-		
+
 		// At least one storage node should have it (the one we uploaded to)
 		if i == 0 && !hasFile {
 			t.Errorf("Storage node 0 should have the file locally")
@@ -108,11 +108,11 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	// Check actual local storage, not file system interface
 	partitionID := hashToPartition(testFileName)
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, testFileName)
-	_, err = nodes[2].filesKV.Get([]byte(fileKey))
+	_, err = nodes[2].metadataKV.Get([]byte(fileKey))
 	clientHasFile := (err == nil)
-	
+
 	t.Logf("No-store client has file in local KV: %v", clientHasFile)
-	
+
 	if clientHasFile {
 		t.Errorf("No-store client should NOT have the file stored locally")
 	} else {
@@ -122,7 +122,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	// Test 4: Fetch file from no-store client via HTTP (should get from peers)
 	t.Logf("📥 Test 4: Fetching file from no-store client (should get from peers)")
 	clientURL := fmt.Sprintf("http://localhost:%d/api/files%s", nodes[2].HTTPDataPort, testFileName)
-	
+
 	WaitForConditionT(t, "File retrieval from no-store client", func() bool {
 		resp, err := client.Get(clientURL)
 		if err != nil {
@@ -130,23 +130,23 @@ func TestCluster_NoStoreMode(t *testing.T) {
 			return false
 		}
 		defer resp.Body.Close()
-		
+
 		if resp.StatusCode != http.StatusOK {
 			t.Logf("Fetch attempt returned %d", resp.StatusCode)
 			return false
 		}
-		
+
 		content, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Logf("Failed to read response: %v", err)
 			return false
 		}
-		
+
 		if string(content) != string(testData) {
 			t.Logf("Content mismatch: got %q, want %q", string(content), string(testData))
 			return false
 		}
-		
+
 		t.Logf("✅ No-store client successfully retrieved file from peers")
 		return true
 	}, 1000, 10000)
@@ -156,16 +156,16 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	clientStoreData := []byte("File uploaded to no-store client")
 	clientStoreFileName := "/client-upload-test.txt"
 	clientStoreURL := fmt.Sprintf("http://localhost:%d/api/files%s", nodes[2].HTTPDataPort, clientStoreFileName)
-	
+
 	req, _ = http.NewRequest(http.MethodPut, clientStoreURL, bytes.NewReader(clientStoreData))
 	req.Header.Set("Content-Type", "text/plain")
-	
+
 	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("Failed to store file via no-store client: %v", err)
 	}
 	resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("Expected 201 when storing via no-store client, got %d", resp.StatusCode)
 	}
@@ -179,9 +179,9 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	// Check actual local storage, not file system interface
 	clientStorePartitionID := hashToPartition(clientStoreFileName)
 	clientStoreFileKey := fmt.Sprintf("partition:%s:file:%s", clientStorePartitionID, clientStoreFileName)
-	_, err = nodes[2].filesKV.Get([]byte(clientStoreFileKey))
+	_, err = nodes[2].metadataKV.Get([]byte(clientStoreFileKey))
 	clientHasUploadedFile := (err == nil)
-	
+
 	if clientHasUploadedFile {
 		t.Errorf("No-store client should NOT store uploaded files locally")
 	} else {
@@ -191,7 +191,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	// Test 7: Verify file uploaded via no-store client is available from storage nodes (forwarded)
 	t.Logf("📥 Test 7: Verifying uploaded file was forwarded to storage nodes")
 	fileFoundOnStorageNode := false
-	
+
 	for i := 0; i < 2; i++ {
 		storageURL := fmt.Sprintf("http://localhost:%d/api/files%s", nodes[i].HTTPDataPort, clientStoreFileName)
 		if resp, err := client.Get(storageURL); err == nil {
@@ -207,7 +207,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 			}
 		}
 	}
-	
+
 	if !fileFoundOnStorageNode {
 		t.Errorf("File uploaded via no-store client should be available from storage nodes after forwarding")
 	} else {

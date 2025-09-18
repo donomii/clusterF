@@ -333,8 +333,12 @@
 
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('File browser initializing...');
             loadNodeInfo();
-            refreshFiles();
+            refreshFiles().catch(error => {
+                console.error('Initial file refresh failed:', error);
+                showNotification('Failed to load initial file list: ' + error.message, 'error');
+            });
             setupUploadZone();
 
             // Preview modal close helpers
@@ -367,12 +371,20 @@
 
         function loadNodeInfo() {
             fetch('/status')
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Status endpoint returned ' + response.status);
+                    }
+                    return response.json();
+                })
                 .then(data => {
                     document.getElementById('nodeInfo').textContent = 
                         'Node: ' + data.node_id + ' | Port: ' + data.http_port;
                 })
-                .catch(error => console.log('Could not load node info'));
+                .catch(error => {
+                    console.error('Failed to load node info:', error);
+                    document.getElementById('nodeInfo').textContent = 'Node: ERROR | Port: ERROR';
+                });
         }
 
         function setupUploadZone() {
@@ -411,10 +423,16 @@
                     renderFiles(data.entries || []);
                     document.getElementById('currentPath').textContent = currentPath;
                 } else {
-                    showNotification('Failed to load files: ' + response.status, 'error');
+                    console.error('Files API returned:', response.status, response.statusText);
+                    showNotification('Failed to load files: ' + response.status + ' ' + response.statusText, 'error');
+                    // Show empty state instead of error
+                    renderFiles([]);
                 }
             } catch (error) {
-                showNotification('Error: ' + error.message, 'error');
+                console.error('Files API error:', error);
+                showNotification('Network error: ' + error.message, 'error');
+                // Show empty state instead of error
+                renderFiles([]);
             }
             if (firstLoad) {
                 showLoading(false);

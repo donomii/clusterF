@@ -83,6 +83,7 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
         <div>HTTP Port: ` + fmt.Sprintf("%d", c.HTTPDataPort) + `</div>
         <div>Discovery Port: ` + fmt.Sprintf("%d", c.DiscoveryPort) + `</div>
         <div>Data Directory: ` + c.DataDir + `</div>
+        <div id="debug-info" style="margin-top: 10px; color: #facc15; font-size: 12px;">API Status: Checking...</div>
         <div>Endpoints:</div>
         <div style="margin-left: 20px;">
             <div>Status: <a href="/status" style="color: #06b6d4;">/status</a></div>
@@ -96,31 +97,60 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
     <script>
         async function refreshStats() {
             try {
-                const response = await fetch('/status');
-                const stats = await response.json();
+                const debugDiv = document.getElementById('debug-info');
+                debugDiv.textContent = 'Fetching status...';
                 
-                document.getElementById('peers').textContent = stats.peers || 0;
-                document.getElementById('replication_factor').textContent = stats.replication_factor || 3;
-                document.getElementById('tombstones').textContent = stats.tombstones || 0;
-                const partitionStats = stats.partition_stats || {};
-                const underReplicated = partitionStats.under_replicated ?? stats.under_replicated;
-                document.getElementById('under_replicated').textContent = underReplicated || 0;
+                // Get basic status
+                const statusResponse = await fetch('/status');
+                if (!statusResponse.ok) {
+                    debugDiv.textContent = 'Status API failed: ' + statusResponse.status;
+                    throw new Error('Status endpoint returned ' + statusResponse.status);
+                }
+                const status = await statusResponse.json();
                 
-                // Partition stats
-                if (stats.partition_stats) {
-                    document.getElementById('local_partitions').textContent = stats.partition_stats.local_partitions || 0;
-                    document.getElementById('total_files').textContent = stats.partition_stats.total_files || 0;
-                    document.getElementById('pending_sync').textContent = stats.partition_stats.pending_sync || 0;
+                debugDiv.textContent = 'Fetching cluster stats...';
+                // Get cluster stats for peer information
+                const clusterResponse = await fetch('/api/cluster-stats');
+                let clusterStats = {};
+                if (clusterResponse.ok) {
+                    clusterStats = await clusterResponse.json();
                 } else {
-                    document.getElementById('local_partitions').textContent = 0;
-                    document.getElementById('total_files').textContent = 0;
-                    document.getElementById('pending_sync').textContent = 0;
+                    debugDiv.textContent = 'Cluster stats failed: ' + clusterResponse.status;
                 }
                 
+                // Update display with available data
+                const peerCount = clusterStats.peer_list ? clusterStats.peer_list.length : 0;
+                document.getElementById('peers').textContent = peerCount;
+                
+                const rf = status.replication_factor || 3;
+                document.getElementById('replication_factor').textContent = rf;
+                
+                document.getElementById('tombstones').textContent = 0; // Not implemented yet
+                
+                // Use partition stats from status
+                const partitionStats = status.partition_stats || {};
+                document.getElementById('under_replicated').textContent = partitionStats.under_replicated || 0;
+                document.getElementById('local_partitions').textContent = partitionStats.local_partitions || 0;
+                document.getElementById('total_files').textContent = partitionStats.total_files || 0;
+                document.getElementById('pending_sync').textContent = partitionStats.pending_sync || 0;
+                
                 // Update input fields with current values
-                document.getElementById('rfInput').value = stats.replication_factor || 3;
+                document.getElementById('rfInput').value = rf;
+                
+                debugDiv.textContent = 'API OK - Last update: ' + new Date().toLocaleTimeString();
+                
             } catch (error) {
-                console.error('Failed to fetch stats:', error);
+                const debugDiv = document.getElementById('debug-info');
+                debugDiv.textContent = 'API Error: ' + error.message;
+                
+                // Show error state instead of leaving dashes
+                document.getElementById('peers').textContent = 'ERR';
+                document.getElementById('replication_factor').textContent = 'ERR';
+                document.getElementById('tombstones').textContent = 'ERR';
+                document.getElementById('under_replicated').textContent = 'ERR';
+                document.getElementById('local_partitions').textContent = 'ERR';
+                document.getElementById('total_files').textContent = 'ERR';
+                document.getElementById('pending_sync').textContent = 'ERR';
             }
         }
         
@@ -184,7 +214,11 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
         
         // Auto-refresh every 3 seconds
         refreshStats();
-        setInterval(refreshStats, 3000);
+        setInterval(() => {
+            refreshStats().catch(error => {
+                console.error('Auto-refresh failed:', error);
+            });
+        }, 30000);
     </script>
 </body>
 </html>`

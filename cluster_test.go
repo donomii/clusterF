@@ -453,7 +453,7 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 	errCh := make(chan error, config.FileCount*2)
 	var wg sync.WaitGroup
 
-	// Test storing chunks
+	// Test storing files
 	for j := 0; j < config.FileCount; j++ {
 		wg.Add(1)
 		go func(i int) {
@@ -461,7 +461,6 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 			nodeIndex := i % len(nodes)
 			node := nodes[nodeIndex]
 
-			// Use file system API instead of chunk API
 			filePath := fmt.Sprintf("/test-file-%d.txt", i)
 			testData := generateTestData(config.FileSize)
 
@@ -645,10 +644,10 @@ func TestCluster_Scaling(t *testing.T) {
 	}
 }
 
-// Test different chunk sizes - now parallel
+// Test different file sizes - now parallel
 func TestCluster_FileSizes(t *testing.T) {
 	fileSizes := []int{
-		0, // Empty chunk
+		0, // Empty file
 		1,
 		64,      // 64 bytes
 		1048576, // 1MB
@@ -665,16 +664,11 @@ func TestCluster_FileSizes(t *testing.T) {
 			t.Run(fmt.Sprintf("FileSize_%d", size), func(t *testing.T) {
 
 				// Adjust chunk count based on size to keep test duration reasonable
-				chunkCount := 10
-				if size > 65536 {
-					chunkCount = 3 // Fewer large chunks
-				} else if size < 1024 {
-					chunkCount = 50 // More small chunks
-				}
+				fileCount := 20
 
 				result := testBasicOperations(t, TestConfig{
 					NodeCount:     3,
-					FileCount:     chunkCount,
+					FileCount:     fileCount,
 					FileSize:      size,
 					TestName:      fmt.Sprintf("ChunkSize_%d", size),
 					TimeoutMs:     30000,

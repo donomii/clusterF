@@ -468,17 +468,25 @@
         async function fetchClusterData() {
             try {
                 // Get basic cluster stats
-                const response = await fetch('/api/cluster-stats');
-                const stats = await response.json();
+                const clusterResponse = await fetch('/api/cluster-stats');
+                if (!clusterResponse.ok) {
+                    throw new Error('Cluster stats endpoint returned ' + clusterResponse.status);
+                }
+                const stats = await clusterResponse.json();
                 currentNodeId = stats.node_id;
                 
-                // Get partition stats
+                // Get partition stats  
                 const partitionResponse = await fetch('/api/partition-stats');
-                const partitionStats = await partitionResponse.json();
+                let partitionStats = {};
+                if (partitionResponse.ok) {
+                    partitionStats = await partitionResponse.json();
+                } else {
+                    console.warn('Partition stats endpoint failed:', partitionResponse.status);
+                }
                 
                 // Update sidebar info
                 document.getElementById('nodeCount').textContent = stats.peer_list ? stats.peer_list.length + 1 : 1;
-                document.getElementById('rfDisplay').textContent = partitionStats.replication_factor || 3;
+                document.getElementById('rfDisplay').textContent = partitionStats.replication_factor || stats.replication_factor || 3;
                 document.getElementById('totalFilesDisplay').textContent = partitionStats.total_files || 0;
                 document.getElementById('totalPartitionsDisplay').textContent = partitionStats.total_partitions || 0;
                 document.getElementById('underReplicatedDisplay').textContent = partitionStats.under_replicated || 0;
@@ -501,22 +509,33 @@
                 // Add peer nodes
                 if (stats.peer_list) {
                     for (const peer of stats.peer_list) {
+                        // Determine if peer is online based on last_seen timestamp
+                        const isOnline = Date.now() - (peer.last_seen * 1000) < 30000;
+                        
                         try {
-                            // Try to get partition stats for this peer
-                            const peerPartitionResponse = await fetch(`http://${peer.address}:${peer.http_port}/api/partition-stats`);
-                            const peerPartitionStats = await peerPartitionResponse.json();
+                            // Only try to get partition stats for online peers
+                            let peerPartitions = 0;
+                            if (isOnline) {
+                                const peerPartitionResponse = await fetch(`http://${peer.address}:${peer.http_port}/api/partition-stats`, {
+                                    timeout: 2000 // Short timeout to avoid hanging
+                                });
+                                if (peerPartitionResponse.ok) {
+                                    const peerPartitionStats = await peerPartitionResponse.json();
+                                    peerPartitions = peerPartitionStats.local_partitions || 0;
+                                }
+                            }
                             
                             newNodes.push({
                                 id: peer.node_id,
-                                partitions: peerPartitionStats.local_partitions || 0,
-                                online: Date.now() - (peer.last_seen * 1000) < 30000,
+                                partitions: peerPartitions,
+                                online: isOnline,
                                 x: nodes.find(n => n.id === peer.node_id)?.x || Math.random() * canvas.width,
                                 y: nodes.find(n => n.id === peer.node_id)?.y || Math.random() * canvas.height,
                                 vx: nodes.find(n => n.id === peer.node_id)?.vx || 0,
                                 vy: nodes.find(n => n.id === peer.node_id)?.vy || 0
                             });
                         } catch (e) {
-                            // Peer unreachable, add with 0 partitions
+                            // Peer unreachable, add as offline with 0 partitions
                             newNodes.push({
                                 id: peer.node_id,
                                 partitions: 0,
@@ -535,17 +554,40 @@
                 // Get partition data from CRDT
                 try {
                     const frogpondResponse = await fetch('/frogpond/fullstore');
+                    if (!frogpondResponse.ok) {
+                        throw new Error('Frogpond endpoint returned ' + frogpondResponse.status);
+                    }
                     const frogpondData = await frogpondResponse.json();
                     
-                    // Extract partition info from frogpond data
+                    // Extract partition info from frogpond data using holder-based structure
                     const partitionMap = {};
                     frogpondData.forEach(dp => {
                         if (!dp.Deleted && dp.Key.startsWith('partitions/')) {
-                            try {
-                                const partitionInfo = JSON.parse(new TextDecoder().decode(new Uint8Array(dp.Value)));
-                                partitionMap[partitionInfo.id] = partitionInfo;
-                            } catch (e) {
-                                console.error('Failed to parse partition data:', e);
+                            // Parse holder entries: partitions/p12345/holders/node-name
+                            const keyParts = dp.Key.split('/');
+                            if (keyParts.length >= 4 && keyParts[2] === 'holders') {
+                                const partitionID = keyParts[1];
+                                const nodeID = keyParts[3];
+                                
+                                if (!partitionMap[partitionID]) {
+                                    partitionMap[partitionID] = {
+                                        id: partitionID,
+                                        holders: [],
+                                        file_count: 0
+                                    };
+                                }
+                                
+                                try {
+                                    const holderData = JSON.parse(new TextDecoder().decode(new Uint8Array(dp.Value)));
+                                    partitionMap[partitionID].holders.push(nodeID);
+                                    if (holderData.file_count) {
+                                        partitionMap[partitionID].file_count = holderData.file_count;
+                                    }
+                                } catch (e) {
+                                    console.warn('Failed to parse holder data for', dp.Key, ':', e);
+                                    // Still add the holder even if we can't parse the data
+                                    partitionMap[partitionID].holders.push(nodeID);
+                                }
                             }
                         }
                     });
@@ -554,8 +596,8 @@
                         id: p.id,
                         holders: p.holders || [],
                         file_count: p.file_count || 0,
-                        under_replicated: (p.holders || []).length < (partitionStats.replication_factor || 3),
-                        rf_target: partitionStats.replication_factor || 3
+                        under_replicated: (p.holders || []).length < (partitionStats.replication_factor || stats.replication_factor || 3),
+                        rf_target: partitionStats.replication_factor || stats.replication_factor || 3
                     }));
                     
                     // Sort for consistent display
@@ -577,6 +619,18 @@
                 
             } catch (error) {
                 console.error('Failed to fetch cluster data:', error);
+                // Set fallback values to prevent broken UI
+                document.getElementById('nodeCount').textContent = 'ERR';
+                document.getElementById('rfDisplay').textContent = 'ERR';
+                document.getElementById('totalFilesDisplay').textContent = 'ERR';
+                document.getElementById('totalPartitionsDisplay').textContent = 'ERR';
+                document.getElementById('underReplicatedDisplay').textContent = 'ERR';
+                document.getElementById('localPartitionsDisplay').textContent = 'ERR';
+                // Clear nodes and partitions
+                nodes = [];
+                allPartitions = [];
+                partitions = [];
+                updatePartitionList();
             }
         }
         
@@ -614,9 +668,18 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
         
+        console.log('Cluster visualizer starting...');
         // Start the visualization
-        fetchClusterData();
-        setInterval(fetchClusterData, 5000); // Update every 5 seconds
+        fetchClusterData().then(() => {
+            console.log('Initial cluster data loaded successfully');
+        }).catch(error => {
+            console.error('Initial cluster data load failed:', error);
+        });
+        setInterval(() => {
+            fetchClusterData().catch(error => {
+                console.error('Periodic cluster data update failed:', error);
+            });
+        }, 5000); // Update every 5 seconds
         animate();
     </script>
 </body>

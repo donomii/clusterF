@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ensemblekv "github.com/donomii/ensemblekv"
@@ -104,14 +106,14 @@ type Cluster struct {
 	exporter  *Exporter
 
 	// KV stores
-	filesKV ensemblekv.KvLike
-	crdtKV  ensemblekv.KvLike
+	metadataKV ensemblekv.KvLike
+	contentKV  ensemblekv.KvLike
 
 	// initial full-sync flag
-	initialSyncDone bool
+	initialSyncDone atomic.Bool
 
 	// Peer addresses
-	peerAddrs map[NodeID]*PeerInfo
+	peerAddrs *SyncMap[NodeID, *PeerInfo]
 }
 
 type ClusterOpts struct {
@@ -181,7 +183,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		Logger:        opts.Logger,
 		ExportDir:     opts.ExportDir,
 		NoStore:       opts.NoStore,
-		peerAddrs:     make(map[NodeID]*PeerInfo),
+		peerAddrs:     NewSyncMap[NodeID, *PeerInfo](),
 
 		fileListSubs: map[chan struct{}]bool{},
 
@@ -262,18 +264,18 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	filesKVPath := filepath.Join(opts.DataDir, "kv_files")
 	crdtKVPath := filepath.Join(opts.DataDir, "kv_crdt")
 	// Use ensemble over bolt for stability
-	c.filesKV = ensemblekv.SimpleEnsembleCreator("extent", "", filesKVPath, 8*1024*1024, 32, 256*1024*1024)
-	c.crdtKV = ensemblekv.SimpleEnsembleCreator("extent", "", crdtKVPath, 2*1024*1024, 16, 64*1024*1024)
+	c.metadataKV = ensemblekv.SimpleEnsembleCreator("extent", "", filesKVPath, 8*1024*1024, 32, 256*1024*1024)
+	c.contentKV = ensemblekv.SimpleEnsembleCreator("extent", "", crdtKVPath, 2*1024*1024, 16, 64*1024*1024)
 	// Enforce hard-fail if storage cannot be opened to avoid split-brain directories
-	if c.filesKV == nil {
+	if c.metadataKV == nil {
 		c.Logger.Fatalf("[STORAGE] Failed to initialize files KV at %s; exiting", filesKVPath)
 	}
-	if c.crdtKV == nil {
+	if c.contentKV == nil {
 		c.Logger.Fatalf("[STORAGE] Failed to initialize CRDT KV at %s; exiting", crdtKVPath)
 	}
 	c.debugf("Initialized KV stores\n")
 	// Load CRDT state from KV (if any) before applying defaults
-	c.loadCRDTFromKV()
+	c.loadCRDTFromFile()
 	c.debugf("Loaded CRDT state from KV\n")
 
 	// Initialize file system
@@ -443,17 +445,19 @@ func (c *Cluster) Start() {
 }
 
 // loadCRDTFromKV seeds the in-memory CRDT from the persistent KV
-func (c *Cluster) loadCRDTFromKV() {
-	if c.crdtKV == nil {
+func (c *Cluster) loadCRDTFromFile() {
+	data, err := ioutil.ReadFile(filepath.Join(c.DataDir, "crdt_backup.json"))
+	if err != nil {
+		c.Logger.Printf("Failed to read CRDT backup file: %v", err)
 		return
 	}
-	// Iterate all keys/values and set into frogpond node
-	_, _ = c.crdtKV.MapFunc(func(k, v []byte) error {
-		// Keys are plain strings, values are raw bytes JSON
-		// Use SetDataPoint to integrate with frogpond
-		c.frogpond.SetDataPoint(string(k), v)
-		return nil
-	})
+	var allData []frogpond.DataPoint
+	if err := json.Unmarshal(data, &allData); err != nil {
+		c.Logger.Printf("Failed to unmarshal CRDT backup data: %v", err)
+		return
+	}
+	c.frogpond.AppendDataPoints(allData)
+	c.Logger.Printf("Loaded CRDT from backup file")
 }
 
 // runExportSync integrates the Exporter with the cluster lifecycle
@@ -500,9 +504,20 @@ func (c *Cluster) Stop() {
 
 // ---------- Repair ----------
 
-// corsMiddleware adds CORS headers to allow browser access
+// corsMiddleware adds CORS headers to allow browser access and logs requests
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Log all incoming requests
+		log.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+
+		// Panic recovery
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("[HTTP_PANIC] %s %s: %v", r.Method, r.URL.Path, err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+			}
+		}()
+
 		// Add CORS headers
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -648,19 +663,48 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 }
 
 func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
-	c.mu.RLock()
-	partitionStats := c.PartitionManager.getPartitionStats()
+	log.Printf("[STATUS] Handler called")
+
+	// Get partition stats without holding the main mutex
+	var partitionStats map[string]interface{}
+	if c.PartitionManager != nil {
+		log.Printf("[STATUS] Getting partition stats")
+		partitionStats = c.PartitionManager.getPartitionStats()
+		log.Printf("[STATUS] Got partition stats: %+v", partitionStats)
+	} else {
+		log.Printf("[STATUS] PartitionManager is nil")
+		partitionStats = map[string]interface{}{}
+	}
+
+	// Get replication factor safely
+	var rf interface{} = DefaultRF
+	if c.frogpond != nil {
+		rf = c.getCurrentRF()
+		log.Printf("[STATUS] Got RF: %v", rf)
+	} else {
+		log.Printf("[STATUS] frogpond is nil")
+	}
+
+	// Read basic fields without mutex - they're set once at startup
 	status := map[string]interface{}{
 		"node_id":            c.ID,
 		"data_dir":           c.DataDir,
 		"http_port":          c.HTTPDataPort,
-		"replication_factor": c.getCurrentRF(),
+		"replication_factor": rf,
 		"partition_stats":    partitionStats,
 	}
-	c.mu.RUnlock()
+
+	// Debug: log what we're sending
+	log.Printf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.ID, status["replication_factor"], partitionStats)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	log.Printf("[STATUS] Set headers")
+
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		log.Printf("[STATUS] JSON encode error: %v", err)
+	} else {
+		log.Printf("[STATUS] Response sent successfully")
+	}
 }
 
 // handleCRDTList lists immediate children (dirs and keys) under a prefix, with pagination
@@ -685,7 +729,7 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	c.mu.RLock()
+	peerList := c.getPeerList()
 	stats := map[string]interface{}{
 		"node_id":            c.ID,
 		"http_port":          c.HTTPDataPort,
@@ -693,9 +737,11 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 		"data_dir":           c.DataDir,
 		"timestamp":          time.Now().Unix(),
 		"replication_factor": c.getCurrentRF(),
-		"peer_list":          c.getPeerList(),
+		"peer_list":          peerList,
 	}
-	c.mu.RUnlock()
+
+	// Debug: log what we're sending
+	c.Logger.Printf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.ID, len(peerList), stats["replication_factor"])
 
 	json.NewEncoder(w).Encode(stats)
 }
@@ -764,9 +810,6 @@ func (c *Cluster) periodicPeerSync(ctx context.Context) {
 func (c *Cluster) syncPeersFromDiscovery() {
 	discoveredPeers := c.DiscoveryManager.GetPeers()
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	// Track which peers are new
 	newPeers := make([]*PeerInfo, 0)
 
@@ -775,10 +818,10 @@ func (c *Cluster) syncPeersFromDiscovery() {
 		nodeID := NodeID(peer.NodeID)
 		if nodeID != c.ID { // Don't add ourselves
 			// Check if this is a new peer
-			if _, exists := c.peerAddrs[nodeID]; !exists {
+			if _, exists := c.peerAddrs.Load(nodeID); !exists {
 				newPeers = append(newPeers, peer)
 			}
-			c.peerAddrs[nodeID] = peer
+			c.peerAddrs.Store(nodeID, peer)
 		}
 	}
 
@@ -790,17 +833,18 @@ func (c *Cluster) syncPeersFromDiscovery() {
 	activeNodeIDs[c.ID] = true // Keep ourselves
 
 	// Clean up stale peers
-	for nodeID := range c.peerAddrs {
+	c.peerAddrs.Range(func(nodeID NodeID, peer *PeerInfo) bool {
 		if !activeNodeIDs[nodeID] {
-			delete(c.peerAddrs, nodeID)
+			c.peerAddrs.Delete(nodeID)
 		}
-	}
+		return true
+	})
 
 	// Update our own discovery info with current HTTP port (in case it changed)
 	c.DiscoveryManager.UpdateNodeInfo(string(c.ID), c.HTTPDataPort)
 
 	// Perform initial sync only once with the first peer we discover
-	if len(newPeers) > 0 && !c.initialSyncDone {
+	if len(newPeers) > 0 && !c.initialSyncDone.Load() {
 		go c.performInitialSyncWithPeer(newPeers[0])
 	}
 }
@@ -812,8 +856,8 @@ func (c *Cluster) initializeClusterSettings() {
 	if data.Deleted || len(data.Value) == 0 {
 		rfJSON, _ := json.Marshal(DefaultRF)
 		updates := c.frogpond.SetDataPoint("cluster/replication_factor", rfJSON)
-		if c.crdtKV != nil {
-			_ = c.crdtKV.Put([]byte("cluster/replication_factor"), rfJSON)
+		if c.contentKV != nil {
+			_ = c.contentKV.Put([]byte("cluster/replication_factor"), rfJSON)
 		}
 		c.sendUpdatesToPeers(updates)
 		c.Logger.Printf("[INIT] Set default replication factor to %d", DefaultRF)
@@ -887,13 +931,9 @@ func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request
 // performInitialSyncWithPeer performs bidirectional full KV store sync with a new peer
 func (c *Cluster) performInitialSyncWithPeer(peer *PeerInfo) {
 	// Ensure we only sync once at startup
-	c.mu.Lock()
-	if c.initialSyncDone {
-		c.mu.Unlock()
+	if !c.initialSyncDone.CompareAndSwap(false, true) {
 		return
 	}
-	c.initialSyncDone = true
-	c.mu.Unlock()
 
 	c.Logger.Printf("[INITIAL_SYNC] Starting full sync with new peer %s", peer.NodeID)
 
@@ -956,23 +996,6 @@ func (c *Cluster) performInitialSyncWithPeer(peer *PeerInfo) {
 			}
 		}
 	})
-}
-
-// sendFullStoreToAPeer sends our complete frogpond store to a specific peer
-func (c *Cluster) sendFullStoreToAPeer(peer *PeerInfo) {
-	url := fmt.Sprintf("http://%s:%d/frogpond/fullsync", peer.Address, peer.HTTPPort)
-	fullStore := c.frogpond.JsonDump()
-
-	resp, err := c.httpClient.Post(url, "application/json", strings.NewReader(string(fullStore)))
-	if err != nil {
-		c.Logger.Printf("[INITIAL_SYNC] Failed to send full store to %s: %v", peer.NodeID, err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		c.Logger.Printf("[INITIAL_SYNC] Successfully sent full store to %s", peer.NodeID)
-	}
 }
 
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer

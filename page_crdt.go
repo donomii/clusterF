@@ -273,9 +273,7 @@ func (c *Cluster) handleCRDTListAPI(w http.ResponseWriter, r *http.Request) {
 	if prefix == "partitions" || strings.HasPrefix(prefix, "partitions/") {
 		// Compute the remainder after "partitions/" (may be empty)
 		rem := strings.TrimPrefix(prefix, "partitions")
-		if strings.HasPrefix(rem, "/") {
-			rem = rem[1:]
-		}
+		rem = strings.TrimPrefix(rem, "/") // in case of double slash
 
 		// Helper to paginate a generated list of group names; returns the page slice
 		paginate := func(names []string) (page []string, hasMore bool, next string) {

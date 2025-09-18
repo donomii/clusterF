@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,8 +71,8 @@ func (c *Cluster) setReplicationFactor(rf int) {
 
 	rfJSON, _ := json.Marshal(rf)
 	updates := c.frogpond.SetDataPoint("cluster/replication_factor", rfJSON)
-	if c.crdtKV != nil {
-		_ = c.crdtKV.Put([]byte("cluster/replication_factor"), rfJSON)
+	if c.contentKV != nil {
+		_ = c.contentKV.Put([]byte("cluster/replication_factor"), rfJSON)
 	}
 	c.sendUpdatesToPeers(updates)
 
@@ -115,6 +117,8 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 		case <-ticker.C:
 			// Update our node metadata
 			c.updateNodeMetadata()
+			// Persist CRDT state to KV
+			c.persistCRDTToFile()
 		}
 	}
 }
@@ -196,4 +200,15 @@ func (c *Cluster) handleFrogpondFullStore(w http.ResponseWriter, r *http.Request
 	// Return our complete frogpond store as JSON
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(c.frogpond.JsonDump())
+}
+
+// persistCRDTToFile saves the current CRDT state to a file
+func (c *Cluster) persistCRDTToFile() {
+	dataPoints := c.frogpond.DataPool.ToList()
+	dataJSON, err := json.Marshal(dataPoints)
+	if err != nil {
+		c.Logger.Printf("Failed to marshal CRDT data for persistence: %v", err)
+		return
+	}
+	ioutil.WriteFile(filepath.Join(c.DataDir, "crdt_backup.json"), dataJSON, 0644)
 }
