@@ -158,7 +158,7 @@ func (pm *PartitionManager) getFileAndMetaFromPartition(path string) ([]byte, ma
 
 	// Check if file is marked as deleted
 	if deleted, ok := metadata["deleted"].(bool); ok && deleted {
-		return nil, nil, fmt.Errorf("file not found")
+		return nil, nil, ErrFileNotFound
 	}
 
 	// Get content from crdtKV (data store) using same key
@@ -276,7 +276,7 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 		}
 	}
 
-	return nil, nil, fmt.Errorf("file %s not found in any peer", path)
+	return nil, nil, fmt.Errorf("%w: %s", ErrFileNotFound, path)
 }
 
 // deleteFileFromPartition removes a file from its partition

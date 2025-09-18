@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -78,12 +79,12 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		"deleted":      false,
 	}
 	metadataJSON, _ := json.Marshal(enhancedMetadata)
-	
+
 	// For no-store clients, forward uploads to storage nodes
 	if fs.cluster.NoStore {
 		return fs.forwardUploadToStorageNode(path, metadataJSON, content, contentType)
 	}
-	
+
 	if err := fs.cluster.PartitionManager.storeFileInPartition(path, metadataJSON, content); err != nil {
 		return logerrf("failed to store file: %v", err)
 	}
@@ -151,12 +152,15 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *FileMetadata, error)
 	// Get file content and metadata together
 	content, metadataMap, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
 	if err != nil {
+		if errors.Is(err, ErrFileNotFound) {
+			return nil, nil, ErrFileNotFound
+		}
 		return nil, nil, err
 	}
 
 	// Check if file is marked as deleted
 	if deleted, ok := metadataMap["deleted"].(bool); ok && deleted {
-		return nil, nil, fmt.Errorf("file not found")
+		return nil, nil, ErrFileNotFound
 	}
 
 	// Convert metadata map to struct
@@ -195,7 +199,7 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *FileMetadata, error)
 	}
 
 	if metadata.IsDirectory {
-		return nil, nil, fmt.Errorf("path is a directory")
+		return nil, nil, ErrIsDirectory
 	}
 
 	return content, metadata, nil
@@ -270,12 +274,15 @@ func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
 	// Try to get metadata from partition system
 	_, metadataMap, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
 	if err != nil {
-		return nil, fmt.Errorf("file not found")
+		if errors.Is(err, ErrFileNotFound) {
+			return nil, ErrFileNotFound
+		}
+		return nil, err
 	}
 
 	// Check if file is marked as deleted
 	if deleted, ok := metadataMap["deleted"].(bool); ok && deleted {
-		return nil, fmt.Errorf("file not found")
+		return nil, ErrFileNotFound
 	}
 
 	// Convert metadata map to struct
