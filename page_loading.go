@@ -1,14 +1,14 @@
 package main
 
 import (
-    "net/http"
+	"net/http"
 )
 
 // handleLoadingPage serves a full-screen loading splash and redirects to the
 // file browser once the node HTTP endpoints respond.
 func (c *Cluster) handleLoadingPage(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
-    html := `<!DOCTYPE html>
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	html := `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -40,21 +40,41 @@ func (c *Cluster) handleLoadingPage(w http.ResponseWriter, r *http.Request) {
     </style>
     <script>
         const target = '/files/';
+        const maxAttempts = 8;
+        let attempts = 0;
+
         async function checkReady() {
+            attempts++;
+
+            let statusOk = false;
+            let filesOk = false;
+
             try {
-                // Probe status and file API; both should be quick once server is up
-                const [s, f] = await Promise.all([
-                    fetch('/status', { cache: 'no-store' }),
-                    fetch('/api/files/', { cache: 'no-store' })
-                ]);
-                if (s.ok && f.ok) {
-                    // Small delay for a smooth handoff
-                    setTimeout(() => { window.location.replace(target); }, 150);
-                    return;
+                const statusResp = await fetch('/status', { cache: 'no-store' });
+                statusOk = statusResp.ok;
+            } catch (e) {
+                console.warn('Status probe failed:', e);
+            }
+
+            try {
+                const filesResp = await fetch('/api/files/', { cache: 'no-store' });
+                filesOk = filesResp.ok;
+            } catch (e) {
+                console.warn('File probe failed:', e);
+            }
+
+            if (statusOk && (filesOk || attempts >= maxAttempts)) {
+                if (!filesOk) {
+                    console.warn('Proceeding without file probe success (offline mode)');
                 }
-            } catch (e) { /* ignore and retry */ }
-            setTimeout(checkReady, 350);
+                setTimeout(() => { window.location.replace(target); }, 150);
+                return;
+            }
+
+            const backoff = Math.min(1200, 250 + attempts * 100);
+            setTimeout(checkReady, backoff);
         }
+
         document.addEventListener('DOMContentLoaded', checkReady);
     </script>
     <noscript>
@@ -70,6 +90,5 @@ func (c *Cluster) handleLoadingPage(w http.ResponseWriter, r *http.Request) {
     </div>
 </body>
 </html>`
-    w.Write([]byte(html))
+	w.Write([]byte(html))
 }
-
