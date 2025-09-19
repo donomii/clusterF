@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -118,6 +120,70 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *PeerInfo, filename string) (
 	return content, nil
 }
 
+func (pm *PartitionManager) fetchMetadataFromPeer(peer *PeerInfo, filename string) (map[string]interface{}, error) {
+	decodedPath, err := url.PathUnescape(filename)
+	if err != nil {
+		decodedPath = filename
+	}
+
+	if !strings.HasPrefix(decodedPath, "/") {
+		decodedPath = "/" + decodedPath
+	}
+
+	fullPath := "/api/files" + decodedPath
+
+	u := url.URL{
+		Scheme: "http",
+		Host:   fmt.Sprintf("%s:%d", peer.Address, peer.HTTPPort),
+		Path:   fullPath,
+	}
+
+	req, err := http.NewRequest(http.MethodHead, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := pm.cluster.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("peer %s returned %s for metadata %s", peer.NodeID, resp.Status, filename)
+	}
+
+	headers := resp.Header
+	metadata := map[string]interface{}{
+		"name":         path.Base(decodedPath),
+		"path":         decodedPath,
+		"deleted":      false,
+		"is_directory": false,
+	}
+
+	if cl := headers.Get("Content-Length"); cl != "" {
+		if size, err := strconv.ParseInt(cl, 10, 64); err == nil {
+			metadata["size"] = float64(size)
+		}
+	}
+
+	if ct := headers.Get("Content-Type"); ct != "" {
+		metadata["content_type"] = ct
+	}
+
+	if lm := headers.Get("Last-Modified"); lm != "" {
+		if t, err := time.Parse(http.TimeFormat, lm); err == nil {
+			metadata["modified_at"] = t.Format(time.RFC3339)
+		}
+	}
+
+	if created := headers.Get("X-ClusterF-Created-At"); created != "" {
+		metadata["created_at"] = created
+	}
+
+	return metadata, nil
+}
+
 func (pm *PartitionManager) getFileFromPartition(filename string) ([]byte, error) {
 	partitionID := hashToPartition(filename)
 
@@ -203,102 +269,68 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 	}
 
 	peers := pm.cluster.DiscoveryManager.GetPeers()
-	if len(peers) == 0 {
-		return nil, nil, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
-	}
-
 	peerLookup := make(map[NodeID]*PeerInfo, len(peers))
 	for _, peer := range peers {
 		peerLookup[NodeID(peer.NodeID)] = peer
 	}
 
 	orderedPeers := make([]*PeerInfo, 0, len(partition.Holders))
-	for _, holder := range partition.Holders {
-		if holder == pm.cluster.ID {
-			continue
+	seen := make(map[NodeID]bool)
+	addPeer := func(nodeID NodeID, peer *PeerInfo) {
+		if peer == nil {
+			return
 		}
-		peer, ok := peerLookup[holder]
-		if !ok {
-			pm.cluster.debugf("[PARTITION] Holder %s for partition %s is not currently available", holder, partitionID)
-			continue
+		if nodeID == pm.cluster.ID {
+			return
+		}
+		if seen[nodeID] {
+			return
+		}
+		if peer.Address == "" || peer.HTTPPort == 0 {
+			pm.cluster.debugf("[PARTITION] Ignoring peer %s for partition %s due to missing address/port", nodeID, partitionID)
+			return
 		}
 		orderedPeers = append(orderedPeers, peer)
+		seen[nodeID] = true
+	}
+
+	for _, holder := range partition.Holders {
+		if peer, ok := peerLookup[holder]; ok {
+			addPeer(holder, peer)
+			continue
+		}
+
+		if peer, ok := pm.cluster.peerAddrs.Load(holder); ok {
+			addPeer(holder, peer)
+			continue
+		}
+
+		pm.cluster.debugf("[PARTITION] Holder %s for partition %s has no reachable peer info", holder, partitionID)
 	}
 
 	if len(orderedPeers) == 0 {
+		if len(peers) == 0 {
+			return nil, nil, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
+		}
 		return nil, nil, fmt.Errorf("no registered holders available for partition %s", partitionID)
 	}
 
-	pm.cluster.debugf("[PARTITION] Trying to get file %s from partition %s holders: %v", path, partitionID, partition.Holders)
-	metadataKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
+	pm.cluster.debugf("[PARTITION] Fetching %s from partition %s holders: %v", path, partitionID, partition.Holders)
 
 	for _, peer := range orderedPeers {
-		pm.cluster.debugf("[PARTITION] Requesting %s from peer %s via partition-sync", path, peer.NodeID)
-		url := fmt.Sprintf("http://%s:%d/api/partition-sync/%s", peer.Address, peer.HTTPPort, partitionID)
-		resp, err := pm.cluster.httpClient.Get(url)
+		metadata, err := pm.fetchMetadataFromPeer(peer, path)
 		if err != nil {
-			pm.cluster.debugf("[PARTITION] Failed partition-sync request to %s: %v", peer.NodeID, err)
+			pm.cluster.debugf("[PARTITION] Failed metadata lookup for %s from %s: %v", path, peer.NodeID, err)
 			continue
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			pm.cluster.debugf("[PARTITION] Peer %s returned status %s for partition %s", peer.NodeID, resp.Status, partitionID)
-			resp.Body.Close()
+		content, err := pm.fetchFileFromPeer(peer, path)
+		if err != nil {
+			pm.cluster.debugf("[PARTITION] Failed content fetch for %s from %s: %v", path, peer.NodeID, err)
 			continue
 		}
 
-		decoder := json.NewDecoder(resp.Body)
-		var foundMetadata map[string]interface{}
-		var foundContent []byte
-		entryCount := 0
-
-		for {
-			var entry struct {
-				Key   string `json:"key"`
-				Value []byte `json:"value"`
-				Store string `json:"store"`
-			}
-
-			if err := decoder.Decode(&entry); err != nil {
-				if err != io.EOF {
-					pm.cluster.debugf("[PARTITION] Decode error while reading partition %s from %s: %v", partitionID, peer.NodeID, err)
-				}
-				break
-			}
-			entryCount++
-
-			if entry.Key != metadataKey {
-				continue
-			}
-
-			switch entry.Store {
-			case "metadata":
-				if err := json.Unmarshal(entry.Value, &foundMetadata); err != nil {
-					pm.cluster.debugf("[PARTITION] Failed to unmarshal metadata for %s from %s: %v", path, peer.NodeID, err)
-					foundMetadata = nil
-					continue
-				}
-				if deleted, ok := foundMetadata["deleted"].(bool); ok && deleted {
-					pm.cluster.debugf("[PARTITION] Peer %s reports %s as deleted", peer.NodeID, path)
-					foundMetadata = nil
-					foundContent = nil
-					continue
-				}
-			case "content":
-				foundContent = entry.Value
-			}
-
-			if foundMetadata != nil && foundContent != nil {
-				resp.Body.Close()
-				return foundContent, foundMetadata, nil
-			}
-		}
-
-		resp.Body.Close()
-
-		if entryCount > 0 {
-			pm.cluster.debugf("[PARTITION] Peer %s returned %d entries for %s but missing metadata or content", peer.NodeID, entryCount, path)
-		}
+		return content, metadata, nil
 	}
 
 	return nil, nil, fmt.Errorf("%w: %s", ErrFileNotFound, path)

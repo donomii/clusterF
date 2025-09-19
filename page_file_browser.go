@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // handleFiles serves the file browser interface
@@ -41,6 +42,8 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		c.handleFileGet(w, r, path)
+	case http.MethodHead:
+		c.handleFileHead(w, r, path)
 	case http.MethodPut:
 		c.handleFilePut(w, r, path)
 	case http.MethodDelete:
@@ -112,8 +115,50 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 	}
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
 	w.Header().Set("Last-Modified", metadata.ModifiedAt.Format(http.TimeFormat))
+	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
 	w.WriteHeader(http.StatusOK)
 	w.Write(content)
+}
+
+func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path string) {
+	c.debugf("[FILES] HEAD request for path: %s", path)
+
+	metadata, err := c.FileSystem.getMetadata(path)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrIsDirectory):
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-ClusterF-Is-Directory", "true")
+			w.WriteHeader(http.StatusOK)
+			return
+		case errors.Is(err, ErrFileNotFound):
+			c.debugf("[FILES] HEAD metadata not found for %s", path)
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		default:
+			c.Logger.Printf("[FILES] Failed HEAD metadata %s: %v", path, err)
+			http.Error(w, "Failed to retrieve metadata", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if metadata.IsDirectory {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-ClusterF-Is-Directory", "true")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	ct := metadata.ContentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
+	w.Header().Set("Last-Modified", metadata.ModifiedAt.Format(http.TimeFormat))
+	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
+	w.Header().Set("X-ClusterF-Is-Directory", "false")
+	w.WriteHeader(http.StatusOK)
 }
 
 // handleFilePut handles PUT requests for uploading files
