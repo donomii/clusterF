@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/donomii/clusterF/discovery"
 )
 
 // SearchMode defines the type of search
@@ -221,7 +223,7 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 }
 
 // searchPeer performs a search on a specific peer
-func (c *Cluster) searchPeer(peer *PeerInfo, req SearchRequest) []SearchResult {
+func (c *Cluster) searchPeer(peer *discovery.PeerInfo, req SearchRequest) []SearchResult {
 	url := fmt.Sprintf("http://%s:%d/api/search", peer.Address, peer.HTTPPort)
 
 	reqJSON, _ := json.Marshal(req)

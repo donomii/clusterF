@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/donomii/clusterF/discovery"
 )
 
 const (
@@ -78,7 +80,7 @@ func (pm *PartitionManager) storeFileInPartition(path string, metadataJSON []byt
 	return nil
 }
 
-func (pm *PartitionManager) fetchFileFromPeer(peer *PeerInfo, filename string) ([]byte, error) {
+func (pm *PartitionManager) fetchFileFromPeer(peer *discovery.PeerInfo, filename string) ([]byte, error) {
 	// Try to get from this peer
 	decodedPath, err := url.PathUnescape(filename)
 	if err != nil {
@@ -118,7 +120,7 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *PeerInfo, filename string) (
 	return content, nil
 }
 
-func (pm *PartitionManager) fetchMetadataFromPeer(peer *PeerInfo, filename string) (map[string]interface{}, error) {
+func (pm *PartitionManager) fetchMetadataFromPeer(peer *discovery.PeerInfo, filename string) (map[string]interface{}, error) {
 	decodedPath, err := url.PathUnescape(filename)
 	if err != nil {
 		decodedPath = filename
@@ -236,14 +238,14 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 	}
 
 	peers := pm.cluster.DiscoveryManager.GetPeers()
-	peerLookup := make(map[NodeID]*PeerInfo, len(peers))
+	peerLookup := make(map[NodeID]*discovery.PeerInfo, len(peers))
 	for _, peer := range peers {
 		peerLookup[NodeID(peer.NodeID)] = peer
 	}
 
-	orderedPeers := make([]*PeerInfo, 0, len(partition.Holders))
+	orderedPeers := make([]*discovery.PeerInfo, 0, len(partition.Holders))
 	seen := make(map[NodeID]bool)
-	addPeer := func(nodeID NodeID, peer *PeerInfo) {
+	addPeer := func(nodeID NodeID, peer *discovery.PeerInfo) {
 		if peer == nil {
 			return
 		}

@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/donomii/clusterF/discovery"
 	"github.com/donomii/clusterF/threadmanager"
 	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
@@ -70,7 +71,7 @@ type Cluster struct {
 	NoStore       bool // client mode: don't store partitions locally
 
 	// Discovery manager
-	DiscoveryManager *DiscoveryManager
+	DiscoveryManager *discovery.DiscoveryManager
 	ThreadManager    *threadmanager.ThreadManager
 
 	// CRDT coordination layer
@@ -107,10 +108,14 @@ type Cluster struct {
 	contentKV  ensemblekv.KvLike
 
 	// initial full-sync flag
-	initialSyncDone atomic.Bool
+	initialSyncDone   atomic.Bool
+	initialSyncTrig   chan struct{}
+	initialSyncOnce   sync.Once
+	initialSyncMu     sync.Mutex
+	initialSyncCancel context.CancelFunc
 
 	// Peer addresses
-	peerAddrs *SyncMap[NodeID, *PeerInfo]
+	peerAddrs *SyncMap[NodeID, *discovery.PeerInfo]
 }
 
 type ClusterOpts struct {
@@ -172,15 +177,16 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	}
 
 	c := &Cluster{
-		ID:            NodeID(id),
-		DataDir:       opts.DataDir,
-		HTTPDataPort:  opts.HTTPDataPort,
-		DiscoveryPort: opts.DiscoveryPort,
-		BroadcastIP:   opts.BroadcastIP,
-		Logger:        opts.Logger,
-		ExportDir:     opts.ExportDir,
-		NoStore:       opts.NoStore,
-		peerAddrs:     NewSyncMap[NodeID, *PeerInfo](),
+		ID:              NodeID(id),
+		DataDir:         opts.DataDir,
+		HTTPDataPort:    opts.HTTPDataPort,
+		DiscoveryPort:   opts.DiscoveryPort,
+		BroadcastIP:     opts.BroadcastIP,
+		Logger:          opts.Logger,
+		ExportDir:       opts.ExportDir,
+		NoStore:         opts.NoStore,
+		initialSyncTrig: make(chan struct{}, 1),
+		peerAddrs:       NewSyncMap[NodeID, *discovery.PeerInfo](),
 
 		fileListSubs: map[chan struct{}]bool{},
 
@@ -246,7 +252,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Initialized HTTP client\n")
 
 	// Initialize discovery manager
-	c.DiscoveryManager = NewDiscoveryManager(id, opts.HTTPDataPort, opts.DiscoveryPort, c.ThreadManager, opts.Logger)
+	c.DiscoveryManager = discovery.NewDiscoveryManager(id, opts.HTTPDataPort, opts.DiscoveryPort, c.ThreadManager, opts.Logger)
 	c.debugf("Initialized discovery manager\n")
 
 	// Initialize frogpond CRDT node
@@ -792,7 +798,7 @@ func (c *Cluster) syncPeersFromDiscovery() {
 	discoveredPeers := c.DiscoveryManager.GetPeers()
 
 	// Track which peers are new
-	newPeers := make([]*PeerInfo, 0)
+	newPeers := make([]*discovery.PeerInfo, 0)
 
 	// Update peer addresses with discovered peers
 	for _, peer := range discoveredPeers {
@@ -814,7 +820,7 @@ func (c *Cluster) syncPeersFromDiscovery() {
 	activeNodeIDs[c.ID] = true // Keep ourselves
 
 	// Clean up stale peers
-	c.peerAddrs.Range(func(nodeID NodeID, peer *PeerInfo) bool {
+	c.peerAddrs.Range(func(nodeID NodeID, peer *discovery.PeerInfo) bool {
 		if !activeNodeIDs[nodeID] {
 			c.peerAddrs.Delete(nodeID)
 		}
@@ -910,78 +916,147 @@ func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request
 // moved to page_profiling.go
 
 // performInitialSyncWithPeer performs bidirectional full KV store sync with a new peer
-func (c *Cluster) performInitialSyncWithPeer(peer *PeerInfo) {
-	// Ensure we only sync once at startup
+func (c *Cluster) performInitialSyncWithPeer(peer *discovery.PeerInfo) {
+	_ = peer // trigger is independent of which peer we saw first
+
 	if !c.initialSyncDone.CompareAndSwap(false, true) {
 		return
 	}
 
-	c.Logger.Printf("[INITIAL_SYNC] Starting full sync with new peer %s", peer.NodeID)
+	if err := c.ensureInitialSyncWorker(); err != nil {
+		c.Logger.Printf("[INITIAL_SYNC] Failed to ensure worker: %v", err)
+		c.initialSyncDone.Store(false)
+		return
+	}
 
-	// Start retry thread
-	c.ThreadManager.StartThread("initial-sync-retry", func(ctx context.Context) {
-		// First, retry initial sync until we get one successful full sync
-		for {
+	c.cancelInitialSyncRun()
+
+	select {
+	case c.initialSyncTrig <- struct{}{}:
+	default:
+	}
+
+	if peer != nil {
+		c.Logger.Printf("[INITIAL_SYNC] Triggered by discovery of %s", peer.NodeID)
+	} else {
+		c.Logger.Printf("[INITIAL_SYNC] Triggered initial sync")
+	}
+}
+
+func (c *Cluster) ensureInitialSyncWorker() error {
+	var err error
+	c.initialSyncOnce.Do(func() {
+		startErr := c.ThreadManager.StartThreadWithRestart("initial-sync-retry", c.initialSyncWorker, true, nil)
+		if startErr != nil {
+			err = startErr
+		}
+	})
+	return err
+}
+
+func (c *Cluster) cancelInitialSyncRun() {
+	c.initialSyncMu.Lock()
+	if c.initialSyncCancel != nil {
+		c.initialSyncCancel()
+		c.initialSyncCancel = nil
+	}
+	c.initialSyncMu.Unlock()
+}
+
+func (c *Cluster) initialSyncWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			c.cancelInitialSyncRun()
+			return
+		case <-c.initialSyncTrig:
+			runCtx, cancel := context.WithCancel(ctx)
+			c.initialSyncMu.Lock()
+			if c.initialSyncCancel != nil {
+				c.initialSyncCancel()
+			}
+			c.initialSyncCancel = cancel
+			c.initialSyncMu.Unlock()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				c.runInitialSyncCycle(runCtx)
+			}()
+
 			select {
 			case <-ctx.Done():
-				return
-			default:
+				cancel()
+			case <-done:
 			}
 
-			peers := c.DiscoveryManager.GetPeers()
-			if len(peers) == 0 {
-				time.Sleep(10 * time.Second)
-				continue
+			cancel()
+			c.initialSyncMu.Lock()
+			if c.initialSyncCancel != nil {
+				c.initialSyncCancel = nil
 			}
-
-			// Try a random peer
-			peer := peers[rand.Intn(len(peers))]
-			c.Logger.Printf("[SYNC_RETRY] Attempting full sync with %s", peer.NodeID)
-
-			if c.requestFullStoreFromPeer(peer) {
-				c.Logger.Printf("[SYNC_RETRY] Successfully synced with %s", peer.NodeID)
-				break
-			}
-
-			c.Logger.Printf("[SYNC_RETRY] Failed to sync with %s, retrying in 10s", peer.NodeID)
-			time.Sleep(10 * time.Second)
+			c.initialSyncMu.Unlock()
 		}
+	}
+}
 
-		// Now do another full sync in 10 minutes
+func (c *Cluster) runInitialSyncCycle(ctx context.Context) {
+	// Initial catch-up loop: keep trying until we complete one full sync or are cancelled.
+	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(10 * time.Minute):
+		default:
 		}
 
-		// Then sync with a random peer every hour
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
+		peers := c.DiscoveryManager.GetPeers()
+		if len(peers) == 0 {
+			time.Sleep(10 * time.Second)
+			continue
+		}
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				peers := c.DiscoveryManager.GetPeers()
-				if len(peers) == 0 {
-					continue
-				}
+		peer := peers[rand.Intn(len(peers))]
+		c.Logger.Printf("[SYNC_RETRY] Attempting full sync with %s", peer.NodeID)
+		if c.requestFullStoreFromPeer(peer) {
+			c.Logger.Printf("[SYNC_RETRY] Successfully synced with %s", peer.NodeID)
+			break
+		}
 
-				peer := peers[rand.Intn(len(peers))]
-				c.Logger.Printf("[HOURLY_SYNC] Full sync with random peer %s", peer.NodeID)
+		c.Logger.Printf("[SYNC_RETRY] Failed to sync with %s, retrying in 10s", peer.NodeID)
+		time.Sleep(10 * time.Second)
+	}
 
-				if !c.requestFullStoreFromPeer(peer) {
-					c.Logger.Printf("[HOURLY_SYNC] Failed to sync with %s", peer.NodeID)
-				}
+	// Wait 10 minutes before the next maintenance sync, respecting cancellation.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(10 * time.Minute):
+	}
+
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			peers := c.DiscoveryManager.GetPeers()
+			if len(peers) == 0 {
+				continue
+			}
+
+			peer := peers[rand.Intn(len(peers))]
+			c.Logger.Printf("[HOURLY_SYNC] Full sync with random peer %s", peer.NodeID)
+			if !c.requestFullStoreFromPeer(peer) {
+				c.Logger.Printf("[HOURLY_SYNC] Failed to sync with %s", peer.NodeID)
 			}
 		}
-	})
+	}
 }
 
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
 // Returns true on success, false on failure
-func (c *Cluster) requestFullStoreFromPeer(peer *PeerInfo) bool {
+func (c *Cluster) requestFullStoreFromPeer(peer *discovery.PeerInfo) bool {
 	url := fmt.Sprintf("http://%s:%d/frogpond/fullstore", peer.Address, peer.HTTPPort)
 
 	// Create a client with no timeout for full sync

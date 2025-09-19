@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donomii/clusterF/discovery"
 	"github.com/donomii/frogpond"
 )
 
@@ -23,7 +24,7 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 
 	peers := c.DiscoveryManager.GetPeers()
 	for _, peer := range peers {
-		func(p *PeerInfo) {
+		func(p *discovery.PeerInfo) {
 			url := fmt.Sprintf("http://%s:%d/frogpond/update", p.Address, p.HTTPPort)
 			updatesJSON, _ := json.Marshal(updates)
 
@@ -36,9 +37,9 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 	}
 }
 
-func (c *Cluster) getPeerList() []PeerInfo {
+func (c *Cluster) getPeerList() []discovery.PeerInfo {
 	peers := c.DiscoveryManager.GetPeers()
-	var peerList []PeerInfo
+	var peerList []discovery.PeerInfo
 	for _, p := range peers {
 		peerList = append(peerList, *p)
 	}

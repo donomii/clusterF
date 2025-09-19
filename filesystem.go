@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/donomii/clusterF/discovery"
 )
 
 const (
@@ -101,13 +103,11 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSON []byte, content []byte, contentType string) error {
 	// Find storage nodes that can hold this file
 	peers := fs.cluster.DiscoveryManager.GetPeers()
-	var storageNodes []*PeerInfo
+	var storageNodes []*discovery.PeerInfo
 
-	
-		// Only forward to peers that are not no-store clients
-		// We can't easily detect if a peer is no-store, so try all peers
-		storageNodes = append(storageNodes, peers...)
-	
+	// Only forward to peers that are not no-store clients
+	// We can't easily detect if a peer is no-store, so try all peers
+	storageNodes = append(storageNodes, peers...)
 
 	if len(storageNodes) == 0 {
 		return fmt.Errorf("no storage nodes available to forward upload")
