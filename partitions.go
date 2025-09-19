@@ -793,10 +793,11 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 
 	// Find partitions that are under-replicated
 	for partitionID, info := range allPartitions {
+
 		if len(info.Holders) >= currentRF {
 			continue // Already properly replicated
+		}
 		pm.cluster.debugf("[PARTITION] Partition %s has %d holders (need %d): %v", partitionID, len(info.Holders), currentRF, info.Holders)
-
 
 		// Check if we already have this partition by scanning metadata store
 		hasPartition := false
