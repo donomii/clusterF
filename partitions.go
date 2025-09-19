@@ -12,7 +12,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -33,7 +32,6 @@ type PartitionInfo struct {
 
 type PartitionManager struct {
 	cluster *Cluster
-	mu      sync.RWMutex
 }
 
 // Initialize partition manager
@@ -182,37 +180,6 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *PeerInfo, filename strin
 	}
 
 	return metadata, nil
-}
-
-func (pm *PartitionManager) getFileFromPartition(filename string) ([]byte, error) {
-	partitionID := hashToPartition(filename)
-
-	partition := pm.getPartitionInfo(partitionID)
-
-	if partition == nil {
-		return nil, logerrf("partition %s not found for file %s", partitionID, filename)
-	}
-
-	holders := partition.Holders
-	if len(holders) == 0 {
-		return nil, logerrf("no holders found for partition %s", partitionID)
-	}
-
-	peers := pm.cluster.DiscoveryManager.GetPeers()
-	for _, peer := range peers {
-		for _, n := range holders {
-			if NodeID(peer.NodeID) == n {
-				// Try to get from this peer
-				content, err := pm.fetchFileFromPeer(peer, filename)
-				if err == nil {
-					// Successfully fetched
-					return content, nil
-				}
-
-			}
-		}
-	}
-	return nil, fmt.Errorf("failed to retrieve file %s from any holder", filename)
 }
 
 // getFileAndMetaFromPartition retrieves metadata and content from separate stores
@@ -864,15 +831,6 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 	}
 
 	return "", nil // Nothing to sync
-}
-
-// findNextPartitionToSync finds a single partition that needs syncing (legacy function)
-func (pm *PartitionManager) findNextPartitionToSync() (PartitionID, NodeID) {
-	partitionID, holders := pm.findNextPartitionToSyncWithHolders()
-	if partitionID != "" && len(holders) > 0 {
-		return partitionID, holders[0]
-	}
-	return "", ""
 }
 
 // getPartitionStats returns statistics about partitions

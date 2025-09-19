@@ -212,3 +212,19 @@ func (c *Cluster) persistCRDTToFile() {
 	}
 	ioutil.WriteFile(filepath.Join(c.DataDir, "crdt_backup.json"), dataJSON, 0644)
 }
+
+// loadCRDTFromKV seeds the in-memory CRDT from the persistent KV
+func (c *Cluster) loadCRDTFromFile() {
+	data, err := ioutil.ReadFile(filepath.Join(c.DataDir, "crdt_backup.json"))
+	if err != nil {
+		c.Logger.Printf("Failed to read CRDT backup file: %v", err)
+		return
+	}
+	var allData []frogpond.DataPoint
+	if err := json.Unmarshal(data, &allData); err != nil {
+		c.Logger.Printf("Failed to unmarshal CRDT backup data: %v", err)
+		return
+	}
+	c.frogpond.AppendDataPoints(allData)
+	c.Logger.Printf("Loaded CRDT from backup file")
+}

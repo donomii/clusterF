@@ -91,10 +91,11 @@ func (dm *DiscoveryManager) SetTimings(broadcastInterval, peerTimeout time.Durat
 
 // Start begins the discovery process
 func (dm *DiscoveryManager) Start() error {
+	//FIXME:  Put this in a loop so we handle network changes
 	dm.Debugf("Starting discovery on port %d", dm.broadcastPort)
 
-    // Create UDP listener with appropriate socket options (OS-specific)
-    lc := newListenConfig()
+	// Create UDP listener with appropriate socket options (OS-specific)
+	lc := newListenConfig()
 
 	pc, err := lc.ListenPacket(context.Background(), "udp", fmt.Sprintf(":%d", dm.broadcastPort))
 	if err != nil {
@@ -115,13 +116,15 @@ func (dm *DiscoveryManager) Start() error {
 	broadcastAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("255.255.255.255:%d", dm.broadcastPort))
 	if err != nil {
 		dm.listenConn.Close()
-		return fmt.Errorf("failed to resolve broadcast address: %w", err)
+		log.Printf("failed to resolve broadcast address: %v.  Discovery disabled\n", err)
+		return nil
 	}
 
 	dm.broadcastConn, err = net.DialUDP("udp", nil, broadcastAddr)
 	if err != nil {
 		dm.listenConn.Close()
-		return fmt.Errorf("failed to create broadcast socket: %w", err)
+		log.Printf("failed to create broadcast socket: %v", err)
+		return nil
 	}
 
 	dm.Debugf("UDP broadcast socket created successfully to %s", dm.broadcastConn.RemoteAddr())

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -33,7 +32,6 @@ type FileMetadata struct {
 // ClusterFileSystem provides a file system interface over the cluster
 type ClusterFileSystem struct {
 	cluster *Cluster
-	mu      sync.RWMutex
 }
 
 // NewClusterFileSystem creates a new distributed file system
@@ -105,11 +103,11 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	peers := fs.cluster.DiscoveryManager.GetPeers()
 	var storageNodes []*PeerInfo
 
-	for _, peer := range peers {
+	
 		// Only forward to peers that are not no-store clients
 		// We can't easily detect if a peer is no-store, so try all peers
-		storageNodes = append(storageNodes, peer)
-	}
+		storageNodes = append(storageNodes, peers...)
+	
 
 	if len(storageNodes) == 0 {
 		return fmt.Errorf("no storage nodes available to forward upload")
