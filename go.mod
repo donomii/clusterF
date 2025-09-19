@@ -3,6 +3,7 @@ module github.com/donomii/clusterF
 go 1.25.1
 
 require (
+	github.com/donomii/clusterF/frontend v0.0.0
 	github.com/donomii/clusterF/syncmap v0.0.0
 	github.com/donomii/ensemblekv v0.0.0-20250427181959-74bb6dcf7c35
 	github.com/donomii/frogpond v0.0.0-20250913173135-4515c9c7f901
@@ -11,6 +12,7 @@ require (
 	golang.org/x/sys v0.30.0
 )
 
+replace github.com/donomii/clusterF/frontend => ./frontend
 replace github.com/donomii/clusterF/syncmap => ./syncmap
 
 require (

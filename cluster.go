@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/discovery"
+	"github.com/donomii/clusterF/frontend"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
 	ensemblekv "github.com/donomii/ensemblekv"
@@ -84,8 +85,9 @@ type Cluster struct {
 	// File system layer
 	FileSystem *ClusterFileSystem
 
-	// HTTP client for reuse (prevents goroutine leaks)
-	httpClient *http.Client
+	// HTTP clients for reuse (prevents goroutine leaks)
+	httpClient     *http.Client // short-lived control traffic
+	httpDataClient *http.Client // long-running data transfers
 
 	// File list change notification system
 	fileListSubs map[chan struct{}]bool
@@ -239,18 +241,30 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.ThreadManager = threadmanager.NewThreadManager(id, opts.Logger)
 	c.debugf("Initialized thread manager\n")
 
-	// Create HTTP client with connection pooling and timeouts
-	c.httpClient = &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        50, // Limit idle connections
-			MaxIdleConnsPerHost: 5,  // Limit per-host connections
-			IdleConnTimeout:     30 * time.Second,
-			TLSHandshakeTimeout: 5 * time.Second,
-			DisableKeepAlives:   false, // Enable keep-alives
-		},
+	// Create HTTP clients with connection pooling and differentiated timeouts
+	transport := &http.Transport{
+		MaxIdleConns:        50, // Limit idle connections
+		MaxIdleConnsPerHost: 5,  // Limit per-host connections
+		IdleConnTimeout:     30 * time.Second,
+		TLSHandshakeTimeout: 5 * time.Second,
+		DisableKeepAlives:   false,
 	}
-	c.debugf("Initialized HTTP client\n")
+	c.httpClient = &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+	dataTransport := &http.Transport{
+		MaxIdleConns:        50,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     2 * time.Minute,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DisableKeepAlives:   false,
+	}
+	c.httpDataClient = &http.Client{
+		Timeout:   5 * time.Minute,
+		Transport: dataTransport,
+	}
+	c.debugf("Initialized HTTP clients\n")
 
 	// Initialize discovery manager
 	c.DiscoveryManager = discovery.NewDiscoveryManager(id, opts.HTTPDataPort, opts.DiscoveryPort, c.ThreadManager, opts.Logger)
@@ -472,9 +486,14 @@ func (c *Cluster) Stop() {
 		cancel()
 	}
 
-	// Close HTTP client transport to clean up connections
+	// Close HTTP client transports to clean up connections
 	if c.httpClient != nil && c.httpClient.Transport != nil {
 		if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+	}
+	if c.httpDataClient != nil && c.httpDataClient.Transport != nil {
+		if transport, ok := c.httpDataClient.Transport.(*http.Transport); ok {
 			transport.CloseIdleConnections()
 		}
 	}
@@ -559,16 +578,17 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", corsMiddleware(c.handleWelcome))
+	ui := frontend.New(c)
+	mux.HandleFunc("/", corsMiddleware(ui.HandleWelcome))
 	mux.HandleFunc("/status", corsMiddleware(c.handleStatus))
 	// API reference page (exact path only to avoid clobbering other /api/* routes)
-	mux.HandleFunc("/api", corsMiddleware(c.handleAPIDocs))
+	mux.HandleFunc("/api", corsMiddleware(ui.HandleAPIDocs))
 	mux.HandleFunc("/frogpond/update", corsMiddleware(c.handleFrogpondUpdate))
 	mux.HandleFunc("/frogpond/fullsync", corsMiddleware(c.handleFrogpondFullSync))
 	mux.HandleFunc("/frogpond/fullstore", corsMiddleware(c.handleFrogpondFullStore))
 	mux.HandleFunc("/api/replication-factor", corsMiddleware(c.handleReplicationFactor))
 	mux.HandleFunc("/flamegraph", corsMiddleware(c.handleFlameGraph))
-	mux.HandleFunc("/profiling", corsMiddleware(c.handleProfilingPage))
+	mux.HandleFunc("/profiling", corsMiddleware(ui.HandleProfilingPage))
 	mux.HandleFunc("/api/profiling", corsMiddleware(c.handleProfilingAPI))
 	// Add pprof endpoints manually
 	mux.HandleFunc("/debug/pprof/", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -598,14 +618,14 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/debug/pprof/mutex", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		pprof.Handler("mutex").ServeHTTP(w, r)
 	}))
-	mux.HandleFunc("/monitor", corsMiddleware(c.handleMonitorDashboard))
+	mux.HandleFunc("/monitor", corsMiddleware(ui.HandleMonitorDashboard))
 	mux.HandleFunc("/api/cluster-stats", corsMiddleware(c.handleClusterStats))
-	mux.HandleFunc("/cluster-visualizer.html", corsMiddleware(c.handleVisualizer))
+	mux.HandleFunc("/cluster-visualizer.html", corsMiddleware(ui.HandleVisualizer))
 	// File system endpoints
-	mux.HandleFunc("/files/", corsMiddleware(c.handleFiles))
-	mux.HandleFunc("/loading", corsMiddleware(c.handleLoadingPage))
+	mux.HandleFunc("/files/", corsMiddleware(ui.HandleFiles))
+	mux.HandleFunc("/loading", corsMiddleware(ui.HandleLoadingPage))
 	// CRDT inspector UI + APIs
-	mux.HandleFunc("/crdt", corsMiddleware(c.handleCRDTInspectorPageUI))
+	mux.HandleFunc("/crdt", corsMiddleware(ui.HandleCRDTInspectorPageUI))
 	mux.HandleFunc("/api/crdt/list", corsMiddleware(c.handleCRDTListAPI))
 	mux.HandleFunc("/api/crdt/get", corsMiddleware(c.handleCRDTGetAPI))
 	mux.HandleFunc("/api/crdt/search", corsMiddleware(c.handleCRDTSearchAPI))

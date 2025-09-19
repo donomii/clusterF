@@ -1,23 +1,26 @@
-package main
+package frontend
 
 import (
 	"fmt"
 	"net/http"
 )
 
-// handleAPIDocs serves a human-friendly HTML page listing API endpoints
-func (c *Cluster) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
+// HandleAPIDocs serves a human-friendly HTML page listing API endpoints.
+func (f *Frontend) HandleAPIDocs(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/api" { // keep exact match so /api/* routes work normally
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
+	nodeID := f.provider.NodeID()
+	httpPort := fmt.Sprintf("%d", f.provider.HTTPPort())
+
 	html := `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>🐸 API Reference - Node ` + string(c.ID) + `</title>
+    <title>🐸 API Reference - Node ` + nodeID + `</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐸</text></svg>">
     <style>
         body { font-family: Arial, sans-serif; background: #0f172a; color: #e5e7eb; margin: 0; }
@@ -43,7 +46,7 @@ func (c *Cluster) handleAPIDocs(w http.ResponseWriter, r *http.Request) {
     <div class="container">
         <div class="header">
             <h1>🐸 API Reference</h1>
-            <div style="color:#9ca3af">Node: ` + string(c.ID) + ` • Port: ` + fmt.Sprintf("%d", c.HTTPDataPort) + `</div>
+            <div style="color:#9ca3af">Node: ` + nodeID + ` • Port: ` + httpPort + `</div>
             <div style="margin-top:10px;"><a class="back" href="/">← Back to Home</a></div>
         </div>
 

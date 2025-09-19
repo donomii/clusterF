@@ -1,19 +1,24 @@
-package main
+package frontend
 
 import (
 	"fmt"
 	"net/http"
 )
 
-// handleMonitorDashboard serves a simple cluster monitoring dashboard
-func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request) {
+// HandleMonitorDashboard serves a simple cluster monitoring dashboard.
+func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	nodeID := f.provider.NodeID()
+	httpPort := fmt.Sprintf("%d", f.provider.HTTPPort())
+	discoveryPort := fmt.Sprintf("%d", f.provider.DiscoveryPortVal())
+	dataDir := f.provider.DataDirPath()
 
 	html := `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>🐸 Cluster Monitor - Node ` + string(c.ID) + `</title>
+    <title>🐸 Cluster Monitor - Node ` + nodeID + `</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐸</text></svg>">
     <style>
         body { font-family: Arial, sans-serif; background: #1a1a2e; color: white; margin: 0; padding: 20px; }
@@ -34,7 +39,7 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
 <body>
     <div class="header">
         <h1><span class="frog-logo" aria-hidden="true">🐸</span>Cluster Monitor</h1>
-        <p>Node: ` + string(c.ID) + ` | Port: ` + fmt.Sprintf("%d", c.HTTPDataPort) + ` | <a href="/" style="color:#06b6d4;">← Back to Home</a></p>
+        <p>Node: ` + nodeID + ` | Port: ` + httpPort + ` | <a href="/" style="color:#06b6d4;">← Back to Home</a></p>
     </div>
     
     <div class="stats-grid" id="stats">
@@ -77,12 +82,12 @@ func (c *Cluster) handleMonitorDashboard(w http.ResponseWriter, r *http.Request)
         <input type="number" id="maxSizeInput" min="1" max="1000" style="margin: 0 10px; padding: 8px; border-radius: 4px; border: 1px solid #3b82f6; background: #1a1a2e; color: white; width: 80px;" placeholder="MB">
     </div>
     
-    <div class="info">
+        <div class="info">
         <h3>Node Information</h3>
-        <div>ID: ` + string(c.ID) + `</div>
-        <div>HTTP Port: ` + fmt.Sprintf("%d", c.HTTPDataPort) + `</div>
-        <div>Discovery Port: ` + fmt.Sprintf("%d", c.DiscoveryPort) + `</div>
-        <div>Data Directory: ` + c.DataDir + `</div>
+        <div>ID: ` + nodeID + `</div>
+        <div>HTTP Port: ` + httpPort + `</div>
+        <div>Discovery Port: ` + discoveryPort + `</div>
+        <div>Data Directory: ` + dataDir + `</div>
         <div id="debug-info" style="margin-top: 10px; color: #facc15; font-size: 12px;">API Status: Checking...</div>
         <div>Endpoints:</div>
         <div style="margin-left: 20px;">

@@ -127,7 +127,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("X-Forwarded-From", string(fs.cluster.ID))
 
-		resp, err := fs.cluster.httpClient.Do(req)
+		resp, err := fs.cluster.httpDataClient.Do(req)
 		if err != nil {
 			lastErr = err
 			continue

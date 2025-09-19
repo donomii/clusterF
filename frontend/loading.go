@@ -1,12 +1,11 @@
-package main
+package frontend
 
 import (
 	"net/http"
 )
 
-// handleLoadingPage serves a full-screen loading splash and redirects to the
-// file browser once the node HTTP endpoints respond.
-func (c *Cluster) handleLoadingPage(w http.ResponseWriter, r *http.Request) {
+// HandleLoadingPage serves a loading splash that redirects to the file browser.
+func (f *Frontend) HandleLoadingPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	html := `<!DOCTYPE html>
 <html lang="en">

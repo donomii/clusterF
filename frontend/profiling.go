@@ -1,22 +1,16 @@
-package main
+package frontend
 
-import (
-    "encoding/json"
-    "fmt"
-    "io"
-    "net/http"
-    "runtime"
-)
+import "net/http"
 
-// handleProfilingPage serves the profiling control page
-func (c *Cluster) handleProfilingPage(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+// HandleProfilingPage serves the profiling control page.
+func (f *Frontend) HandleProfilingPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-    html := `<!DOCTYPE html>
+	html := `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>🔍 Profiling - Node ` + string(c.ID) + `</title>
+    <title>🔍 Profiling - Node ` + f.provider.NodeID() + `</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐸</text></svg>">
     <style>
         body { font-family: Arial, sans-serif; background: #1a1a2e; color: white; margin: 0; padding: 20px; }
@@ -34,7 +28,7 @@ func (c *Cluster) handleProfilingPage(w http.ResponseWriter, r *http.Request) {
 <body>
     <div class="header">
         <h1>🔍 Performance Profiling</h1>
-        <p>Node: ` + string(c.ID) + ` | <a href="/" style="color: #06b6d4;">← Back to Home</a></p>
+        <p>Node: ` + f.provider.NodeID() + ` | <a href="/" style="color: #06b6d4;">← Back to Home</a></p>
     </div>
     
     <div class="status">
@@ -133,94 +127,5 @@ func (c *Cluster) handleProfilingPage(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`
 
-    w.Write([]byte(html))
+	w.Write([]byte(html))
 }
-
-// handleProfilingAPI handles profiling control API
-func (c *Cluster) handleProfilingAPI(w http.ResponseWriter, r *http.Request) {
-    switch r.Method {
-    case http.MethodGet:
-        c.profilingMutex.Lock()
-        active := c.profilingActive
-        c.profilingMutex.Unlock()
-
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "active": active,
-        })
-
-    case http.MethodPost:
-        body, err := io.ReadAll(r.Body)
-        if err != nil {
-            http.Error(w, "Failed to read request body", http.StatusBadRequest)
-            return
-        }
-
-        var request map[string]interface{}
-        if err := json.Unmarshal(body, &request); err != nil {
-            http.Error(w, "Invalid JSON", http.StatusBadRequest)
-            return
-        }
-
-        action, ok := request["action"].(string)
-        if !ok {
-            http.Error(w, "Missing action field", http.StatusBadRequest)
-            return
-        }
-
-        c.profilingMutex.Lock()
-        switch action {
-        case "start":
-            if !c.profilingActive {
-                if err := c.startProfiling(); err != nil {
-                    c.profilingMutex.Unlock()
-                    http.Error(w, fmt.Sprintf("Failed to start profiling: %v", err), http.StatusInternalServerError)
-                    return
-                }
-                c.profilingActive = true
-                c.Logger.Printf("[PROFILING] Started")
-            }
-        case "stop":
-            if c.profilingActive {
-                c.stopProfiling()
-                c.profilingActive = false
-                c.Logger.Printf("[PROFILING] Stopped")
-            }
-        default:
-            c.profilingMutex.Unlock()
-            http.Error(w, "Invalid action", http.StatusBadRequest)
-            return
-        }
-        c.profilingMutex.Unlock()
-
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "success": true,
-            "action":  action,
-        })
-
-    default:
-        http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-    }
-}
-
-// startProfiling enables Go's built-in profiling
-func (c *Cluster) startProfiling() error {
-    // Enable block profiling
-    runtime.SetBlockProfileRate(1)
-    // Enable mutex profiling
-    runtime.SetMutexProfileFraction(1)
-    // CPU profiling is handled by pprof endpoints directly
-    c.Logger.Printf("[PROFILING] Enabled block and mutex profiling")
-    return nil
-}
-
-// stopProfiling disables Go's built-in profiling
-func (c *Cluster) stopProfiling() {
-    // Disable block profiling
-    runtime.SetBlockProfileRate(0)
-    // Disable mutex profiling
-    runtime.SetMutexProfileFraction(0)
-    c.Logger.Printf("[PROFILING] Disabled block and mutex profiling")
-}
-

@@ -99,7 +99,7 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *discovery.PeerInfo, filename
 		Path:   fullPath,
 	}
 
-	resp, err := pm.cluster.httpClient.Get(u.String())
+	resp, err := pm.cluster.httpDataClient.Get(u.String())
 	if err != nil {
 		pm.cluster.debugf("[PARTITION] Failed to get file %s from %s: %v", filename, peer.NodeID, err)
 		return nil, err
@@ -143,7 +143,7 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *discovery.PeerInfo, file
 		return nil, err
 	}
 
-	resp, err := pm.cluster.httpClient.Do(req)
+	resp, err := pm.cluster.httpDataClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

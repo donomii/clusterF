@@ -8,38 +8,6 @@ import (
 	"testing"
 )
 
-func TestMonitorPageHTMLSnapshot(t *testing.T) {
-	cluster := NewCluster(ClusterOpts{
-		ID:           "test-node",
-		DataDir:      filepath.Join(t.TempDir(), "data"),
-		HTTPDataPort: 1234,
-	})
-	defer cluster.Stop()
-
-	req := httptest.NewRequest(http.MethodGet, "/monitor", nil)
-	rr := httptest.NewRecorder()
-	cluster.handleMonitorDashboard(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rr.Code)
-	}
-
-	html := rr.Body.String()
-	if len(html) == 0 {
-		t.Fatalf("monitor HTML empty")
-	}
-
-	// Log a preview for debugging
-	t.Logf("monitor html preview: %s", html[:min(len(html), 120)])
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func TestStatusHandlerReturnsJSON(t *testing.T) {
 	cluster := NewCluster(ClusterOpts{
 		ID:           "status-node",

@@ -1,15 +1,20 @@
-package main
+package frontend
 
 import (
-    "fmt"
-    "net/http"
+	"fmt"
+	"net/http"
 )
 
-// handleWelcome serves the welcome/root page
-func (c *Cluster) handleWelcome(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+// HandleWelcome serves the welcome/root page.
+func (f *Frontend) HandleWelcome(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-    html := `<!DOCTYPE html>
+	nodeID := f.provider.NodeID()
+	httpPort := fmt.Sprintf("%d", f.provider.HTTPPort())
+	discoveryPort := fmt.Sprintf("%d", f.provider.DiscoveryPortVal())
+	dataDir := f.provider.DataDirPath()
+
+	html := `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -39,10 +44,10 @@ func (c *Cluster) handleWelcome(w http.ResponseWriter, r *http.Request) {
         </div>
         
         <div class="node-info">
-            <h2>Node: ` + string(c.ID) + `</h2>
-            <p>HTTP Port: <strong>` + fmt.Sprintf("%d", c.HTTPDataPort) + `</strong></p>
-            <p>Discovery Port: <strong>` + fmt.Sprintf("%d", c.DiscoveryPort) + `</strong></p>
-            <p>Data Directory: <code>` + c.DataDir + `</code></p>
+            <h2>Node: ` + nodeID + `</h2>
+            <p>HTTP Port: <strong>` + httpPort + `</strong></p>
+            <p>Discovery Port: <strong>` + discoveryPort + `</strong></p>
+            <p>Data Directory: <code>` + dataDir + `</code></p>
         </div>
         
         <div class="endpoints">
@@ -91,6 +96,5 @@ func (c *Cluster) handleWelcome(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`
 
-    w.Write([]byte(html))
+	w.Write([]byte(html))
 }
-
