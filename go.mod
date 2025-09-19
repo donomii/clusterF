@@ -3,12 +3,15 @@ module github.com/donomii/clusterF
 go 1.25.1
 
 require (
+	github.com/donomii/clusterF/syncmap v0.0.0
 	github.com/donomii/ensemblekv v0.0.0-20250427181959-74bb6dcf7c35
 	github.com/donomii/frogpond v0.0.0-20250913173135-4515c9c7f901
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	golang.org/x/sys v0.30.0
 )
+
+replace github.com/donomii/clusterF/syncmap => ./syncmap
 
 require (
 	github.com/OneOfOne/xxhash v1.2.8 // indirect

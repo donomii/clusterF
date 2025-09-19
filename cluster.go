@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/discovery"
+	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
 	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
@@ -115,7 +116,7 @@ type Cluster struct {
 	initialSyncCancel context.CancelFunc
 
 	// Peer addresses
-	peerAddrs *SyncMap[NodeID, *discovery.PeerInfo]
+	peerAddrs *syncmap.SyncMap[NodeID, *discovery.PeerInfo]
 }
 
 type ClusterOpts struct {
@@ -186,7 +187,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		ExportDir:       opts.ExportDir,
 		NoStore:         opts.NoStore,
 		initialSyncTrig: make(chan struct{}, 1),
-		peerAddrs:       NewSyncMap[NodeID, *discovery.PeerInfo](),
+		peerAddrs:       syncmap.NewSyncMap[NodeID, *discovery.PeerInfo](),
 
 		fileListSubs: map[chan struct{}]bool{},
 

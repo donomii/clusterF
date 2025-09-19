@@ -1,8 +1,8 @@
-package main
+package syncmap
 
 import "sync"
 
-// SyncMap provides a thread-safe generic map
+// SyncMap provides a thread-safe generic map built on top of sync.Map.
 type SyncMap[K comparable, V any] struct {
 	m sync.Map
 }
@@ -39,7 +39,7 @@ func (sm *SyncMap[K, V]) Delete(key K) {
 
 // Range calls fn for each key-value pair
 func (sm *SyncMap[K, V]) Range(fn func(key K, value V) bool) {
-	sm.m.Range(func(key, value interface{}) bool {
+	sm.m.Range(func(key, value any) bool {
 		return fn(key.(K), value.(V))
 	})
 }
