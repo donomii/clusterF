@@ -80,11 +80,23 @@ func (pm *PartitionManager) storeFileInPartition(path string, metadataJSON []byt
 
 func (pm *PartitionManager) fetchFileFromPeer(peer *PeerInfo, filename string) ([]byte, error) {
 	// Try to get from this peer
+	decodedPath, err := url.PathUnescape(filename)
+	if err != nil {
+		decodedPath = filename
+	}
+
+	if !strings.HasPrefix(decodedPath, "/") {
+		decodedPath = "/" + decodedPath
+	}
+
+	fullPath := "/api/files" + decodedPath
+
 	u := url.URL{
 		Scheme: "http",
 		Host:   fmt.Sprintf("%s:%d", peer.Address, peer.HTTPPort),
-		Path:   "/api/files" + filename,
+		Path:   fullPath,
 	}
+
 	resp, err := pm.cluster.httpClient.Get(u.String())
 	if err != nil {
 		pm.cluster.debugf("[PARTITION] Failed to get file %s from %s: %v", filename, peer.NodeID, err)
