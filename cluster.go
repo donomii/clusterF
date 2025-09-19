@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/donomii/clusterF/threadmanager"
 	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
 )
@@ -70,7 +71,7 @@ type Cluster struct {
 
 	// Discovery manager
 	DiscoveryManager *DiscoveryManager
-	ThreadManager    *ThreadManager
+	ThreadManager    *threadmanager.ThreadManager
 
 	// CRDT coordination layer
 	frogpond *frogpond.Node
@@ -228,7 +229,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Created data directory: %s\n", opts.DataDir)
 
 	// Initialize thread manager
-	c.ThreadManager = NewThreadManager(id, opts.Logger)
+	c.ThreadManager = threadmanager.NewThreadManager(id, opts.Logger)
 	c.debugf("Initialized thread manager\n")
 
 	// Create HTTP client with connection pooling and timeouts

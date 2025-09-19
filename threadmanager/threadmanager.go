@@ -1,5 +1,5 @@
 // threadmanager.go - Centralized goroutine lifecycle management
-package main
+package threadmanager
 
 import (
 	"context"

@@ -1,5 +1,5 @@
 // threadmanager_test.go - Tests for ThreadManager auto-restart functionality
-package main
+package threadmanager
 
 import (
 	"context"

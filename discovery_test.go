@@ -8,6 +8,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/donomii/clusterF/threadmanager"
 )
 
 // newTestLogger returns a quiet logger for tests
@@ -31,7 +33,7 @@ func waitForPeerCount(t *testing.T, dm *DiscoveryManager, n int, timeoutMs int) 
 }
 
 func TestDiscovery_SingleNode_NoSelfPeer(t *testing.T) {
-	tm := NewThreadManager("node-1", newTestLogger())
+	tm := threadmanager.NewThreadManager("node-1", newTestLogger())
 	dm := NewDiscoveryManager("node-1", 31001, pickDiscoveryPort(), tm, newTestLogger())
 	// Fast timings to accelerate test
 	dm.SetTimings(100*time.Millisecond, 2*time.Second)
@@ -52,11 +54,11 @@ func TestDiscovery_SingleNode_NoSelfPeer(t *testing.T) {
 func TestDiscovery_TwoNodes_DiscoverEachOther(t *testing.T) {
 	port := pickDiscoveryPort()
 
-	tm1 := NewThreadManager("n1", newTestLogger())
+	tm1 := threadmanager.NewThreadManager("n1", newTestLogger())
 	dm1 := NewDiscoveryManager("n1", 31101, port, tm1, newTestLogger())
 	dm1.SetTimings(100*time.Millisecond, 2*time.Second)
 
-	tm2 := NewThreadManager("n2", newTestLogger())
+	tm2 := threadmanager.NewThreadManager("n2", newTestLogger())
 	dm2 := NewDiscoveryManager("n2", 31102, port, tm2, newTestLogger())
 	dm2.SetTimings(100*time.Millisecond, 2*time.Second)
 
@@ -80,10 +82,10 @@ func TestDiscovery_TwoNodes_DiscoverEachOther(t *testing.T) {
 func TestDiscovery_ThreeNodes_AllSeePeers(t *testing.T) {
 	port := pickDiscoveryPort()
 
-	tms := []*ThreadManager{
-		NewThreadManager("n0", newTestLogger()),
-		NewThreadManager("n1", newTestLogger()),
-		NewThreadManager("n2", newTestLogger()),
+	tms := []*threadmanager.ThreadManager{
+		threadmanager.NewThreadManager("n0", newTestLogger()),
+		threadmanager.NewThreadManager("n1", newTestLogger()),
+		threadmanager.NewThreadManager("n2", newTestLogger()),
 	}
 	dms := []*DiscoveryManager{
 		NewDiscoveryManager("n0", 31200, port, tms[0], newTestLogger()),
@@ -112,7 +114,7 @@ func TestDiscovery_ThreeNodes_AllSeePeers(t *testing.T) {
 }
 
 func TestDiscovery_InvalidMessagesIgnored(t *testing.T) {
-	tm := NewThreadManager("node-x", newTestLogger())
+	tm := threadmanager.NewThreadManager("node-x", newTestLogger())
 	dm := NewDiscoveryManager("node-x", 31301, pickDiscoveryPort(), tm, newTestLogger())
 
 	// Feed invalid messages directly into handler without opening sockets
@@ -127,7 +129,7 @@ func TestDiscovery_InvalidMessagesIgnored(t *testing.T) {
 }
 
 func TestDiscovery_HandleMessageAddsPeer(t *testing.T) {
-	tm := NewThreadManager("node-a", newTestLogger())
+	tm := threadmanager.NewThreadManager("node-a", newTestLogger())
 	dm := NewDiscoveryManager("node-a", 31401, pickDiscoveryPort(), tm, newTestLogger())
 
 	dm.handleDiscoveryMessage("CLUSTER_NODE:node-b:31402", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -142,7 +144,7 @@ func TestDiscovery_HandleMessageAddsPeer(t *testing.T) {
 }
 
 func TestDiscovery_CleanupRemovesStalePeers(t *testing.T) {
-	tm := NewThreadManager("node-a", newTestLogger())
+	tm := threadmanager.NewThreadManager("node-a", newTestLogger())
 	dm := NewDiscoveryManager("node-a", 31501, pickDiscoveryPort(), tm, newTestLogger())
 	dm.SetTimings(100*time.Millisecond, 200*time.Millisecond)
 
@@ -161,11 +163,11 @@ func TestDiscovery_CleanupRemovesStalePeers(t *testing.T) {
 
 func TestDiscovery_StatusSnapshot(t *testing.T) {
 	port := pickDiscoveryPort()
-	tm1 := NewThreadManager("s1", newTestLogger())
+	tm1 := threadmanager.NewThreadManager("s1", newTestLogger())
 	dm1 := NewDiscoveryManager("s1", 31601, port, tm1, newTestLogger())
 	dm1.SetTimings(100*time.Millisecond, 2*time.Second)
 
-	tm2 := NewThreadManager("s2", newTestLogger())
+	tm2 := threadmanager.NewThreadManager("s2", newTestLogger())
 	dm2 := NewDiscoveryManager("s2", 31602, port, tm2, newTestLogger())
 	dm2.SetTimings(100*time.Millisecond, 2*time.Second)
 
@@ -189,7 +191,7 @@ func TestDiscovery_StatusSnapshot(t *testing.T) {
 }
 
 func TestDiscovery_Stop_ReleasesResources(t *testing.T) {
-	tm := NewThreadManager("node-z", newTestLogger())
+	tm := threadmanager.NewThreadManager("node-z", newTestLogger())
 	dm := NewDiscoveryManager("node-z", 31701, pickDiscoveryPort(), tm, newTestLogger())
 	dm.SetTimings(100*time.Millisecond, 2*time.Second)
 
@@ -225,12 +227,12 @@ func TestDiscovery_Scale_OneHundredNodes(t *testing.T) {
 
 	t.Logf("starting %d discovery managers on port %d", n, port)
 
-	tms := make([]*ThreadManager, 0, n)
+	tms := make([]*threadmanager.ThreadManager, 0, n)
 	dms := make([]*DiscoveryManager, 0, n)
 
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("scale-%03d", i)
-		tm := NewThreadManager(id, newTestLogger())
+		tm := threadmanager.NewThreadManager(id, newTestLogger())
 		dm := NewDiscoveryManager(id, baseHTTP+i, port, tm, newTestLogger())
 		// Faster broadcasts, moderate timeout to keep peers around
 		dm.SetTimings(150*time.Millisecond, 8*time.Second)

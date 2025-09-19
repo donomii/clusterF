@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/donomii/clusterF/threadmanager"
 )
 
 // PeerInfo represents information about a discovered peer
@@ -55,11 +57,11 @@ type DiscoveryManager struct {
 	peerTimeout       time.Duration
 
 	// Thread management
-	threadManager *ThreadManager
+	threadManager *threadmanager.ThreadManager
 }
 
 // NewDiscoveryManager creates a new discovery manager
-func NewDiscoveryManager(nodeID string, httpPort int, discoveryPort int, tm *ThreadManager, logger *log.Logger) *DiscoveryManager {
+func NewDiscoveryManager(nodeID string, httpPort int, discoveryPort int, tm *threadmanager.ThreadManager, logger *log.Logger) *DiscoveryManager {
 	if discoveryPort == 0 {
 		discoveryPort = 9999 // Default discovery port
 	}
