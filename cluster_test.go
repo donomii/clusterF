@@ -981,8 +981,10 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 
 	url := fmt.Sprintf("http://localhost:%d/api/files/multi-test.txt", nodes[0].HTTPDataPort)
 
+	uploadTime := time.Now()
 	req, _ := http.NewRequest(http.MethodPut, url, bytes.NewReader(testData))
 	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("PUT failed: %v", err)
