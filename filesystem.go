@@ -66,6 +66,8 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 			if v != "" {
 				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 					modTime = time.Unix(0, n)
+				} else if t, err := parseTimestamp(v); err == nil {
+					modTime = t
 				}
 			}
 		}
@@ -77,10 +79,8 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 				modTime = time.Unix(int64(v), 0)
 			case string:
 				if v != "" {
-					if t, err := time.Parse(time.RFC3339, v); err == nil {
+					if t, err := parseTimestamp(v); err == nil {
 						modTime = t
-					} else if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
-						modTime = time.Unix(secs, 0)
 					}
 				}
 			}
@@ -131,8 +131,8 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		"path":         metadata.Path,
 		"size":         metadata.Size,
 		"content_type": metadata.ContentType,
-		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
-		"modified_at":  modTime.Unix(),
+		"created_at":   metadata.CreatedAt.Format(time.RFC3339Nano),
+		"modified_at":  modTime.Format(time.RFC3339Nano),
 		"is_directory": metadata.IsDirectory,
 		"version":      float64(modTime.UnixNano()),
 		"deleted":      false,
@@ -261,14 +261,24 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *FileMetadata, error)
 	if contentType, ok := metadataMap["content_type"].(string); ok {
 		metadata.ContentType = contentType
 	}
-	if createdStr, ok := metadataMap["created_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, createdStr); err == nil {
-			metadata.CreatedAt = t
+	if createdVal, ok := metadataMap["created_at"]; ok {
+		switch v := createdVal.(type) {
+		case string:
+			if t, err := parseTimestamp(v); err == nil {
+				metadata.CreatedAt = t
+			}
+		case float64:
+			metadata.CreatedAt = time.Unix(int64(v), 0)
 		}
 	}
-	if modifiedStr, ok := metadataMap["modified_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, modifiedStr); err == nil {
-			metadata.ModifiedAt = t
+	if modifiedVal, ok := metadataMap["modified_at"]; ok {
+		switch v := modifiedVal.(type) {
+		case string:
+			if t, err := parseTimestamp(v); err == nil {
+				metadata.ModifiedAt = t
+			}
+		case float64:
+			metadata.ModifiedAt = time.Unix(int64(v), 0)
 		}
 	}
 	if isDir, ok := metadataMap["is_directory"].(bool); ok {
@@ -337,6 +347,22 @@ func (fs *ClusterFileSystem) DeleteFile(path string) error {
 
 // Helper functions
 
+func parseTimestamp(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, fmt.Errorf("empty timestamp")
+	}
+	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	if secs, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return time.Unix(secs, 0), nil
+	}
+	return time.Time{}, fmt.Errorf("unrecognized timestamp: %s", value)
+}
+
 func (fs *ClusterFileSystem) validatePath(path string) error {
 	if len(path) > MaxPathLen {
 		return fmt.Errorf("path too long")
@@ -377,14 +403,24 @@ func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
 		metadata.Size = int64(sizeFloat)
 	}
 	metadata.ContentType, _ = metadataMap["content_type"].(string)
-	if createdStr, ok := metadataMap["created_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, createdStr); err == nil {
-			metadata.CreatedAt = t
+	if createdVal, ok := metadataMap["created_at"]; ok {
+		switch v := createdVal.(type) {
+		case string:
+			if t, err := parseTimestamp(v); err == nil {
+				metadata.CreatedAt = t
+			}
+		case float64:
+			metadata.CreatedAt = time.Unix(int64(v), 0)
 		}
 	}
-	if modifiedStr, ok := metadataMap["modified_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, modifiedStr); err == nil {
-			metadata.ModifiedAt = t
+	if modifiedVal, ok := metadataMap["modified_at"]; ok {
+		switch v := modifiedVal.(type) {
+		case string:
+			if t, err := parseTimestamp(v); err == nil {
+				metadata.ModifiedAt = t
+			}
+		case float64:
+			metadata.ModifiedAt = time.Unix(int64(v), 0)
 		}
 	}
 	if isDir, ok := metadataMap["is_directory"].(bool); ok {

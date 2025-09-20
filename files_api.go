@@ -258,6 +258,9 @@ func parseForwardedModTime(meta map[string]interface{}) (time.Time, error) {
 			if v == "" {
 				break
 			}
+			if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+				return t, nil
+			}
 			if t, err := time.Parse(time.RFC3339, v); err == nil {
 				return t, nil
 			}
