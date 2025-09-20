@@ -1,5 +1,6 @@
-// exporter.go - Optional OS export of the cluster filesystem to a local directory
-package main
+// Package exporter provides a filesystem watcher that mirrors changes between
+// the cluster file system and a local directory for OS-level sharing.
+package exporter
 
 import (
 	"context"
@@ -14,6 +15,27 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// Logger captures the logging functionality required by the exporter.
+type Logger interface {
+	Printf(format string, v ...any)
+}
+
+// Metadata represents the subset of file metadata the exporter needs.
+type Metadata struct {
+	Size        int64
+	ModifiedAt  time.Time
+	IsDirectory bool
+}
+
+// FileSystem defines the file-system operations the exporter relies on.
+type FileSystem interface {
+	CreateDirectory(path string) error
+	CreateDirectoryWithModTime(path string, modTime time.Time) error
+	StoreFileWithModTime(path string, data []byte, contentType string, modTime time.Time) error
+	DeleteFile(path string) error
+	MetadataForPath(path string) (*Metadata, error)
+}
+
 // Exporter mirrors files/directories from the cluster FS to a local directory
 // so the OS can share them via SMB/CIFS or other means.
 type Exporter struct {
@@ -21,11 +43,21 @@ type Exporter struct {
 	watcher *fsnotify.Watcher
 	ignore  *syncmap.SyncMap[string, time.Time] // full path -> expiry
 	watched *syncmap.SyncMap[string, struct{}]
+
+	fs     FileSystem
+	logger Logger
 }
 
-func NewExporter(base string) (*Exporter, error) {
+// New creates a new exporter for a given local base directory.
+func New(base string, logger Logger, fs FileSystem) (*Exporter, error) {
 	if base == "" {
 		return nil, fmt.Errorf("export base cannot be empty")
+	}
+	if logger == nil {
+		return nil, fmt.Errorf("logger cannot be nil")
+	}
+	if fs == nil {
+		return nil, fmt.Errorf("file system cannot be nil")
 	}
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return nil, err
@@ -34,6 +66,8 @@ func NewExporter(base string) (*Exporter, error) {
 		base:    base,
 		ignore:  syncmap.NewSyncMap[string, time.Time](),
 		watched: syncmap.NewSyncMap[string, struct{}](),
+		fs:      fs,
+		logger:  logger,
 	}, nil
 }
 
@@ -104,19 +138,19 @@ func (e *Exporter) RemoveDir(clusterPath string) error {
 
 // Run performs an initial import and watches for changes in the export dir,
 // mirroring them into the cluster in near real time.
-func (e *Exporter) Run(ctx context.Context, c *Cluster) {
+func (e *Exporter) Run(ctx context.Context) {
 	// Initial import
-	if err := e.importAll(c); err != nil {
-		c.Logger.Printf("[EXPORT] Initial import error: %v", err)
+	if err := e.importAll(); err != nil {
+		e.logger.Printf("[EXPORT] Initial import error: %v", err)
 	}
 
 	// Start watcher
-	if err := e.startWatcher(ctx, c); err != nil {
-		c.Logger.Printf("[EXPORT] Watcher error: %v", err)
+	if err := e.startWatcher(ctx); err != nil {
+		e.logger.Printf("[EXPORT] Watcher error: %v", err)
 	}
 }
 
-func (e *Exporter) startWatcher(ctx context.Context, c *Cluster) error {
+func (e *Exporter) startWatcher(ctx context.Context) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -125,7 +159,7 @@ func (e *Exporter) startWatcher(ctx context.Context, c *Cluster) error {
 
 	// Add watchers recursively
 	if err := e.addWatchRecursive(e.base); err != nil {
-		c.Logger.Printf("[EXPORT] addWatchRecursive error: %v", err)
+		e.logger.Printf("[EXPORT] addWatchRecursive error: %v", err)
 	}
 
 	// Event loop
@@ -154,7 +188,7 @@ func (e *Exporter) startWatcher(ctx context.Context, c *Cluster) error {
 						if st != nil {
 							modT = st.ModTime()
 						}
-						if err := c.FileSystem.CreateDirectoryWithModTime(clusterPath, modT); err != nil {
+						if err := e.fs.CreateDirectoryWithModTime(clusterPath, modT); err != nil {
 							// ignore if already exists
 						}
 						_ = e.addWatchRecursive(ev.Name)
@@ -169,7 +203,7 @@ func (e *Exporter) startWatcher(ctx context.Context, c *Cluster) error {
 						if statErr != nil {
 							continue
 						}
-						if meta, err2 := c.FileSystem.getMetadata(clusterPath); err2 == nil {
+						if meta, err2 := e.fs.MetadataForPath(clusterPath); err2 == nil {
 							if metadataMatches(meta, st.Size(), st.ModTime()) {
 								continue
 							}
@@ -178,8 +212,8 @@ func (e *Exporter) startWatcher(ctx context.Context, c *Cluster) error {
 						if err == nil {
 							ct := contentTypeFromExt(ev.Name)
 							modT := st.ModTime()
-							if err := c.FileSystem.StoreFileWithModTime(clusterPath, data, ct, modT); err != nil {
-								c.Logger.Printf("[EXPORT] StoreFile error for %s: %v", clusterPath, err)
+							if err := e.fs.StoreFileWithModTime(clusterPath, data, ct, modT); err != nil {
+								e.logger.Printf("[EXPORT] StoreFile error for %s: %v", clusterPath, err)
 							}
 						}
 						continue
@@ -190,14 +224,14 @@ func (e *Exporter) startWatcher(ctx context.Context, c *Cluster) error {
 						e.removeWatchRecursive(ev.Name)
 					}
 					// delete from cluster (best-effort)
-					if err := c.FileSystem.DeleteFile(clusterPath); err != nil {
+					if err := e.fs.DeleteFile(clusterPath); err != nil {
 						// directories might be non-empty; ignore errors
 					}
 					continue
 				}
 			case err := <-w.Errors:
 				if err != nil {
-					c.Logger.Printf("[EXPORT] watcher error: %v", err)
+					e.logger.Printf("[EXPORT] watcher error: %v", err)
 				}
 			}
 		}
@@ -285,7 +319,7 @@ func (e *Exporter) clusterPathFor(full string) (string, bool) {
 	return "/" + rel, true
 }
 
-func (e *Exporter) importAll(c *Cluster) error {
+func (e *Exporter) importAll() error {
 	return filepath.WalkDir(e.base, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -296,10 +330,10 @@ func (e *Exporter) importAll(c *Cluster) error {
 		}
 		if d.IsDir() {
 			// ensure directory exists in cluster
-			if meta, err := c.FileSystem.getMetadata(clusterPath); err == nil && meta.IsDirectory {
+			if meta, err := e.fs.MetadataForPath(clusterPath); err == nil && meta != nil && meta.IsDirectory {
 				return nil
 			}
-			_ = c.FileSystem.CreateDirectory(clusterPath)
+			_ = e.fs.CreateDirectory(clusterPath)
 			return nil
 		}
 		// file
@@ -307,7 +341,7 @@ func (e *Exporter) importAll(c *Cluster) error {
 		if err != nil {
 			return nil
 		}
-		if meta, err := c.FileSystem.getMetadata(clusterPath); err == nil {
+		if meta, err := e.fs.MetadataForPath(clusterPath); err == nil {
 			if metadataMatches(meta, st.Size(), st.ModTime()) {
 				return nil
 			}
@@ -317,12 +351,12 @@ func (e *Exporter) importAll(c *Cluster) error {
 			return nil
 		}
 		ct := contentTypeFromExt(p)
-		_ = c.FileSystem.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
+		_ = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
 		return nil
 	})
 }
 
-func metadataMatches(meta *FileMetadata, size int64, modTime time.Time) bool {
+func metadataMatches(meta *Metadata, size int64, modTime time.Time) bool {
 	if meta == nil || meta.IsDirectory {
 		return false
 	}

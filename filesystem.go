@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/discovery"
+	exporter "github.com/donomii/clusterF/exporter"
 )
 
 const (
@@ -458,6 +459,22 @@ func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
 	}
 
 	return &metadata, nil
+}
+
+// MetadataForPath adapts internal metadata to the exporter module's format.
+func (fs *ClusterFileSystem) MetadataForPath(path string) (*exporter.Metadata, error) {
+	meta, err := fs.getMetadata(path)
+	if err != nil {
+		return nil, err
+	}
+	if meta == nil {
+		return nil, nil
+	}
+	return &exporter.Metadata{
+		Size:        meta.Size,
+		ModifiedAt:  meta.ModifiedAt,
+		IsDirectory: meta.IsDirectory,
+	}, nil
 }
 
 // CreateDirectory is a no-op since directories are inferred from file paths

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/discovery"
+	"github.com/donomii/clusterF/exporter"
 	"github.com/donomii/clusterF/frontend"
 	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/syncmap"
@@ -105,7 +106,7 @@ type Cluster struct {
 
 	// Optional local export directory for OS sharing (SMB/NFS/etc.)
 	ExportDir string
-	exporter  *Exporter
+	exporter  *exporter.Exporter
 
 	// KV stores
 	metadataKV ensemblekv.KvLike
@@ -351,7 +352,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 	// Initialize exporter if configured
 	if opts.ExportDir != "" {
-		if exp, err := NewExporter(opts.ExportDir); err != nil {
+		if exp, err := exporter.New(opts.ExportDir, c.Logger, c.FileSystem); err != nil {
 			c.Logger.Printf("[EXPORT] Failed to init exporter for %s: %v", opts.ExportDir, err)
 		} else {
 			c.exporter = exp
@@ -517,7 +518,7 @@ func (c *Cluster) runExportSync(ctx context.Context) {
 		return
 	}
 	c.Logger.Printf("[EXPORT] Starting export sync from %s", c.ExportDir)
-	c.exporter.Run(ctx, c)
+	c.exporter.Run(ctx)
 }
 
 func (c *Cluster) Stop() {
