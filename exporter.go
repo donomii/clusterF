@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/donomii/clusterF/syncmap"
@@ -20,8 +19,7 @@ import (
 type Exporter struct {
 	base    string
 	watcher *fsnotify.Watcher
-	igMu    sync.Mutex
-	ignore  map[string]time.Time // full path -> expiry
+	ignore  *syncmap.SyncMap[string, time.Time] // full path -> expiry
 	watched *syncmap.SyncMap[string, struct{}]
 }
 
@@ -34,7 +32,7 @@ func NewExporter(base string) (*Exporter, error) {
 	}
 	return &Exporter{
 		base:    base,
-		ignore:  make(map[string]time.Time),
+		ignore:  syncmap.NewSyncMap[string, time.Time](),
 		watched: syncmap.NewSyncMap[string, struct{}](),
 	}, nil
 }
@@ -342,19 +340,15 @@ func metadataMatches(meta *FileMetadata, size int64, modTime time.Time) bool {
 }
 
 func (e *Exporter) markIgnore(full string) {
-	e.igMu.Lock()
-	defer e.igMu.Unlock()
-	e.ignore[full] = time.Now().Add(2 * time.Second)
+	e.ignore.Store(full, time.Now().Add(2*time.Second))
 }
 
 func (e *Exporter) shouldIgnore(full string) bool {
-	e.igMu.Lock()
-	defer e.igMu.Unlock()
-	if t, ok := e.ignore[full]; ok {
+	if t, ok := e.ignore.Load(full); ok {
 		if time.Now().Before(t) {
 			return true
 		}
-		delete(e.ignore, full)
+		e.ignore.Delete(full)
 	}
 	return false
 }
