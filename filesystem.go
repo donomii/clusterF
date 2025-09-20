@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -192,9 +193,13 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 			}
 		}
 
-		url := fmt.Sprintf("http://%s:%d/api/files%s", peer.Address, peer.HTTPPort, path)
+		fileURL, err := buildPeerFileURL(peer, path)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 
-		req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(content))
+		req, err := http.NewRequest(http.MethodPut, fileURL, bytes.NewReader(content))
 		if err != nil {
 			lastErr = err
 			continue
@@ -380,6 +385,24 @@ func (fs *ClusterFileSystem) validatePath(path string) error {
 	return nil
 }
 
+func buildPeerFileURL(peer *discovery.PeerInfo, filePath string) (string, error) {
+	if peer == nil {
+		return "", fmt.Errorf("peer info is required")
+	}
+	if !strings.HasPrefix(filePath, "/") {
+		filePath = "/" + filePath
+	}
+	fullPath := "/api/files" + filePath
+	escapedPath := (&url.URL{Path: fullPath}).EscapedPath()
+	u := url.URL{
+		Scheme:  "http",
+		Host:    fmt.Sprintf("%s:%d", peer.Address, peer.HTTPPort),
+		Path:    fullPath,
+		RawPath: escapedPath,
+	}
+	return u.String(), nil
+}
+
 func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
 	// Try to get metadata from partition system
 	metadataMap, err := fs.cluster.PartitionManager.getMetadataFromPartition(path)
@@ -448,8 +471,11 @@ func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime tim
 }
 
 func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *discovery.PeerInfo, path string, modTime time.Time, size int64) (bool, error) {
-	url := fmt.Sprintf("http://%s:%d/api/files%s", peer.Address, peer.HTTPPort, path)
-	req, err := http.NewRequest(http.MethodHead, url, nil)
+	fileURL, err := buildPeerFileURL(peer, path)
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequest(http.MethodHead, fileURL, nil)
 	if err != nil {
 		return false, err
 	}
