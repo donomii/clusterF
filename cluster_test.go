@@ -470,8 +470,10 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 			success := CheckSuccessWithTimeout(func() bool {
 				// Store file using file system
 
+				uploadTime := time.Now()
 				req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files"+filePath, bytes.NewReader(testData))
 				req.Header.Set("Content-Type", "application/octet-stream")
+				req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
 				resp, err = client.Do(req)
 				return err == nil
 			}, 2000, 20000) // Retry for up to 20 seconds
@@ -716,8 +718,10 @@ func TestCluster_ConcurrentOperations(t *testing.T) {
 			testData := generateTestData(1024)
 
 			baseURL := fmt.Sprintf("http://localhost:%d", nodes[nodeIndex].HTTPDataPort)
+			uploadTime := time.Now()
 			req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files/"+fileName, bytes.NewReader(testData))
 			req.Header.Set("Content-Type", "application/octet-stream")
+			req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
 			resp, err := client.Do(req)
 			if err != nil {
 				errors <- err
@@ -831,8 +835,10 @@ func TestCluster_BasicOperations(t *testing.T) {
 	// Test PUT operation (using file system API)
 	WaitForConditionT(t, "File upload", func() bool {
 
+		uploadTime := time.Now()
 		req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files/test-file.txt", bytes.NewReader(testData))
 		req.Header.Set("Content-Type", "text/plain")
+		req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("PUT request failed: %v", err)
@@ -974,6 +980,7 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 	testData := []byte("Multi-node test data")
 
 	url := fmt.Sprintf("http://localhost:%d/api/files/multi-test.txt", nodes[0].HTTPDataPort)
+
 	req, _ := http.NewRequest(http.MethodPut, url, bytes.NewReader(testData))
 	req.Header.Set("Content-Type", "text/plain")
 	resp, err := client.Do(req)
@@ -1031,7 +1038,7 @@ func TestCluster_LocalStorage(t *testing.T) {
 
 	t.Logf("Storing file %s\n", filePath)
 	// Store file
-	err := cluster.FileSystem.StoreFile(filePath, testData, "text/plain")
+	err := cluster.FileSystem.StoreFileWithModTime(filePath, testData, "text/plain", time.Now())
 	if err != nil {
 		t.Fatalf("StoreFile failed: %v", err)
 	}
@@ -1108,14 +1115,14 @@ func BenchmarkCluster_FileOperations(b *testing.B) {
 	b.Run("StoreFile", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			filePath := fmt.Sprintf("/bench-file-%d.txt", i)
-			cluster.FileSystem.StoreFile(filePath, testData, "application/octet-stream")
+			cluster.FileSystem.StoreFileWithModTime(filePath, testData, "application/octet-stream", time.Now())
 		}
 	})
 
 	// Store some files for read benchmark
 	for i := 0; i < 100; i++ {
 		filePath := fmt.Sprintf("/read-bench-file-%d.txt", i)
-		cluster.FileSystem.StoreFile(filePath, testData, "application/octet-stream")
+		cluster.FileSystem.StoreFileWithModTime(filePath, testData, "application/octet-stream", time.Now())
 	}
 
 	b.Run("GetFile", func(b *testing.B) {

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStatusHandlerReturnsJSON(t *testing.T) {
@@ -16,7 +17,7 @@ func TestStatusHandlerReturnsJSON(t *testing.T) {
 	})
 	defer cluster.Stop()
 
-	if err := cluster.FileSystem.StoreFile("/test.txt", []byte("hello"), "text/plain"); err != nil {
+	if err := cluster.FileSystem.StoreFileWithModTime("/test.txt", []byte("hello"), "text/plain", time.Now()); err != nil {
 		t.Fatalf("store file failed: %v", err)
 	}
 

@@ -9,9 +9,18 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+var testModTimeBase = time.Unix(1_700_000_000, 0)
+var testModCounter int64
+
+func nextTestModTime() time.Time {
+	v := atomic.AddInt64(&testModCounter, 1)
+	return testModTimeBase.Add(time.Duration(v) * time.Second)
+}
 
 func TestFileSystem_BasicOperations(t *testing.T) {
 	tempDir := t.TempDir()
@@ -42,7 +51,7 @@ func TestFileSystem_BasicOperations(t *testing.T) {
 
 	// Test 1: Store and retrieve a small file
 	testContent := []byte("Hello, distributed file system!")
-	err := fs.StoreFile("/test.txt", testContent, "text/plain")
+	err := fs.StoreFileWithModTime("/test.txt", testContent, "text/plain", nextTestModTime())
 	if err != nil {
 		t.Fatalf("Failed to store file: %v", err)
 	}
@@ -99,7 +108,7 @@ func TestFileSystem_Directories(t *testing.T) {
 
 	// Test 3: Store file in nested directory to create the directory structure
 	testContent := []byte("Project documentation")
-	err = fs.StoreFile("/documents/projects/readme.txt", testContent, "text/plain")
+	err = fs.StoreFileWithModTime("/documents/projects/readme.txt", testContent, "text/plain", nextTestModTime())
 	if err != nil {
 		t.Fatalf("Failed to store file in nested directory: %v", err)
 	}
@@ -169,7 +178,7 @@ func TestFileSystem_LargeFiles(t *testing.T) {
 		largeContent[i] = byte(i % 256)
 	}
 
-	err := fs.StoreFile("/large.bin", largeContent, "application/octet-stream")
+	err := fs.StoreFileWithModTime("/large.bin", largeContent, "application/octet-stream", nextTestModTime())
 	if err != nil {
 		t.Fatalf("Failed to store large file: %v", err)
 	}
@@ -217,9 +226,11 @@ func TestFileSystem_HTTPEndpoints(t *testing.T) {
 
 	// Test 1: Upload file via HTTP (skip directory creation since directories are inferred)
 	testContent := "This is a test file uploaded via HTTP API"
+	uploadTime := nextTestModTime()
 	req, _ := http.NewRequest("PUT", baseURL+"/api/files/test.txt",
 		strings.NewReader(testContent))
 	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Failed to upload file via HTTP: %v", err)
@@ -306,7 +317,7 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 	// Store file on node 0
 	testContent := []byte("Multi-node replicated file content")
 	filePath := "/replicated.txt"
-	if err := nodes[0].FileSystem.StoreFile(filePath, testContent, "text/plain"); err != nil {
+	if err := nodes[0].FileSystem.StoreFileWithModTime(filePath, testContent, "text/plain", nextTestModTime()); err != nil {
 		t.Fatalf("Failed to store file on node 0: %v", err)
 	}
 
@@ -365,7 +376,7 @@ func TestFileSystem_ErrorConditions(t *testing.T) {
 	}
 
 	// Test 2: Try to create file with invalid path
-	err = fs.StoreFile("../invalid", []byte("test"), "text/plain")
+	err = fs.StoreFileWithModTime("../invalid", []byte("test"), "text/plain", nextTestModTime())
 	if err == nil {
 		t.Fatalf("Expected error for invalid path")
 	}
@@ -401,14 +412,14 @@ func BenchmarkFileSystem_SmallFiles(b *testing.B) {
 	b.Run("Store", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			path := fmt.Sprintf("/bench-small-%d.txt", i)
-			fs.StoreFile(path, testContent, "text/plain")
+			fs.StoreFileWithModTime(path, testContent, "text/plain", nextTestModTime())
 		}
 	})
 
 	// Store some files for read benchmark
 	for i := 0; i < 100; i++ {
 		path := fmt.Sprintf("/read-bench-%d.txt", i)
-		fs.StoreFile(path, testContent, "text/plain")
+		fs.StoreFileWithModTime(path, testContent, "text/plain", nextTestModTime())
 	}
 
 	b.Run("Retrieve", func(b *testing.B) {
@@ -444,7 +455,7 @@ func BenchmarkFileSystem_LargeFiles(b *testing.B) {
 	b.Run("Store1MB", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			path := fmt.Sprintf("/bench-large-%d.bin", i)
-			fs.StoreFile(path, largeContent, "application/octet-stream")
+			fs.StoreFileWithModTime(path, largeContent, "application/octet-stream", nextTestModTime())
 		}
 	})
 }

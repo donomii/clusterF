@@ -305,6 +305,105 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 	return nil, nil, fmt.Errorf("%w: %s", ErrFileNotFound, path)
 }
 
+func (pm *PartitionManager) getMetadataFromPartition(path string) (map[string]interface{}, error) {
+	if pm.cluster.NoStore {
+		pm.cluster.debugf("[PARTITION] No-store mode: getting metadata %s from peers", path)
+		return pm.getMetadataFromPeers(path)
+	}
+
+	partitionID := hashToPartition(path)
+	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
+
+	metadataData, err := pm.cluster.metadataKV.Get([]byte(fileKey))
+	if err != nil {
+		pm.cluster.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
+		return nil, ErrFileNotFound
+	}
+
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(metadataData, &metadata); err != nil {
+		return nil, fmt.Errorf("corrupt file metadata: %v", err)
+	}
+
+	if deleted, ok := metadata["deleted"].(bool); ok && deleted {
+		return nil, ErrFileNotFound
+	}
+
+	return metadata, nil
+}
+
+func (pm *PartitionManager) getMetadataFromPeers(path string) (map[string]interface{}, error) {
+	partitionID := hashToPartition(path)
+	partition := pm.getPartitionInfo(partitionID)
+	if partition == nil {
+		return nil, fmt.Errorf("partition %s not found for file %s", partitionID, path)
+	}
+
+	if len(partition.Holders) == 0 {
+		return nil, fmt.Errorf("no holders registered for partition %s", partitionID)
+	}
+
+	peers := pm.cluster.DiscoveryManager.GetPeers()
+	peerLookup := make(map[NodeID]*discovery.PeerInfo, len(peers))
+	for _, peer := range peers {
+		peerLookup[NodeID(peer.NodeID)] = peer
+	}
+
+	orderedPeers := make([]*discovery.PeerInfo, 0, len(partition.Holders))
+	seen := make(map[NodeID]bool)
+	addPeer := func(nodeID NodeID, peer *discovery.PeerInfo) {
+		if peer == nil {
+			return
+		}
+		if nodeID == pm.cluster.ID {
+			return
+		}
+		if seen[nodeID] {
+			return
+		}
+		if peer.Address == "" || peer.HTTPPort == 0 {
+			pm.cluster.debugf("[PARTITION] Ignoring peer %s for partition %s due to missing address/port", nodeID, partitionID)
+			return
+		}
+		orderedPeers = append(orderedPeers, peer)
+		seen[nodeID] = true
+	}
+
+	for _, holder := range partition.Holders {
+		if peer, ok := peerLookup[holder]; ok {
+			addPeer(holder, peer)
+			continue
+		}
+
+		if peer, ok := pm.cluster.peerAddrs.Load(holder); ok {
+			addPeer(holder, peer)
+			continue
+		}
+
+		pm.cluster.debugf("[PARTITION] Holder %s for partition %s has no reachable peer info", holder, partitionID)
+	}
+
+	if len(orderedPeers) == 0 {
+		if len(peers) == 0 {
+			return nil, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
+		}
+		return nil, fmt.Errorf("no registered holders available for partition %s", partitionID)
+	}
+
+	pm.cluster.debugf("[PARTITION] Fetching metadata %s from partition %s holders: %v", path, partitionID, partition.Holders)
+
+	for _, peer := range orderedPeers {
+		metadata, err := pm.fetchMetadataFromPeer(peer, path)
+		if err != nil {
+			pm.cluster.debugf("[PARTITION] Failed metadata lookup for %s from %s: %v", path, peer.NodeID, err)
+			continue
+		}
+		return metadata, nil
+	}
+
+	return nil, fmt.Errorf("%w: %s", ErrFileNotFound, path)
+}
+
 // deleteFileFromPartition removes a file from its partition
 func (pm *PartitionManager) deleteFileFromPartition(path string) error {
 	// If in no-store mode, don't delete locally (we don't have it anyway)

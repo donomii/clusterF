@@ -218,12 +218,12 @@ func (c *Cluster) persistCRDTToFile() {
 func (c *Cluster) loadCRDTFromFile() {
 	data, err := ioutil.ReadFile(filepath.Join(c.DataDir, "crdt_backup.json"))
 	if err != nil {
-		c.Logger.Printf("Failed to read CRDT backup file: %v", err)
+		c.Logger.Printf("Could not read CRDT backup file: %v", err)
 		return
 	}
 	var allData []frogpond.DataPoint
 	if err := json.Unmarshal(data, &allData); err != nil {
-		c.Logger.Printf("Failed to unmarshal CRDT backup data: %v", err)
+		c.Logger.Printf("Could not unmarshal CRDT backup data: %v", err)
 		return
 	}
 	c.frogpond.AppendDataPoints(allData)

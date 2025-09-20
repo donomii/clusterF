@@ -279,8 +279,8 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Initialized partition manager\n")
 
 	// Initialize KV stores
-	filesKVPath := filepath.Join(opts.DataDir, "kv_files")
-	crdtKVPath := filepath.Join(opts.DataDir, "kv_crdt")
+	filesKVPath := filepath.Join(opts.DataDir, "kv_metadata")
+	crdtKVPath := filepath.Join(opts.DataDir, "kv_content")
 	// Use ensemble over bolt for stability
 	c.metadataKV = ensemblekv.SimpleEnsembleCreator("extent", "", filesKVPath, 8*1024*1024, 32, 256*1024*1024)
 	c.contentKV = ensemblekv.SimpleEnsembleCreator("extent", "", crdtKVPath, 2*1024*1024, 16, 64*1024*1024)

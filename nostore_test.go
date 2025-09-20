@@ -67,8 +67,10 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	// Test 1: Store file on storage node 0
 	t.Logf("📤 Test 1: Storing file on storage node 0")
 	storeURL := fmt.Sprintf("http://localhost:%d/api/files%s", nodes[0].HTTPDataPort, testFileName)
+	uploadTime := time.Now()
 	req, _ := http.NewRequest(http.MethodPut, storeURL, bytes.NewReader(testData))
 	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -157,8 +159,10 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	clientStoreFileName := "/client-upload-test.txt"
 	clientStoreURL := fmt.Sprintf("http://localhost:%d/api/files%s", nodes[2].HTTPDataPort, clientStoreFileName)
 
+	uploadTime2 := time.Now()
 	req, _ = http.NewRequest(http.MethodPut, clientStoreURL, bytes.NewReader(clientStoreData))
 	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("X-ClusterF-Modified-At", uploadTime2.Format(time.RFC3339Nano))
 
 	resp, err = client.Do(req)
 	if err != nil {

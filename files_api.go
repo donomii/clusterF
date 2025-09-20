@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -160,14 +162,64 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
+	forwardedFrom := r.Header.Get("X-Forwarded-From")
+	isForwarded := forwardedFrom != ""
+
+	var metadata map[string]interface{}
+	var modTime time.Time
+	if isForwarded {
+		metaHeader := r.Header.Get("X-ClusterF-Metadata")
+		if metaHeader == "" {
+			http.Error(w, "Missing forwarded metadata", http.StatusBadRequest)
+			return
+		}
+		decoded, err := base64.StdEncoding.DecodeString(metaHeader)
+		if err != nil {
+			http.Error(w, "Invalid forwarded metadata encoding", http.StatusBadRequest)
+			return
+		}
+		if err := json.Unmarshal(decoded, &metadata); err != nil {
+			http.Error(w, "Invalid forwarded metadata payload", http.StatusBadRequest)
+			return
+		}
+		var parseErr error
+		modTime, parseErr = parseForwardedModTime(metadata)
+		if parseErr != nil {
+			http.Error(w, fmt.Sprintf("%v", parseErr), http.StatusBadRequest)
+			return
+		}
+	}
+
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
-	if err := c.FileSystem.StoreFile(path, content, contentType); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
-		return
+	if isForwarded {
+		if metadata != nil {
+			if ct, ok := metadata["content_type"].(string); ok && ct != "" {
+				contentType = ct
+			}
+		}
+		if err := c.FileSystem.StoreFileWithModTime(path, content, contentType, modTime); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		modHeader := r.Header.Get("X-ClusterF-Modified-At")
+		if modHeader == "" {
+			http.Error(w, "Missing X-ClusterF-Modified-At header", http.StatusBadRequest)
+			return
+		}
+		localModTime, err := parseHeaderTimestamp(modHeader)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
+			return
+		}
+		if err := c.FileSystem.StoreFileWithModTime(path, content, contentType, localModTime); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	c.Logger.Printf("[FILES] Stored %s (%d bytes)", path, len(content))
@@ -177,6 +229,80 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		"path":    path,
 		"size":    len(content),
 	})
+}
+
+func parseForwardedModTime(meta map[string]interface{}) (time.Time, error) {
+	if meta == nil {
+		return time.Time{}, fmt.Errorf("forwarded metadata missing")
+	}
+	if raw, ok := meta["version"]; ok {
+		switch v := raw.(type) {
+		case float64:
+			if v != 0 {
+				nanos := int64(v)
+				return time.Unix(0, nanos), nil
+			}
+		case string:
+			if v != "" {
+				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+					return time.Unix(0, n), nil
+				}
+			}
+		}
+	}
+	if raw, ok := meta["modified_at"]; ok {
+		switch v := raw.(type) {
+		case float64:
+			return time.Unix(int64(v), 0), nil
+		case string:
+			if v == "" {
+				break
+			}
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				return t, nil
+			}
+			if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
+				return time.Unix(secs, 0), nil
+			}
+		}
+	}
+	return time.Time{}, fmt.Errorf("forwarded metadata missing modified time")
+}
+
+func parseHeaderTimestamp(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, fmt.Errorf("empty timestamp header")
+	}
+	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	if strings.Contains(value, ".") {
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			secs := int64(f)
+			nanos := int64((f - float64(secs)) * 1e9)
+			return time.Unix(secs, nanos), nil
+		}
+	}
+	if i, err := strconv.ParseInt(value, 10, 64); err == nil {
+		abs := i
+		if abs < 0 {
+			abs = -abs
+		}
+		switch {
+		case abs >= 1_000_000_000_000_000_000:
+			return time.Unix(0, i), nil
+		case abs >= 1_000_000_000_000_000:
+			return time.Unix(0, i*1_000), nil
+		case abs >= 1_000_000_000_000:
+			return time.Unix(0, i*1_000_000), nil
+		default:
+			return time.Unix(i, 0), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognized timestamp format")
 }
 
 func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path string) {

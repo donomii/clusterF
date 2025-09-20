@@ -3,11 +3,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,9 +45,66 @@ func NewClusterFileSystem(cluster *Cluster) *ClusterFileSystem {
 	}
 }
 
-// StoreFile stores a file in the cluster using the partition system
+// StoreFile requires explicit metadata; callers must provide modification time via StoreFileWithModTime.
 func (fs *ClusterFileSystem) StoreFile(path string, content []byte, contentType string) error {
-	return fs.StoreFileWithModTime(path, content, contentType, time.Now())
+	return fmt.Errorf("StoreFile requires explicit modification time; use StoreFileWithModTime")
+}
+
+func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
+	var meta map[string]interface{}
+	if err := json.Unmarshal(metadataJSON, &meta); err != nil {
+		return time.Time{}, 0, err
+	}
+	var modTime time.Time
+	if raw, ok := meta["version"]; ok {
+		switch v := raw.(type) {
+		case float64:
+			if v != 0 {
+				modTime = time.Unix(0, int64(v))
+			}
+		case string:
+			if v != "" {
+				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+					modTime = time.Unix(0, n)
+				}
+			}
+		}
+	}
+	if modTime.IsZero() {
+		if raw, ok := meta["modified_at"]; ok {
+			switch v := raw.(type) {
+			case float64:
+				modTime = time.Unix(int64(v), 0)
+			case string:
+				if v != "" {
+					if t, err := time.Parse(time.RFC3339, v); err == nil {
+						modTime = t
+					} else if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
+						modTime = time.Unix(secs, 0)
+					}
+				}
+			}
+		}
+	}
+	size := int64(0)
+	if raw, ok := meta["size"]; ok {
+		switch v := raw.(type) {
+		case float64:
+			size = int64(v)
+		case string:
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				size = n
+			}
+		case int64:
+			size = v
+		case int:
+			size = int64(v)
+		}
+	}
+	if modTime.IsZero() {
+		return time.Time{}, size, fmt.Errorf("forwarded metadata missing mod time")
+	}
+	return modTime, size, nil
 }
 
 // StoreFileWithModTime stores a file using an explicit modification time
@@ -115,7 +174,24 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 	// Try forwarding to storage nodes until one succeeds
 	var lastErr error
+	forwarded := false
+	skippedPeers := 0
+
+	modTime, size, metaErr := decodeForwardedMetadata(metadataJSON)
+
 	for _, peer := range storageNodes {
+		if metaErr == nil {
+			upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size)
+			if err == nil && upToDate {
+				fs.cluster.Logger.Printf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339Nano))
+				skippedPeers++
+				continue
+			}
+			if err != nil {
+				fs.cluster.Logger.Printf("[FILES] HEAD check failed for %s on %s: %v", path, peer.NodeID, err)
+			}
+		}
+
 		url := fmt.Sprintf("http://%s:%d/api/files%s", peer.Address, peer.HTTPPort, path)
 
 		req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(content))
@@ -126,6 +202,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("X-Forwarded-From", string(fs.cluster.ID))
+		req.Header.Set("X-ClusterF-Metadata", base64.StdEncoding.EncodeToString(metadataJSON))
 
 		resp, err := fs.cluster.httpDataClient.Do(req)
 		if err != nil {
@@ -136,10 +213,19 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 		if resp.StatusCode == http.StatusCreated {
 			fs.cluster.Logger.Printf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
+			forwarded = true
 			return nil // Success
 		}
 
 		lastErr = fmt.Errorf("peer %s returned %d", peer.NodeID, resp.StatusCode)
+	}
+
+	if forwarded || skippedPeers == len(storageNodes) {
+		return nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no storage nodes accepted upload")
 	}
 
 	return fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
@@ -270,7 +356,7 @@ func (fs *ClusterFileSystem) validatePath(path string) error {
 
 func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
 	// Try to get metadata from partition system
-	_, metadataMap, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
+	metadataMap, err := fs.cluster.PartitionManager.getMetadataFromPartition(path)
 	if err != nil {
 		if errors.Is(err, ErrFileNotFound) {
 			return nil, ErrFileNotFound
@@ -323,4 +409,49 @@ func (fs *ClusterFileSystem) CreateDirectory(path string) error {
 // CreateDirectoryWithModTime is a no-op since directories are inferred from file paths
 func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime time.Time) error {
 	return nil // Directories are inferred from file paths
+}
+
+func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *discovery.PeerInfo, path string, modTime time.Time, size int64) (bool, error) {
+	url := fmt.Sprintf("http://%s:%d/api/files%s", peer.Address, peer.HTTPPort, path)
+	req, err := http.NewRequest(http.MethodHead, url, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := fs.cluster.httpDataClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return false, nil
+	case http.StatusOK:
+		remoteMod := time.Time{}
+		if lm := resp.Header.Get("Last-Modified"); lm != "" {
+			if t, err := time.Parse(http.TimeFormat, lm); err == nil {
+				remoteMod = t
+			}
+		}
+		if remoteMod.IsZero() {
+			if alt := resp.Header.Get("X-ClusterF-Created-At"); alt != "" {
+				if t, err := time.Parse(time.RFC3339, alt); err == nil {
+					remoteMod = t
+				}
+			}
+		}
+		remoteSize := int64(-1)
+		if cl := resp.Header.Get("Content-Length"); cl != "" {
+			if n, err := strconv.ParseInt(cl, 10, 64); err == nil {
+				remoteSize = n
+			}
+		}
+		if !remoteMod.IsZero() && !remoteMod.Before(modTime) {
+			if size <= 0 || remoteSize == size {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
 }

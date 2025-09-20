@@ -167,24 +167,19 @@ func (e *Exporter) startWatcher(ctx context.Context, c *Cluster) error {
 				// Handle file changes
 				if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename) != 0 {
 					if !isDir(ev.Name) {
-						// read and store
+						st, statErr := os.Stat(ev.Name)
+						if statErr != nil {
+							continue
+						}
+						if meta, err2 := c.FileSystem.getMetadata(clusterPath); err2 == nil {
+							if metadataMatches(meta, st.Size(), st.ModTime()) {
+								continue
+							}
+						}
 						data, err := os.ReadFile(ev.Name)
 						if err == nil {
-							// rudimentary content type by extension
 							ct := contentTypeFromExt(ev.Name)
-							// Decide by modification time: only import if disk newer
-							if meta, err2 := c.FileSystem.getMetadata(clusterPath); err2 == nil {
-								st, _ := os.Stat(ev.Name)
-								if st != nil && !st.ModTime().After(meta.ModifiedAt) {
-									// cluster is newer or equal — skip
-									continue
-								}
-							}
-							st, _ := os.Stat(ev.Name)
-							modT := time.Now()
-							if st != nil {
-								modT = st.ModTime()
-							}
+							modT := st.ModTime()
 							if err := c.FileSystem.StoreFileWithModTime(clusterPath, data, ct, modT); err != nil {
 								c.Logger.Printf("[EXPORT] StoreFile error for %s: %v", clusterPath, err)
 							}
@@ -192,7 +187,6 @@ func (e *Exporter) startWatcher(ctx context.Context, c *Cluster) error {
 						continue
 					}
 				}
-
 				if ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 					if e.isWatchedDir(ev.Name) {
 						e.removeWatchRecursive(ev.Name)
@@ -311,15 +305,40 @@ func (e *Exporter) importAll(c *Cluster) error {
 			return nil
 		}
 		// file
+		st, err := os.Stat(p)
+		if err != nil {
+			return nil
+		}
+		if meta, err := c.FileSystem.getMetadata(clusterPath); err == nil {
+			if metadataMatches(meta, st.Size(), st.ModTime()) {
+				return nil
+			}
+		}
 		data, err := os.ReadFile(p)
 		if err != nil {
 			return nil
 		}
 		ct := contentTypeFromExt(p)
-		// Store file (overwrite or create)
-		_ = c.FileSystem.StoreFile(clusterPath, data, ct)
+		_ = c.FileSystem.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
 		return nil
 	})
+}
+
+func metadataMatches(meta *FileMetadata, size int64, modTime time.Time) bool {
+	if meta == nil || meta.IsDirectory {
+		return false
+	}
+	if meta.Size != size {
+		return false
+	}
+	if meta.ModifiedAt.IsZero() {
+		return false
+	}
+	diff := meta.ModifiedAt.Sub(modTime)
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= time.Second
 }
 
 func (e *Exporter) markIgnore(full string) {
