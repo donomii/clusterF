@@ -22,6 +22,7 @@ import (
 
 	"github.com/donomii/clusterF/discovery"
 	"github.com/donomii/clusterF/frontend"
+	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
 	ensemblekv "github.com/donomii/ensemblekv"
@@ -80,7 +81,7 @@ type Cluster struct {
 	frogpond *frogpond.Node
 
 	// Partition system
-	PartitionManager *PartitionManager
+	PartitionManager *partitionmanager.PartitionManager
 
 	// File system layer
 	FileSystem *ClusterFileSystem
@@ -119,6 +120,29 @@ type Cluster struct {
 
 	// Peer addresses
 	peerAddrs *syncmap.SyncMap[NodeID, *discovery.PeerInfo]
+}
+
+type partitionDiscoveryAdapter struct {
+	manager *discovery.DiscoveryManager
+}
+
+func (a partitionDiscoveryAdapter) GetPeers() []*partitionmanager.PeerInfo {
+	if a.manager == nil {
+		return nil
+	}
+	raw := a.manager.GetPeers()
+	peers := make([]*partitionmanager.PeerInfo, 0, len(raw))
+	for _, peer := range raw {
+		if peer == nil {
+			continue
+		}
+		peers = append(peers, &partitionmanager.PeerInfo{
+			NodeID:   peer.NodeID,
+			Address:  peer.Address,
+			HTTPPort: peer.HTTPPort,
+		})
+	}
+	return peers
 }
 
 type ClusterOpts struct {
@@ -274,10 +298,6 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.frogpond = frogpond.NewNode()
 	c.debugf("Initialized frogpond node\n")
 
-	// Initialize partition manager
-	c.PartitionManager = NewPartitionManager(c)
-	c.debugf("Initialized partition manager\n")
-
 	// Initialize KV stores
 	filesKVPath := filepath.Join(opts.DataDir, "kv_metadata")
 	crdtKVPath := filepath.Join(opts.DataDir, "kv_content")
@@ -295,6 +315,35 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	// Load CRDT state from KV (if any) before applying defaults
 	c.loadCRDTFromFile()
 	c.debugf("Loaded CRDT state from KV\n")
+
+	// Initialize partition manager
+	deps := partitionmanager.Dependencies{
+		NodeID:         partitionmanager.NodeID(c.ID),
+		NoStore:        c.NoStore,
+		Logger:         c.Logger,
+		Debugf:         c.debugf,
+		MetadataKV:     c.metadataKV,
+		ContentKV:      c.contentKV,
+		HTTPDataClient: c.httpDataClient,
+		Discovery:      partitionDiscoveryAdapter{manager: c.DiscoveryManager},
+		LoadPeer: func(id partitionmanager.NodeID) (*partitionmanager.PeerInfo, bool) {
+			peer, ok := c.peerAddrs.Load(NodeID(id))
+			if !ok || peer == nil {
+				return nil, false
+			}
+			return &partitionmanager.PeerInfo{
+				NodeID:   peer.NodeID,
+				Address:  peer.Address,
+				HTTPPort: peer.HTTPPort,
+			}, true
+		},
+		Frogpond:              c.frogpond,
+		SendUpdatesToPeers:    c.sendUpdatesToPeers,
+		NotifyFileListChanged: c.notifyFileListChanged,
+		GetCurrentRF:          c.getCurrentRF,
+	}
+	c.PartitionManager = partitionmanager.NewPartitionManager(deps)
+	c.debugf("Initialized partition manager\n")
 
 	// Initialize file system
 	c.FileSystem = NewClusterFileSystem(c)
@@ -458,7 +507,7 @@ func (c *Cluster) Start() {
 	}
 	c.ThreadManager.StartThread("periodic-peer-sync", c.periodicPeerSync)
 	c.ThreadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
-	c.ThreadManager.StartThread("partition-check", c.PartitionManager.periodicPartitionCheck)
+	c.ThreadManager.StartThread("partition-check", c.PartitionManager.PeriodicPartitionCheck)
 	c.debugf("Started all threads")
 }
 
@@ -677,7 +726,7 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var partitionStats map[string]interface{}
 	if c.PartitionManager != nil {
 		c.debugf("[STATUS] Getting partition stats")
-		partitionStats = c.PartitionManager.getPartitionStats()
+		partitionStats = c.PartitionManager.GetPartitionStats()
 		c.debugf("[STATUS] Got partition stats: %+v", partitionStats)
 	} else {
 		c.debugf("[STATUS] PartitionManager is nil")
@@ -781,8 +830,8 @@ func (c *Cluster) handlePartitionSyncAPI(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	partitionID := PartitionID(path)
-	c.PartitionManager.handlePartitionSync(w, r, partitionID)
+	partitionID := partitionmanager.PartitionID(path)
+	c.PartitionManager.HandlePartitionSync(w, r, partitionID)
 }
 
 // handlePartitionStats returns partition statistics
@@ -792,7 +841,7 @@ func (c *Cluster) handlePartitionStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats := c.PartitionManager.getPartitionStats()
+	stats := c.PartitionManager.GetPartitionStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
 }

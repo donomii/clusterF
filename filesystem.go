@@ -145,7 +145,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		return fs.forwardUploadToStorageNode(path, metadataJSON, content, contentType)
 	}
 
-	if err := fs.cluster.PartitionManager.storeFileInPartition(path, metadataJSON, content); err != nil {
+	if err := fs.cluster.PartitionManager.StoreFileInPartition(path, metadataJSON, content); err != nil {
 		return logerrf("failed to store file: %v", err)
 	}
 
@@ -239,7 +239,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 // GetFile retrieves a file from the partition system
 func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *FileMetadata, error) {
 	// Get file content and metadata together
-	content, metadataMap, err := fs.cluster.PartitionManager.getFileAndMetaFromPartition(path)
+	content, metadataMap, err := fs.cluster.PartitionManager.GetFileAndMetaFromPartition(path)
 	if err != nil {
 		if errors.Is(err, ErrFileNotFound) {
 			return nil, nil, ErrFileNotFound
@@ -328,7 +328,7 @@ func (fs *ClusterFileSystem) DeleteFile(path string) error {
 	}
 
 	// Delete from partition system
-	if err := fs.cluster.PartitionManager.deleteFileFromPartition(path); err != nil {
+	if err := fs.cluster.PartitionManager.DeleteFileFromPartition(path); err != nil {
 		return fmt.Errorf("failed to delete file: %v", err)
 	}
 
@@ -405,7 +405,7 @@ func buildPeerFileURL(peer *discovery.PeerInfo, filePath string) (string, error)
 
 func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
 	// Try to get metadata from partition system
-	metadataMap, err := fs.cluster.PartitionManager.getMetadataFromPartition(path)
+	metadataMap, err := fs.cluster.PartitionManager.GetMetadataFromPartition(path)
 	if err != nil {
 		if errors.Is(err, ErrFileNotFound) {
 			return nil, ErrFileNotFound

@@ -13,11 +13,13 @@ require (
 )
 
 replace github.com/donomii/clusterF/frontend => ./frontend
+
 replace github.com/donomii/clusterF/syncmap => ./syncmap
 
 require (
 	github.com/OneOfOne/xxhash v1.2.8 // indirect
 	github.com/aws/aws-sdk-go v1.55.7 // indirect
+	github.com/donomii/clusterF/partitionmanager v0.0.0
 	github.com/donomii/goof v0.0.0-20241124064022-84f417f466df // indirect
 	github.com/go-logr/logr v1.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -28,3 +30,5 @@ require (
 	go.etcd.io/bbolt v1.3.11 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 )
+
+replace github.com/donomii/clusterF/partitionmanager => ./partitionmanager

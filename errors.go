@@ -1,9 +1,13 @@
 package main
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/donomii/clusterF/partitionmanager"
+)
 
 // Shared sentinel errors for filesystem operations.
 var (
-	ErrFileNotFound = errors.New("file not found")
+	ErrFileNotFound = partitionmanager.ErrFileNotFound
 	ErrIsDirectory  = errors.New("path is a directory")
 )

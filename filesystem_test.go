@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/donomii/clusterF/partitionmanager"
 )
 
 var testModTimeBase = time.Unix(1_700_000_000, 0)
@@ -329,7 +331,7 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 	// Compute the expected partition for this file (same hashing as PartitionManager)
 	// PartitionManager uses crc32 over the filename to map to pXXXXX
 	fname := path.Base(filePath)
-	partNum := crc32.ChecksumIEEE([]byte(fname)) % DefaultPartitionCount
+	partNum := crc32.ChecksumIEEE([]byte(fname)) % partitionmanager.DefaultPartitionCount
 	expectedPartition := fmt.Sprintf("p%05d", partNum)
 
 	// Verify the file can be retrieved from each node over HTTP
