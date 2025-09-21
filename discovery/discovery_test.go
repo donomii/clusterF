@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/donomii/clusterF/testenv"
 	"github.com/donomii/clusterF/threadmanager"
 )
 
@@ -53,6 +54,8 @@ func waitForPeerCount(t *testing.T, dm *DiscoveryManager, n int, timeoutMs int) 
 }
 
 func TestDiscovery_SingleNode_NoSelfPeer(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	tm := threadmanager.NewThreadManager("node-1", newTestLogger())
 	dm := NewDiscoveryManager("node-1", 31001, pickDiscoveryPort(), tm, newTestLogger())
 	// Fast timings to accelerate test
@@ -72,6 +75,8 @@ func TestDiscovery_SingleNode_NoSelfPeer(t *testing.T) {
 }
 
 func TestDiscovery_TwoNodes_DiscoverEachOther(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	port := pickDiscoveryPort()
 
 	tm1 := threadmanager.NewThreadManager("n1", newTestLogger())
@@ -100,6 +105,8 @@ func TestDiscovery_TwoNodes_DiscoverEachOther(t *testing.T) {
 }
 
 func TestDiscovery_ThreeNodes_AllSeePeers(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	port := pickDiscoveryPort()
 
 	tms := []*threadmanager.ThreadManager{
@@ -182,6 +189,8 @@ func TestDiscovery_CleanupRemovesStalePeers(t *testing.T) {
 }
 
 func TestDiscovery_StatusSnapshot(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	port := pickDiscoveryPort()
 	tm1 := threadmanager.NewThreadManager("s1", newTestLogger())
 	dm1 := NewDiscoveryManager("s1", 31601, port, tm1, newTestLogger())
@@ -211,6 +220,8 @@ func TestDiscovery_StatusSnapshot(t *testing.T) {
 }
 
 func TestDiscovery_Stop_ReleasesResources(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	tm := threadmanager.NewThreadManager("node-z", newTestLogger())
 	dm := NewDiscoveryManager("node-z", 31701, pickDiscoveryPort(), tm, newTestLogger())
 	dm.SetTimings(100*time.Millisecond, 2*time.Second)
@@ -235,6 +246,8 @@ func TestDiscovery_Stop_ReleasesResources(t *testing.T) {
 // This exercises socket reuse, broadcast/listen loops, and basic liveness at scale.
 // Skips under -short to avoid heavy runtime in CI.
 func TestDiscovery_Scale_OneHundredNodes(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	if testing.Short() {
 		t.Skip("skipping 100-node discovery test in -short mode")
 	}

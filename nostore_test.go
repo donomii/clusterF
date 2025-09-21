@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/partitionmanager"
+	"github.com/donomii/clusterF/testenv"
 )
 
 func TestCluster_NoStoreMode(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	t.Logf("🧪 Testing no-store client mode functionality")
 
 	// Create 3 nodes: 2 normal storage nodes + 1 no-store client

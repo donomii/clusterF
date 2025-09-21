@@ -35,9 +35,19 @@ jobs:
         run: |
           go build ./...
 
-      - name: Test
+      - name: Test (Full)
+        if: runner.os != 'macOS'
         env:
           CGO_ENABLED: 0
+        run: |
+          go test ./...
+
+      - name: Test (Sandbox-safe)
+        if: runner.os == 'macOS'
+        env:
+          CGO_ENABLED: 0
+          CLUSTERF_SANDBOX: 1
+          GOCACHE: ${{ github.workspace }}/.gocache
         run: |
           go test ./...
 

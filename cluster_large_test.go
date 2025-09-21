@@ -7,9 +7,13 @@ package main
 import (
 	"testing"
 	"time"
+
+	"github.com/donomii/clusterF/testenv"
 )
 
 func TestCluster_ThousandNodes(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	if testing.Short() {
 		t.Skip("Skipping 1000-node test in short mode")
 	}
@@ -44,6 +48,8 @@ func TestCluster_ThousandNodes(t *testing.T) {
 }
 
 func TestCluster_HundredNodes(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	if testing.Short() {
 		t.Skip("Skipping 100-node test in short mode")
 	}
@@ -67,6 +73,8 @@ func TestCluster_HundredNodes(t *testing.T) {
 
 // Comprehensive scaling test that can be run with different parameters - now with concurrent subtests
 func TestCluster_Large_Scaling(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	testCases := []TestConfig{
 		{NodeCount: 1, ChunkCount: 10, ChunkSize: 1024, TestName: "Scale_1_Node", TimeoutMs: 5000},
 		{NodeCount: 10, ChunkCount: 50, ChunkSize: 1024, TestName: "Scale_10_Nodes", TimeoutMs: 60000},

@@ -10,6 +10,7 @@ import (
 )
 
 func TestHTTPServer_DynamicPortAllocation(t *testing.T) {
+
 	tempDir := t.TempDir()
 
 	// Create multiple clusters that will compete for ports
@@ -79,6 +80,7 @@ func TestHTTPServer_DynamicPortAllocation(t *testing.T) {
 }
 
 func TestHTTPServer_RestartWithNewPort(t *testing.T) {
+
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
@@ -135,6 +137,7 @@ func TestHTTPServer_RestartWithNewPort(t *testing.T) {
 }
 
 func TestHTTPServer_PortRangeExhaustion(t *testing.T) {
+
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{

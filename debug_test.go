@@ -28,6 +28,7 @@ func TestMinimal_NewCluster(t *testing.T) {
 }
 
 func TestMinimal_StartStop(t *testing.T) {
+
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{

@@ -25,6 +25,7 @@ func nextTestModTime() time.Time {
 }
 
 func TestFileSystem_BasicOperations(t *testing.T) {
+
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
@@ -79,6 +80,7 @@ func TestFileSystem_BasicOperations(t *testing.T) {
 }
 
 func TestFileSystem_Directories(t *testing.T) {
+
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
@@ -161,6 +163,7 @@ func TestFileSystem_Directories(t *testing.T) {
 }
 
 func TestFileSystem_LargeFiles(t *testing.T) {
+
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
@@ -200,6 +203,7 @@ func TestFileSystem_LargeFiles(t *testing.T) {
 }
 
 func TestFileSystem_HTTPEndpoints(t *testing.T) {
+
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
@@ -358,6 +362,7 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 }
 
 func TestFileSystem_ErrorConditions(t *testing.T) {
+
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{

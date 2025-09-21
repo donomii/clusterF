@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/donomii/clusterF/testenv"
 )
 
 // clearResponseBody drains and closes the response body to enable connection reuse.
@@ -84,6 +86,8 @@ type TestConfig struct {
 
 // Test parallel shutdown performance
 func TestCluster_ParallelShutdownPerformance(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	if testing.Short() {
 		t.Skip("Skipping parallel shutdown performance test in short mode")
 	}
@@ -148,6 +152,8 @@ func TestCluster_ParallelShutdownPerformance(t *testing.T) {
 
 // Benchmark parallel vs sequential shutdown
 func BenchmarkCluster_ParallelShutdown(b *testing.B) {
+	testenv.RequireUDPSupport(b)
+
 	if testing.Short() {
 		b.Skip("Skipping parallel shutdown benchmark in short mode")
 	}
@@ -595,6 +601,7 @@ func testDiscoveryAndPeering(t *testing.T, config TestConfig) ClusterTestResult 
 // Actual test functions that call the parameterized functions
 
 func TestCluster_SingleNode(t *testing.T) {
+
 	result := testBasicOperations(t, TestConfig{
 		NodeCount:     1,
 		FileCount:     5,
@@ -613,6 +620,8 @@ func TestCluster_SingleNode(t *testing.T) {
 
 // Comprehensive scaling test that can be run with different parameters - now with concurrent subtests
 func TestCluster_Scaling(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	testCases := []TestConfig{
 		{NodeCount: 1, FileCount: 10, FileSize: 1024, TestName: "Scale_1_Node", TimeoutMs: 5000},
 		{NodeCount: 10, FileCount: 50, FileSize: 1024, TestName: "Scale_10_Nodes", TimeoutMs: 30000},
@@ -648,6 +657,8 @@ func TestCluster_Scaling(t *testing.T) {
 
 // Test different file sizes - now parallel
 func TestCluster_FileSizes(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	fileSizes := []int{
 		0, // Empty file
 		1,
@@ -693,6 +704,8 @@ func TestCluster_FileSizes(t *testing.T) {
 
 // Concurrent operations test
 func TestCluster_ConcurrentOperations(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	nodes, cleanup := setupTestCluster(t, TestConfig{
 		NodeCount:     5,
 		TimeoutMs:     10000,
@@ -809,6 +822,7 @@ func TestParallelMap_ActuallyParallel(t *testing.T) {
 		len(tasks), limitedDuration)
 }
 func TestCluster_BasicOperations(t *testing.T) {
+
 	config := TestConfig{
 		NodeCount:     1,
 		FileCount:     5,
@@ -925,6 +939,8 @@ func TestCluster_BasicOperations(t *testing.T) {
 
 // Multi-node discovery test (maintains compatibility) - now with parallel shutdown
 func TestCluster_MultiNode_Discovery(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	tempDir := t.TempDir()
 	discoveryPort := 20001 // Random unique port to avoid conflicts
 
@@ -1019,6 +1035,8 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 
 // Local storage test (maintains compatibility)
 func TestCluster_LocalStorage(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
 	tempDir := t.TempDir()
 
 	t.Logf("Single node local storage test creating cluster in %s\n", tempDir)

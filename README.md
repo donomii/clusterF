@@ -189,9 +189,17 @@ Delete semantics: deletions create tombstones which propagate; peers will not re
 ## 🔧 Development
 
 ### Run Tests
+Full suite (requires UDP broadcast support):
 ```bash
-go test -v
+go test ./...
 ```
+
+Sandbox-friendly subset (skips UDP discovery tests):
+```bash
+CGO_ENABLED=0 CLUSTERF_SANDBOX=1 GOCACHE=$(pwd)/.gocache go test ./...
+```
+The sandbox mode is picked up automatically when the `CODEX_SANDBOX` environment
+variable is set (as in this Codex CLI) or when `CLUSTERF_SANDBOX` is truthy.
 
 ### Build Binary
 ```bash
