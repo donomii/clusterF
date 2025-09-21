@@ -26,6 +26,7 @@ import (
 	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
+	"github.com/donomii/clusterF/urlutil"
 	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
 )
@@ -1128,14 +1129,18 @@ func (c *Cluster) runInitialSyncCycle(ctx context.Context) {
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
 // Returns true on success, false on failure
 func (c *Cluster) requestFullStoreFromPeer(peer *discovery.PeerInfo) bool {
-	url := fmt.Sprintf("http://%s:%d/frogpond/fullstore", peer.Address, peer.HTTPPort)
+	fullStoreURL, err := urlutil.BuildHTTPURL(peer.Address, peer.HTTPPort, "/frogpond/fullstore")
+	if err != nil {
+		c.Logger.Printf("[INITIAL_SYNC] Failed to build full store URL for %s: %v", peer.NodeID, err)
+		return false
+	}
 
 	// Create a client with no timeout for full sync
 	client := &http.Client{
 		Timeout: 0, // No timeout
 	}
 
-	resp, err := client.Get(url)
+	resp, err := client.Get(fullStoreURL)
 	if err != nil {
 		c.Logger.Printf("[INITIAL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
 		return false

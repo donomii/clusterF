@@ -329,6 +329,36 @@
     </div>
 
     <script>
+        function normalizeAPIPath(path) {
+            if (!path) {
+                return '/';
+            }
+            return path.startsWith('/') ? path : '/' + path;
+        }
+
+        function encodeAPIPath(path) {
+            const parts = path.split('/');
+            for (let i = 0; i < parts.length; i++) {
+                if (i === 0 || parts[i] === '') {
+                    continue;
+                }
+                try {
+                    parts[i] = decodeURIComponent(parts[i]);
+                } catch (_) {}
+                parts[i] = encodeURIComponent(parts[i]);
+            }
+            return parts.join('/');
+        }
+
+        function buildFilesUrl(path, options = {}) {
+            const normalized = encodeAPIPath(normalizeAPIPath(path || '/'));
+            const url = new URL('/api/files' + normalized, window.location.origin);
+            if (options.download) {
+                url.searchParams.set('download', '1');
+            }
+            return url.toString();
+        }
+
         let currentPath = '/';
 
         // Initialize
@@ -417,7 +447,7 @@
         async function refreshFiles() {
             if (firstLoad) showLoading(true);
             try {
-                const response = await fetch("/api/files" + currentPath);
+                const response = await fetch(buildFilesUrl(currentPath));
                 if (response.ok) {
                     const data = await response.json();
                     renderFiles(data.entries || []);
@@ -453,7 +483,8 @@
                 const size = file.is_directory ? 'Directory' : formatFileSize(file.size);
                 
                 const filePath = currentPath.endsWith('/') ? currentPath + file.name : currentPath + '/' + file.name;
-                const iconHTML = isImage ? ('<img class="thumb" src="' + ('/api/files' + filePath) + '" alt="thumb">') : ('<div class="file-icon">' + icon + '</div>');
+                const fileUrl = buildFilesUrl(filePath);
+                const iconHTML = isImage ? ('<img class="thumb" src="' + fileUrl + '" alt="thumb">') : ('<div class="file-icon">' + icon + '</div>');
                 item.innerHTML = iconHTML +
                     '<div class="file-name">' + escapeHtml(file.name) + '</div>' +
                     '<div class="file-size">' + size + '</div>' +
@@ -564,7 +595,7 @@
                 return; // Don't upload directory entries
             }
 
-            const response = await fetch('/api/files' + filePath, {
+            const response = await fetch(buildFilesUrl(filePath), {
                 method: 'PUT',
                 body: file
             });
@@ -576,8 +607,9 @@
 
         async function downloadFile(fileName) {
             const filePath = currentPath.endsWith('/') ? currentPath + fileName : currentPath + '/' + fileName;
+            const downloadUrl = buildFilesUrl(filePath, { download: true });
             try {
-                const resp = await fetch('/api/files' + filePath + '?download=1');
+                const resp = await fetch(downloadUrl);
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const blob = await resp.blob();
                 const url = URL.createObjectURL(blob);
@@ -590,7 +622,7 @@
                 URL.revokeObjectURL(url);
             } catch (e) {
                 // Fallback to opening in new tab
-                window.open('/api/files' + filePath + '?download=1', '_blank');
+                window.open(downloadUrl, '_blank');
             }
         }
 
@@ -606,7 +638,7 @@
             const downloadBtn = document.getElementById('previewDownloadBtn');
             downloadBtn.onclick = () => downloadFile(fileName);
 
-            const url = '/api/files' + filePath;
+            const url = buildFilesUrl(filePath);
             // Reset classes
             body.classList.remove('media', 'text');
             if (contentType.startsWith('image/')) {
@@ -644,7 +676,7 @@
             
             try {
                 const filePath = currentPath.endsWith('/') ? currentPath + fileName : currentPath + '/' + fileName;
-                const response = await fetch('/api/files' + filePath, { method: 'DELETE' });
+                const response = await fetch(buildFilesUrl(filePath), { method: 'DELETE' });
                 
                 if (response.ok) {
                     showNotification('✅ Deleted: ' + fileName, 'success');
@@ -672,7 +704,7 @@
             try {
                 // Directories end with /
                 const folderPath = currentPath + folderName + '/';
-                const response = await fetch('/api/files' + folderPath, {
+                const response = await fetch(buildFilesUrl(folderPath), {
                     method: 'POST',
                     headers: { 'X-Create-Directory': 'true' }
                 });

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donomii/clusterF/urlutil"
 	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
 )
@@ -181,15 +182,13 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *PeerInfo, filename string) (
 		decodedPath = "/" + decodedPath
 	}
 
-	fullPath := "/api/files" + decodedPath
-
-	u := url.URL{
-		Scheme: "http",
-		Host:   fmt.Sprintf("%s:%d", peer.Address, peer.HTTPPort),
-		Path:   fullPath,
+	fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, decodedPath)
+	if err != nil {
+		pm.debugf("[PARTITION] Failed to build URL for %s on %s: %v", filename, peer.NodeID, err)
+		return nil, err
 	}
 
-	resp, err := pm.httpClient().Get(u.String())
+	resp, err := pm.httpClient().Get(fileURL)
 	if err != nil {
 		pm.debugf("[PARTITION] Failed to get file %s from %s: %v", filename, peer.NodeID, err)
 		return nil, err
@@ -220,15 +219,12 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *PeerInfo, filename strin
 		decodedPath = "/" + decodedPath
 	}
 
-	fullPath := "/api/files" + decodedPath
-
-	u := url.URL{
-		Scheme: "http",
-		Host:   fmt.Sprintf("%s:%d", peer.Address, peer.HTTPPort),
-		Path:   fullPath,
+	fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, decodedPath)
+	if err != nil {
+		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodHead, u.String(), nil)
+	req, err := http.NewRequest(http.MethodHead, fileURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -788,16 +784,19 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 	pm.logf("[PARTITION] Starting sync of %s from %s", partitionID, peerID)
 
 	// Request partition data from peer (use a longer timeout for large streams)
-	url := fmt.Sprintf("http://%s:%d/api/partition-sync/%s", peerAddr, peerPort, partitionID)
-	longClient := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := longClient.Get(url)
+	syncURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
 	if err != nil {
-		return fmt.Errorf("syncPartitionFromPeer: failed to request partition sync from peer '%s' at '%s' for partition '%s': %v", peerID, url, partitionID, err)
+		return fmt.Errorf("syncPartitionFromPeer: failed to build sync URL for peer '%s' partition '%s': %v", peerID, partitionID, err)
+	}
+	longClient := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := longClient.Get(syncURL)
+	if err != nil {
+		return fmt.Errorf("syncPartitionFromPeer: failed to request partition sync from peer '%s' at '%s' for partition '%s': %v", peerID, syncURL, partitionID, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("syncPartitionFromPeer: peer '%s' at '%s' returned error %d '%s' for partition '%s'", peerID, url, resp.StatusCode, resp.Status, partitionID)
+		return fmt.Errorf("syncPartitionFromPeer: peer '%s' at '%s' returned error %d '%s' for partition '%s'", peerID, syncURL, resp.StatusCode, resp.Status, partitionID)
 	}
 
 	// Read and apply the partition data from both stores

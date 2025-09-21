@@ -100,6 +100,32 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
     </div>
     
     <script>
+        function normalizeAPIPath(path) {
+            if (!path) {
+                return '/';
+            }
+            return path.startsWith('/') ? path : '/' + path;
+        }
+
+        function encodeAPIPath(path) {
+            const parts = path.split('/');
+            for (let i = 0; i < parts.length; i++) {
+                if (i === 0 || parts[i] === '') {
+                    continue;
+                }
+                try {
+                    parts[i] = decodeURIComponent(parts[i]);
+                } catch (_) {}
+                parts[i] = encodeURIComponent(parts[i]);
+            }
+            return parts.join('/');
+        }
+
+        function buildFilesUrl(path) {
+            const normalized = encodeAPIPath(normalizeAPIPath(path || '/'));
+            return new URL('/api/files' + normalized, window.location.origin).toString();
+        }
+
         async function refreshStats() {
             try {
                 const debugDiv = document.getElementById('debug-info');
@@ -167,7 +193,7 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
                 
                 
                 const fileName = 'test-' + Date.now() + '.txt';
-                const response = await fetch('/api/files/' + fileName, {
+                const response = await fetch(buildFilesUrl(fileName), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'text/plain' },
                     body: testData

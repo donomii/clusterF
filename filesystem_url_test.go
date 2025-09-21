@@ -5,12 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/donomii/clusterF/discovery"
+	"github.com/donomii/clusterF/urlutil"
 )
 
 func TestBuildPeerFileURL(t *testing.T) {
-	peer := &discovery.PeerInfo{Address: "node.example", HTTPPort: 8080}
-
 	trickyName := "🌎🌎🌎.        #learnjapanese #japaneseculture - Real Real Japan (1080p, h264, youtube, a_AbypkmBe4).mp4"
 
 	testCases := []struct {
@@ -27,7 +25,7 @@ func TestBuildPeerFileURL(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildPeerFileURL(peer, tc.path)
+			got, err := urlutil.BuildFilesURL("node.example", 8080, tc.path)
 			if err != nil {
 				t.Fatalf("buildPeerFileURL returned error: %v", err)
 			}
@@ -64,7 +62,7 @@ func TestBuildPeerFileURL(t *testing.T) {
 }
 
 func TestBuildPeerFileURLRequiresPeer(t *testing.T) {
-	if _, err := buildPeerFileURL(nil, "/foo"); err == nil {
-		t.Fatalf("expected error when peer is nil")
+	if _, err := urlutil.BuildFilesURL("", 8080, "/foo"); err == nil {
+		t.Fatalf("expected error when address is empty")
 	}
 }

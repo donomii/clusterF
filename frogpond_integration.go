@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/discovery"
+	"github.com/donomii/clusterF/urlutil"
 	"github.com/donomii/frogpond"
 )
 
@@ -25,10 +26,14 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 	peers := c.DiscoveryManager.GetPeers()
 	for _, peer := range peers {
 		func(p *discovery.PeerInfo) {
-			url := fmt.Sprintf("http://%s:%d/frogpond/update", p.Address, p.HTTPPort)
+			endpointURL, err := urlutil.BuildHTTPURL(p.Address, p.HTTPPort, "/frogpond/update")
+			if err != nil {
+				c.debugf("[FROGPOND] Failed to build update URL for %s: %v", p.NodeID, err)
+				return
+			}
 			updatesJSON, _ := json.Marshal(updates)
 
-			resp, err := c.httpClient.Post(url, "application/json", strings.NewReader(string(updatesJSON)))
+			resp, err := c.httpClient.Post(endpointURL, "application/json", strings.NewReader(string(updatesJSON)))
 			if err != nil {
 				return
 			}

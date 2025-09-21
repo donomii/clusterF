@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/discovery"
+	"github.com/donomii/clusterF/urlutil"
 )
 
 // SearchMode defines the type of search
@@ -224,10 +225,14 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 
 // searchPeer performs a search on a specific peer
 func (c *Cluster) searchPeer(peer *discovery.PeerInfo, req SearchRequest) []SearchResult {
-	url := fmt.Sprintf("http://%s:%d/api/search", peer.Address, peer.HTTPPort)
+	endpointURL, err := urlutil.BuildHTTPURL(peer.Address, peer.HTTPPort, "/api/search")
+	if err != nil {
+		c.debugf("Failed to build search URL for peer %s: %v", peer.NodeID, err)
+		return nil
+	}
 
 	reqJSON, _ := json.Marshal(req)
-	resp, err := c.httpClient.Post(url, "application/json", strings.NewReader(string(reqJSON)))
+	resp, err := c.httpClient.Post(endpointURL, "application/json", strings.NewReader(string(reqJSON)))
 	if err != nil {
 		c.debugf("Failed to search peer %s: %v", peer.NodeID, err)
 		return nil
