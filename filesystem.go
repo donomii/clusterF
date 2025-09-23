@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -235,6 +236,16 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	}
 
 	return fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
+}
+
+// GetFileWithContentType retrieves a file and returns an io.ReadCloser with content type
+func (fs *ClusterFileSystem) GetFileWithContentType(path string) (io.ReadCloser, string, error) {
+	content, metadata, err := fs.GetFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	
+	return io.NopCloser(bytes.NewReader(content)), metadata.ContentType, nil
 }
 
 // GetFile retrieves a file from the partition system

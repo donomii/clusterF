@@ -208,6 +208,7 @@
         .notification.show { transform: translateX(0); }
         .notification.success { background: linear-gradient(45deg, #10b981, #059669); }
         .notification.error { background: linear-gradient(45deg, #ef4444, #dc2626); }
+        .notification.info { background: linear-gradient(45deg, #3b82f6, #1d4ed8); }
         .loading {
             /* Full-screen overlay to hide UI until ready */
             display: flex; /* visible by default; hidden after first load */
@@ -669,15 +670,68 @@
             const url = buildFilesUrl(filePath);
             // Reset classes
             body.classList.remove('media', 'text');
+            
             if (contentType.startsWith('image/') || fileName.toLowerCase().endsWith('.webp')) {
                 body.classList.add('media');
-                body.innerHTML = '<img src="' + url + '" alt="preview">';
+                const img = document.createElement('img');
+                img.src = url;
+                img.alt = 'preview';
+                img.onerror = () => {
+                    if (fileName.toLowerCase().endsWith('.webp')) {
+                        // Try transcoded version for WebP
+                        const transcodeUrl = '/api/transcode' + filePath + '?format=web';
+                        showNotification('🔄 Transcoding image...', 'info');
+                        img.src = transcodeUrl;
+                        img.onerror = () => {
+                            body.innerHTML = '<div style="color:#ef4444;">Failed to load image. <button class="btn" onclick="downloadFile(\'' + escapeHtml(fileName) + '\')" style="margin-left:10px;">Download</button></div>';
+                        };
+                        img.onload = () => {
+                            showNotification('✅ Image transcoded for web viewing', 'success');
+                        };
+                    } else {
+                        body.innerHTML = '<div style="color:#ef4444;">Failed to load image. <button class="btn" onclick="downloadFile(\'' + escapeHtml(fileName) + '\')" style="margin-left:10px;">Download</button></div>';
+                    }
+                };
+                body.innerHTML = '';
+                body.appendChild(img);
             } else if (contentType.startsWith('video/') || fileName.toLowerCase().endsWith('.webm')) {
                 body.classList.add('media');
-                body.innerHTML = '<video controls src="' + url + '"></video>';
+                const video = document.createElement('video');
+                video.controls = true;
+                video.src = url;
+                video.onerror = () => {
+                    // Try transcoded version
+                    const transcodeUrl = '/api/transcode' + filePath + '?format=web';
+                    showNotification('🔄 Transcoding video...', 'info');
+                    video.src = transcodeUrl;
+                    video.onerror = () => {
+                        body.innerHTML = '<div style="color:#ef4444;">Video codec not supported in browser. <button class="btn" onclick="downloadFile(\'' + escapeHtml(fileName) + '\')" style="margin-left:10px;">Download</button></div>';
+                    };
+                    video.onloadeddata = () => {
+                        showNotification('✅ Video transcoded for web viewing', 'success');
+                    };
+                };
+                body.innerHTML = '';
+                body.appendChild(video);
             } else if (contentType.startsWith('audio/') || fileName.toLowerCase().endsWith('.wav')) {
                 body.classList.add('media');
-                body.innerHTML = '<audio controls src="' + url + '"></audio>';
+                const audio = document.createElement('audio');
+                audio.controls = true;
+                audio.src = url;
+                audio.onerror = () => {
+                    // Try transcoded version
+                    const transcodeUrl = '/api/transcode' + filePath + '?format=web';
+                    showNotification('🔄 Transcoding audio...', 'info');
+                    audio.src = transcodeUrl;
+                    audio.onerror = () => {
+                        body.innerHTML = '<div style="color:#ef4444;">Audio codec not supported in browser. <button class="btn" onclick="downloadFile(\'' + escapeHtml(fileName) + '\')" style="margin-left:10px;">Download</button></div>';
+                    };
+                    audio.onloadeddata = () => {
+                        showNotification('✅ Audio transcoded for web viewing', 'success');
+                    };
+                };
+                body.innerHTML = '';
+                body.appendChild(audio);
             } else if (contentType === 'application/pdf') {
                 body.classList.add('media');
                 body.innerHTML = '<iframe src="' + url + '" sandbox></iframe>';

@@ -109,6 +109,9 @@ type Cluster struct {
 	ExportDir string
 	exporter  *exporter.Exporter
 
+	// Optional transcoder for media files
+	Transcoder *Transcoder
+
 	// KV stores
 	metadataKV ensemblekv.KvLike
 	contentKV  ensemblekv.KvLike
@@ -361,6 +364,17 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		}
 	}
 	c.debugf("Initialized exporter (if configured)\n")
+
+	// Initialize transcoder
+	transcodeDir := filepath.Join(opts.DataDir, "transcode_cache")
+	maxCacheSize := int64(1024 * 1024 * 1024) // 1GB cache
+	c.Transcoder = NewTranscoder(transcodeDir, maxCacheSize, c.Logger)
+	if c.Transcoder.checkFFmpegAvailable() {
+		c.Logger.Printf("[TRANSCODE] ffmpeg available - transcoding enabled")
+	} else {
+		c.Logger.Printf("[TRANSCODE] ffmpeg not available - transcoding disabled")
+	}
+	c.debugf("Initialized transcoder\n")
 
 	// Initialize cluster settings (replication factor)
 	c.initializeClusterSettings()
@@ -686,6 +700,9 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/api/partition-stats", corsMiddleware(c.handlePartitionStats))
 	// Search API
 	mux.HandleFunc("/api/search", corsMiddleware(c.handleSearchAPI))
+	// Transcode API
+	mux.HandleFunc("/api/transcode/", corsMiddleware(c.handleTranscodeAPI))
+	mux.HandleFunc("/api/transcode-stats", corsMiddleware(c.handleTranscodeStats))
 
 	server = &http.Server{
 		Handler: mux,
