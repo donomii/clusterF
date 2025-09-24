@@ -47,6 +47,8 @@ type DiscoveryManagerLike interface {
 
 	// Stop halts the discovery process
 	Stop()
+
+	GetPeerCount() int
 }
 
 type ExporterLike interface {

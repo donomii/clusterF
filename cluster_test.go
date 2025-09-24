@@ -62,7 +62,7 @@ func waitForAllNodesReady(nodes []*Cluster, timeoutMs int) {
 		// If single node or all HTTP ready, check peer discovery
 		if allReady && len(nodes) > 1 {
 			for _, node := range nodes {
-				if node.DiscoveryManager.GetPeerCount() < 1 {
+				if node.DiscoveryManager().GetPeerCount() < 1 {
 					allReady = false
 					break
 				}
@@ -113,7 +113,7 @@ func TestCluster_ParallelShutdownPerformance(t *testing.T) {
 			nodes := createTestNodesParallel(t, tc.nodeCount, tempDir, discoveryPort, tc.name)
 			for i := 0; i < tc.nodeCount; i++ {
 
-				nodes[i].DiscoveryManager.SetTimings(1*time.Second, 10*time.Second)
+				nodes[i].DiscoveryManager().SetTimings(1*time.Second, 10*time.Second)
 
 			}
 
@@ -362,7 +362,7 @@ func setupTestCluster(t *testing.T, config TestConfig, name string) ([]*Cluster,
 	// Create nodes
 	for i := 0; i < config.NodeCount; i++ {
 		// Set very fast timings for testing to speed up discovery
-		nodes[i].DiscoveryManager.SetTimings(100*time.Millisecond, 2*time.Second)
+		nodes[i].DiscoveryManager().SetTimings(100*time.Millisecond, 2*time.Second)
 	}
 
 	// Cleanup function using parallel shutdown
@@ -403,7 +403,7 @@ func waitForClusterReady(t *testing.T, nodes []*Cluster, timeoutMs int) {
 	if len(nodes) > 1 {
 		WaitForConditionT(t, "Peer discovery", func() bool {
 			for i, node := range nodes {
-				peerCount := node.DiscoveryManager.GetPeerCount()
+				peerCount := node.DiscoveryManager().GetPeerCount()
 				if peerCount < 1 {
 					t.Logf("Node %d has %d peers (waiting for discovery)", i, peerCount)
 					return false
@@ -580,7 +580,7 @@ func testDiscoveryAndPeering(t *testing.T, config TestConfig) ClusterTestResult 
 
 	// Verify each node has discovered peers
 	for i, node := range nodes {
-		peerCount := node.DiscoveryManager.GetPeerCount()
+		peerCount := node.DiscoveryManager().GetPeerCount()
 		if peerCount < 1 {
 			return ClusterTestResult{
 				Success:      false,
@@ -956,7 +956,7 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 		})
 
 		// Set  fast timings for testing
-		nodes[i].DiscoveryManager.SetTimings(500*time.Millisecond, 3*time.Second)
+		nodes[i].DiscoveryManager().SetTimings(500*time.Millisecond, 3*time.Second)
 
 		nodes[i].Start()
 	}
@@ -970,7 +970,7 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 	WaitForConditionT(t, "Node discovery", func() bool {
 		// Check if all nodes have discovered at least one peer
 		for i, node := range nodes {
-			peerCount := node.DiscoveryManager.GetPeerCount()
+			peerCount := node.DiscoveryManager().GetPeerCount()
 			if peerCount < 1 {
 				t.Logf("Node %d (%s) has %d peers (waiting for discovery)", i, node.NodeId, peerCount)
 				return false
@@ -980,7 +980,7 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 	}, 200, 10000)
 
 	for i, node := range nodes {
-		peerCount := node.DiscoveryManager.GetPeerCount()
+		peerCount := node.DiscoveryManager().GetPeerCount()
 		if peerCount < 1 {
 			t.Logf("Node %d (%s) has %d peers (waiting for discovery)", i, node.NodeId, peerCount)
 			t.FailNow()
@@ -1024,7 +1024,7 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 
 	// Verify each node knows about peers
 	for i, node := range nodes {
-		peerCount := node.DiscoveryManager.GetPeerCount()
+		peerCount := node.DiscoveryManager().GetPeerCount()
 
 		if peerCount < 1 { // Should know about at least 1 other node
 			t.Errorf("Node %d has no peers (expected at least 1)", i)

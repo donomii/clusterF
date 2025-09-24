@@ -311,7 +311,7 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 	// Wait for nodes to discover each other
 	WaitForConditionT(t, "Node discovery", func() bool {
 		for i, node := range nodes {
-			peerCount := node.DiscoveryManager.GetPeerCount()
+			peerCount := node.DiscoveryManager().GetPeerCount()
 			if peerCount < 1 {
 				t.Logf("Node %d has %d peers (waiting for discovery)", i, peerCount)
 				return false
