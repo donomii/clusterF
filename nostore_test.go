@@ -53,7 +53,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	// Start all nodes
 	for i, node := range nodes {
 		node.Start()
-		t.Logf("Started node %d: %s", i, node.ID)
+		t.Logf("Started node %d: %s", i, node.NodeId)
 	}
 	defer func() {
 		for _, node := range nodes {

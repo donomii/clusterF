@@ -50,13 +50,13 @@ func (c *Cluster) handleProfilingAPI(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				c.profilingActive = true
-				c.Logger.Printf("[PROFILING] Started")
+				c.Logger().Printf("[PROFILING] Started")
 			}
 		case "stop":
 			if c.profilingActive {
 				c.stopProfiling()
 				c.profilingActive = false
-				c.Logger.Printf("[PROFILING] Stopped")
+				c.Logger().Printf("[PROFILING] Stopped")
 			}
 		default:
 			c.profilingMutex.Unlock()
@@ -80,7 +80,7 @@ func (c *Cluster) handleProfilingAPI(w http.ResponseWriter, r *http.Request) {
 func (c *Cluster) startProfiling() error {
 	runtime.SetBlockProfileRate(1)
 	runtime.SetMutexProfileFraction(1)
-	c.Logger.Printf("[PROFILING] Enabled block and mutex profiling")
+	c.Logger().Printf("[PROFILING] Enabled block and mutex profiling")
 	return nil
 }
 
@@ -88,5 +88,5 @@ func (c *Cluster) startProfiling() error {
 func (c *Cluster) stopProfiling() {
 	runtime.SetBlockProfileRate(0)
 	runtime.SetMutexProfileFraction(0)
-	c.Logger.Printf("[PROFILING] Disabled block and mutex profiling")
+	c.Logger().Printf("[PROFILING] Disabled block and mutex profiling")
 }

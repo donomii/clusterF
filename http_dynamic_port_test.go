@@ -101,7 +101,7 @@ func TestHTTPServer_RestartWithNewPort(t *testing.T) {
 	t.Logf("Initial HTTP port: %d", initialPort)
 
 	// Stop the HTTP server thread to simulate a failure
-	cluster.ThreadManager.StopThread("http-server", 10*time.Second)
+	cluster.ThreadManager().StopThread("http-server", 10*time.Second)
 
 	// Wait for thread to stop and restart
 	time.Sleep(8 * time.Second)
@@ -122,7 +122,7 @@ func TestHTTPServer_RestartWithNewPort(t *testing.T) {
 	}
 
 	// Check thread restart count
-	status := cluster.ThreadManager.GetThreadStatus()
+	status := cluster.ThreadManager().GetThreadStatus()
 	httpStatus, exists := status["http-server"]
 	if !exists {
 		t.Fatal("HTTP server thread not found in status")

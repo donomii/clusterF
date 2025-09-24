@@ -111,7 +111,7 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 				})
 
 				// Set fast discovery timings for simulation
-				node.DiscoveryManager.SetTimings(2*time.Second, 10*time.Second)
+				node.DiscoveryManager().SetTimings(2*time.Second, 10*time.Second)
 
 				// Store a demo file with node-specific content
 				demoTimestamp := time.Now()
@@ -198,7 +198,7 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, nodeID s
 
 	// Log no-store mode if active
 	if noStore {
-		cluster.Logger.Printf("📱 Running in CLIENT MODE (--no-store): participating in CRDT but not storing files locally")
+		cluster.Logger().Printf("📱 Running in CLIENT MODE (--no-store): participating in CRDT but not storing files locally")
 	}
 
 	// Start the cluster
@@ -220,7 +220,7 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, nodeID s
 				}()
 			}
 		} else {
-			cluster.Logger.Printf("[UI] No graphics environment detected, skipping desktop UI")
+			cluster.Logger().Printf("[UI] No graphics environment detected, skipping desktop UI")
 		}
 	}
 
@@ -259,7 +259,7 @@ Try these commands:
 🔧 Client Mode: Use --no-store to connect without local storage
 
 Press Ctrl+C to stop...
-`, cluster.ID, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.DataDir,
+`, cluster.NodeId, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.DataDir,
 
 		func() string {
 			if exportDir != "" {

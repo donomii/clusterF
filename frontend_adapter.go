@@ -1,7 +1,7 @@
 package main
 
 // NodeID returns the string identifier for the cluster node.
-func (c *Cluster) NodeID() string { return string(c.ID) }
+func (c *Cluster) NodeID() string { return string(c.NodeId) }
 
 // HTTPPort returns the HTTP data port in use.
 func (c *Cluster) HTTPPort() int { return c.HTTPDataPort }

@@ -317,7 +317,7 @@ func parallelShutdownT(t *testing.T, nodes []*Cluster, maxConcurrency int) {
 
 	parallelMap(nodes, func(node *Cluster) {
 		if node != nil {
-			t.Logf("Stopping node %s\n", node.ID) // Debug log
+			t.Logf("Stopping node %s\n", node.NodeId) // Debug log
 			node.Stop()
 		}
 	})
@@ -331,7 +331,7 @@ func parallelShutdownB(t *testing.B, nodes []*Cluster, maxConcurrency int) {
 
 	parallelMap(nodes, func(node *Cluster) {
 		if node != nil {
-			t.Logf("Stopping node %s\n", node.ID) // Debug log
+			t.Logf("Stopping node %s\n", node.NodeId) // Debug log
 			node.Stop()
 		}
 	})
@@ -972,7 +972,7 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 		for i, node := range nodes {
 			peerCount := node.DiscoveryManager.GetPeerCount()
 			if peerCount < 1 {
-				t.Logf("Node %d (%s) has %d peers (waiting for discovery)", i, node.ID, peerCount)
+				t.Logf("Node %d (%s) has %d peers (waiting for discovery)", i, node.NodeId, peerCount)
 				return false
 			}
 		}
@@ -982,7 +982,7 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 	for i, node := range nodes {
 		peerCount := node.DiscoveryManager.GetPeerCount()
 		if peerCount < 1 {
-			t.Logf("Node %d (%s) has %d peers (waiting for discovery)", i, node.ID, peerCount)
+			t.Logf("Node %d (%s) has %d peers (waiting for discovery)", i, node.NodeId, peerCount)
 			t.FailNow()
 		}
 	}
@@ -1046,10 +1046,10 @@ func TestCluster_LocalStorage(t *testing.T) {
 		DiscoveryPort: 21001, // Unique port to avoid conflicts
 	})
 
-	t.Logf("Starting cluster %s\n", cluster.ID)
+	t.Logf("Starting cluster %s\n", cluster.NodeId)
 	// Start cluster to initialize file system
 	cluster.Start()
-	t.Logf("Cluster %s started\n", cluster.ID)
+	t.Logf("Cluster %s started\n", cluster.NodeId)
 	defer cluster.Stop()
 
 	// Test storing and retrieving files using file system API

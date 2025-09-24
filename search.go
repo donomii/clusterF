@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/donomii/clusterF/discovery"
+	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 )
 
@@ -131,9 +131,9 @@ func (c *Cluster) addDirectorySearchResult(filePath, query string, metadata map[
 				Name:        filepath.Base(filePath),
 				Path:        filePath,
 				IsDirectory: false,
-				Size:        c.getMetadataSize(metadata),
-				ContentType: c.getMetadataContentType(metadata),
-				ModifiedAt:  c.getMetadataModifiedAt(metadata),
+				Size:        c.GetMetadataSize(metadata),
+				ContentType: c.GetMetadataContentType(metadata),
+				ModifiedAt:  c.GetMetadataModifiedAt(metadata),
 			})
 		}
 	}
@@ -152,29 +152,29 @@ func (c *Cluster) addFileSearchResult(filePath, query string, metadata map[strin
 			Name:        filepath.Base(filePath),
 			Path:        filePath,
 			IsDirectory: false,
-			Size:        c.getMetadataSize(metadata),
-			ContentType: c.getMetadataContentType(metadata),
-			ModifiedAt:  c.getMetadataModifiedAt(metadata),
+			Size:        c.GetMetadataSize(metadata),
+			ContentType: c.GetMetadataContentType(metadata),
+			ModifiedAt:  c.GetMetadataModifiedAt(metadata),
 		})
 	}
 }
 
 // Helper functions to extract metadata fields
-func (c *Cluster) getMetadataSize(metadata map[string]interface{}) int64 {
+func (c *Cluster) GetMetadataSize(metadata map[string]interface{}) int64 {
 	if size, ok := metadata["size"].(float64); ok {
 		return int64(size)
 	}
 	return 0
 }
 
-func (c *Cluster) getMetadataContentType(metadata map[string]interface{}) string {
+func (c *Cluster) GetMetadataContentType(metadata map[string]interface{}) string {
 	if contentType, ok := metadata["content_type"].(string); ok {
 		return contentType
 	}
 	return ""
 }
 
-func (c *Cluster) getMetadataModifiedAt(metadata map[string]interface{}) int64 {
+func (c *Cluster) GetMetadataModifiedAt(metadata map[string]interface{}) int64 {
 	if modifiedAt, ok := metadata["modified_at"].(float64); ok {
 		return int64(modifiedAt)
 	}
@@ -196,7 +196,7 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 	}
 
 	// Search all peers
-	peers := c.DiscoveryManager.GetPeers()
+	peers := c.DiscoveryManager().GetPeers()
 	for _, peer := range peers {
 		peerResults := c.searchPeer(peer, req)
 		for _, result := range peerResults {
@@ -224,7 +224,7 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 }
 
 // searchPeer performs a search on a specific peer
-func (c *Cluster) searchPeer(peer *discovery.PeerInfo, req SearchRequest) []SearchResult {
+func (c *Cluster) searchPeer(peer *types.PeerInfo, req SearchRequest) []SearchResult {
 	endpointURL, err := urlutil.BuildHTTPURL(peer.Address, peer.HTTPPort, "/api/search")
 	if err != nil {
 		c.debugf("Failed to build search URL for peer %s: %v", peer.NodeID, err)
@@ -290,7 +290,7 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListDirectoryUsingSearch implements directory listing using the search API
-func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*FileMetadata, error) {
+func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, error) {
 	// Normalize path to ensure it ends with / for prefix search
 	if path == "" {
 		path = "/"
@@ -316,9 +316,9 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*FileMetadata, error)
 	c.debugf("[SEARCH] Found %d results for %s", len(results), path)
 
 	// Convert to FileMetadata format
-	var fileMetadata []*FileMetadata
+	var fileMetadata []*types.FileMetadata
 	for _, result := range results {
-		metadata := &FileMetadata{
+		metadata := &types.FileMetadata{
 			Name:        result.Name,
 			Path:        result.Path,
 			Size:        result.Size,
@@ -337,7 +337,7 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*FileMetadata, error)
 }
 
 // SearchFiles implements file search using the search API
-func (c *Cluster) SearchFiles(filename string) ([]*FileMetadata, error) {
+func (c *Cluster) SearchFiles(filename string) ([]*types.FileMetadata, error) {
 	req := SearchRequest{
 		Mode:  SearchModeFile,
 		Query: filename,
@@ -348,13 +348,13 @@ func (c *Cluster) SearchFiles(filename string) ([]*FileMetadata, error) {
 	results := c.searchAllPeers(req)
 
 	// Convert to FileMetadata format
-	var fileMetadata []*FileMetadata
+	var fileMetadata []*types.FileMetadata
 	for _, result := range results {
 		if result.IsDirectory {
 			continue // Skip directories in file search results
 		}
 
-		metadata := &FileMetadata{
+		metadata := &types.FileMetadata{
 			Name:        result.Name,
 			Path:        result.Path,
 			Size:        result.Size,

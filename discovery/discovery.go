@@ -12,15 +12,8 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/threadmanager"
+	"github.com/donomii/clusterF/types"
 )
-
-// PeerInfo represents information about a discovered peer
-type PeerInfo struct {
-	NodeID   string    `json:"node_id"`
-	HTTPPort int       `json:"http_port"`
-	Address  string    `json:"address"`
-	LastSeen time.Time `json:"last_seen"`
-}
 
 // UpdateNodeInfo updates our node's information (e.g., when HTTP port changes)
 func (dm *DiscoveryManager) UpdateNodeInfo(nodeID string, httpPort int) {
@@ -45,7 +38,7 @@ type DiscoveryManager struct {
 	debug         bool
 
 	// Peer tracking
-	peers    map[string]*PeerInfo
+	peers    map[string]*types.PeerInfo
 	peersMux sync.RWMutex
 
 	// Network components
@@ -70,7 +63,7 @@ func NewDiscoveryManager(nodeID string, httpPort int, discoveryPort int, tm *thr
 		httpPort:          httpPort,
 		broadcastPort:     discoveryPort,
 		logger:            logger,
-		peers:             make(map[string]*PeerInfo),
+		peers:             make(map[string]*types.PeerInfo),
 		broadcastInterval: 5 * time.Second,
 		peerTimeout:       15 * time.Second,
 		threadManager:     tm,
@@ -168,11 +161,11 @@ func (dm *DiscoveryManager) Stop() {
 }
 
 // GetPeers returns a list of currently known peers
-func (dm *DiscoveryManager) GetPeers() []*PeerInfo {
+func (dm *DiscoveryManager) GetPeers() []*types.PeerInfo {
 	dm.peersMux.RLock()
 	defer dm.peersMux.RUnlock()
 
-	peers := make([]*PeerInfo, 0, len(dm.peers))
+	peers := make([]*types.PeerInfo, 0, len(dm.peers))
 	for _, peer := range dm.peers {
 		if peer.NodeID != dm.nodeID { // Exclude ourselves
 			peers = append(peers, peer)
@@ -300,7 +293,7 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 
 	// Update peer information
 	dm.peersMux.Lock()
-	peer := &PeerInfo{
+	peer := &types.PeerInfo{
 		NodeID:   nodeID,
 		HTTPPort: httpPort,
 		Address:  addr.IP.String(),

@@ -22,10 +22,12 @@ import (
 
 	"github.com/donomii/clusterF/discovery"
 	"github.com/donomii/clusterF/exporter"
+	"github.com/donomii/clusterF/filesystem"
 	"github.com/donomii/clusterF/frontend"
 	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
+	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
@@ -37,11 +39,25 @@ const (
 	DefaultRF            = 3 // Default Replication Factor
 )
 
-type NodeID string
-
 type Metadata struct {
-	NodeID    NodeID `json:"node_id"`
-	Timestamp int64  `json:"timestamp"`
+	NodeID    types.NodeID `json:"node_id"`
+	Timestamp int64        `json:"timestamp"`
+}
+
+func (c *Cluster) DiscoveryManager() types.DiscoveryManagerLike {
+	return c.discoveryManager
+}
+
+func (c *Cluster) ThreadManager() *threadmanager.ThreadManager {
+	return c.threadManager
+}
+
+func (c *Cluster) Exporter() types.ExporterLike {
+	return c.exporter
+}
+
+func (c *Cluster) ID() types.NodeID {
+	return c.NodeId
 }
 
 // notifyFileListChanged signals all subscribers that the file list has changed
@@ -58,35 +74,35 @@ func (c *Cluster) notifyFileListChanged() {
 }
 
 type GossipMessage struct {
-	From     NodeID   `json:"from"`
-	Metadata Metadata `json:"metadata"`
+	From     types.NodeID `json:"from"`
+	Metadata Metadata     `json:"metadata"`
 }
 
 // Cluster encapsulates one node's entire state & goroutines
 
 type Cluster struct {
 	// Identity & config
-	ID            NodeID
+	NodeId        types.NodeID
 	DataDir       string
 	HTTPDataPort  int    // per-node HTTP data port
 	DiscoveryPort int    // shared UDP announcement port
 	BroadcastIP   net.IP // usually net.IPv4bcast
-	Logger        *log.Logger
+	logger        *log.Logger
 	Debug         bool
-	NoStore       bool // client mode: don't store partitions locally
+	noStore       bool // client mode: don't store partitions locally
 
 	// Discovery manager
-	DiscoveryManager *discovery.DiscoveryManager
-	ThreadManager    *threadmanager.ThreadManager
+	discoveryManager types.DiscoveryManagerLike
+	threadManager    *threadmanager.ThreadManager
 
 	// CRDT coordination layer
 	frogpond *frogpond.Node
 
 	// Partition system
-	PartitionManager *partitionmanager.PartitionManager
+	partitionManager *partitionmanager.PartitionManager
 
 	// File system layer
-	FileSystem *ClusterFileSystem
+	FileSystem *filesystem.ClusterFileSystem
 
 	// HTTP clients for reuse (prevents goroutine leaks)
 	httpClient     *http.Client // short-lived control traffic
@@ -107,7 +123,7 @@ type Cluster struct {
 
 	// Optional local export directory for OS sharing (SMB/NFS/etc.)
 	ExportDir string
-	exporter  *exporter.Exporter
+	exporter  types.ExporterLike
 
 	// Optional transcoder for media files
 	Transcoder *Transcoder
@@ -124,30 +140,18 @@ type Cluster struct {
 	initialSyncCancel context.CancelFunc
 
 	// Peer addresses
-	peerAddrs *syncmap.SyncMap[NodeID, *discovery.PeerInfo]
+	peerAddrs *syncmap.SyncMap[types.NodeID, *types.PeerInfo]
 }
 
-type partitionDiscoveryAdapter struct {
-	manager *discovery.DiscoveryManager
+func (c *Cluster) Logger() *log.Logger {
+	return c.logger
 }
 
-func (a partitionDiscoveryAdapter) GetPeers() []*partitionmanager.PeerInfo {
-	if a.manager == nil {
-		return nil
-	}
-	raw := a.manager.GetPeers()
-	peers := make([]*partitionmanager.PeerInfo, 0, len(raw))
-	for _, peer := range raw {
-		if peer == nil {
-			continue
-		}
-		peers = append(peers, &partitionmanager.PeerInfo{
-			NodeID:   peer.NodeID,
-			Address:  peer.Address,
-			HTTPPort: peer.HTTPPort,
-		})
-	}
-	return peers
+func (c *Cluster) NoStore() bool {
+	return c.noStore
+}
+func (c *Cluster) PartitionManager() types.PartitionManagerLike {
+	return c.partitionManager
 }
 
 type ClusterOpts struct {
@@ -209,16 +213,16 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	}
 
 	c := &Cluster{
-		ID:              NodeID(id),
+		NodeId:          types.NodeID(id),
 		DataDir:         opts.DataDir,
 		HTTPDataPort:    opts.HTTPDataPort,
 		DiscoveryPort:   opts.DiscoveryPort,
 		BroadcastIP:     opts.BroadcastIP,
-		Logger:          opts.Logger,
+		logger:          opts.Logger,
 		ExportDir:       opts.ExportDir,
-		NoStore:         opts.NoStore,
+		noStore:         opts.NoStore,
 		initialSyncTrig: make(chan struct{}, 1),
-		peerAddrs:       syncmap.NewSyncMap[NodeID, *discovery.PeerInfo](),
+		peerAddrs:       syncmap.NewSyncMap[types.NodeID, *types.PeerInfo](),
 
 		fileListSubs: map[chan struct{}]bool{},
 
@@ -267,7 +271,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Created data directory: %s\n", opts.DataDir)
 
 	// Initialize thread manager
-	c.ThreadManager = threadmanager.NewThreadManager(id, opts.Logger)
+	c.threadManager = threadmanager.NewThreadManager(id, opts.Logger)
 	c.debugf("Initialized thread manager\n")
 
 	// Create HTTP clients with connection pooling and differentiated timeouts
@@ -296,7 +300,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Initialized HTTP clients\n")
 
 	// Initialize discovery manager
-	c.DiscoveryManager = discovery.NewDiscoveryManager(id, opts.HTTPDataPort, opts.DiscoveryPort, c.ThreadManager, opts.Logger)
+	c.discoveryManager = discovery.NewDiscoveryManager(id, opts.HTTPDataPort, opts.DiscoveryPort, c.threadManager, opts.Logger)
 	c.debugf("Initialized discovery manager\n")
 
 	// Initialize frogpond CRDT node
@@ -311,10 +315,10 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.contentKV = ensemblekv.SimpleEnsembleCreator("extent", "", crdtKVPath, 2*1024*1024, 16, 64*1024*1024)
 	// Enforce hard-fail if storage cannot be opened to avoid split-brain directories
 	if c.metadataKV == nil {
-		c.Logger.Fatalf("[STORAGE] Failed to initialize files KV at %s; exiting", filesKVPath)
+		c.Logger().Fatalf("[STORAGE] Failed to initialize files KV at %s; exiting", filesKVPath)
 	}
 	if c.contentKV == nil {
-		c.Logger.Fatalf("[STORAGE] Failed to initialize CRDT KV at %s; exiting", crdtKVPath)
+		c.Logger().Fatalf("[STORAGE] Failed to initialize CRDT KV at %s; exiting", crdtKVPath)
 	}
 	c.debugf("Initialized KV stores\n")
 	// Load CRDT state from KV (if any) before applying defaults
@@ -323,20 +327,20 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 	// Initialize partition manager
 	deps := partitionmanager.Dependencies{
-		NodeID:         partitionmanager.NodeID(c.ID),
-		NoStore:        c.NoStore,
-		Logger:         c.Logger,
+		NodeID:         types.NodeID(c.NodeId),
+		NoStore:        c.noStore,
+		Logger:         c.Logger(),
 		Debugf:         c.debugf,
 		MetadataKV:     c.metadataKV,
 		ContentKV:      c.contentKV,
 		HTTPDataClient: c.httpDataClient,
-		Discovery:      partitionDiscoveryAdapter{manager: c.DiscoveryManager},
-		LoadPeer: func(id partitionmanager.NodeID) (*partitionmanager.PeerInfo, bool) {
-			peer, ok := c.peerAddrs.Load(NodeID(id))
+		Discovery:      c.discoveryManager,
+		LoadPeer: func(id types.NodeID) (*types.PeerInfo, bool) {
+			peer, ok := c.peerAddrs.Load(types.NodeID(id))
 			if !ok || peer == nil {
 				return nil, false
 			}
-			return &partitionmanager.PeerInfo{
+			return &types.PeerInfo{
 				NodeID:   peer.NodeID,
 				Address:  peer.Address,
 				HTTPPort: peer.HTTPPort,
@@ -347,20 +351,20 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		NotifyFileListChanged: c.notifyFileListChanged,
 		GetCurrentRF:          c.getCurrentRF,
 	}
-	c.PartitionManager = partitionmanager.NewPartitionManager(deps)
+	c.partitionManager = partitionmanager.NewPartitionManager(deps)
 	c.debugf("Initialized partition manager\n")
 
 	// Initialize file system
-	c.FileSystem = NewClusterFileSystem(c)
+	c.FileSystem = filesystem.NewClusterFileSystem(c)
 	c.debugf("Initialized file system\n")
 
 	// Initialize exporter if configured
 	if opts.ExportDir != "" {
-		if exp, err := exporter.New(opts.ExportDir, c.Logger, c.FileSystem); err != nil {
-			c.Logger.Printf("[EXPORT] Failed to init exporter for %s: %v", opts.ExportDir, err)
+		if exp, err := exporter.New(opts.ExportDir, c.Logger(), c.FileSystem); err != nil {
+			c.Logger().Printf("[EXPORT] Failed to init exporter for %s: %v", opts.ExportDir, err)
 		} else {
 			c.exporter = exp
-			c.Logger.Printf("[EXPORT] Mirroring files to %s for OS sharing", opts.ExportDir)
+			c.Logger().Printf("[EXPORT] Mirroring files to %s for OS sharing", opts.ExportDir)
 		}
 	}
 	c.debugf("Initialized exporter (if configured)\n")
@@ -368,11 +372,11 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	// Initialize transcoder
 	transcodeDir := filepath.Join(opts.DataDir, "transcode_cache")
 	maxCacheSize := int64(1024 * 1024 * 1024) // 1GB cache
-	c.Transcoder = NewTranscoder(transcodeDir, maxCacheSize, c.Logger)
+	c.Transcoder = NewTranscoder(transcodeDir, maxCacheSize, c.Logger())
 	if c.Transcoder.checkFFmpegAvailable() {
-		c.Logger.Printf("[TRANSCODE] ffmpeg available - transcoding enabled")
+		c.Logger().Printf("[TRANSCODE] ffmpeg available - transcoding enabled")
 	} else {
-		c.Logger.Printf("[TRANSCODE] ffmpeg not available - transcoding disabled")
+		c.Logger().Printf("[TRANSCODE] ffmpeg not available - transcoding disabled")
 	}
 	c.debugf("Initialized transcoder\n")
 
@@ -386,7 +390,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 	// Store node ID in data directory for future reference
 	if err := storeNodeIDInDataDir(opts.DataDir, id); err != nil {
-		c.Logger.Printf("[WARNING] Failed to store node ID in data directory: %v", err)
+		c.Logger().Printf("[WARNING] Failed to store node ID in data directory: %v", err)
 	}
 	c.debugf("Stored node ID in data directory\n")
 
@@ -465,7 +469,7 @@ func (c *Cluster) debugf(format string, v ...interface{}) {
 	// caller of debugf (file:line), not this wrapper function.
 	// calldepth=2: Output -> debugf -> caller
 	msg := fmt.Sprintf(format, v...)
-	_ = c.Logger.Output(2, msg)
+	_ = c.Logger().Output(2, msg)
 }
 
 func broadcastPortFromEnv() int {
@@ -502,28 +506,32 @@ func storeNodeIDInDataDir(dataDir, nodeID string) error {
 	return os.WriteFile(nodeIDFile, []byte(nodeID+"\n"), 0o644)
 }
 
+func (c *Cluster) DataClient() *http.Client {
+	return c.httpDataClient
+}
+
 // ---------- Lifecycle ----------
 
 func (c *Cluster) Start() {
-	c.Logger.Printf("Starting node %s (HTTP:%d)", c.ID, c.HTTPDataPort)
-	c.debugf("Starting node %s (HTTP:%d)", c.ID, c.HTTPDataPort)
+	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
+	c.debugf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
 
 	// Start discovery manager
-	if err := c.DiscoveryManager.Start(); err != nil {
-		c.Logger.Fatalf("Failed to start discovery manager: %v", err)
+	if err := c.DiscoveryManager().Start(); err != nil {
+		c.Logger().Fatalf("Failed to start discovery manager: %v", err)
 	}
 	c.debugf("Started discovery manager")
 
 	c.debugf("Reconciled CRDT and local storage")
 
 	// Start all threads using ThreadManager
-	c.ThreadManager.StartThread("http-server", c.startHTTPServer)
+	c.threadManager.StartThread("http-server", c.startHTTPServer)
 	if c.exporter != nil {
-		c.ThreadManager.StartThread("export-sync", c.runExportSync)
+		c.threadManager.StartThread("export-sync", c.runExportSync)
 	}
-	c.ThreadManager.StartThread("periodic-peer-sync", c.periodicPeerSync)
-	c.ThreadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
-	c.ThreadManager.StartThread("partition-check", c.PartitionManager.PeriodicPartitionCheck)
+	c.threadManager.StartThread("periodic-peer-sync", c.periodicPeerSync)
+	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
+	c.threadManager.StartThread("partition-check", c.partitionManager.PeriodicPartitionCheck)
 	c.debugf("Started all threads")
 }
 
@@ -532,17 +540,17 @@ func (c *Cluster) runExportSync(ctx context.Context) {
 	if c.exporter == nil {
 		return
 	}
-	c.Logger.Printf("[EXPORT] Starting export sync from %s", c.ExportDir)
-	c.exporter.Run(ctx)
+	c.Logger().Printf("[EXPORT] Starting export sync from %s", c.ExportDir)
+	c.Exporter().Run(ctx)
 }
 
 func (c *Cluster) Stop() {
-	c.Logger.Printf("Stopping node %s", c.ID)
-	c.debugf("Stopping node %s", c.ID)
+	c.Logger().Printf("Stopping node %s", c.NodeId)
+	c.debugf("Stopping node %s", c.NodeId)
 	c.cancel()
 
 	// Stop discovery manager
-	c.DiscoveryManager.Stop()
+	c.DiscoveryManager().Stop()
 
 	// Shutdown HTTP server
 	if c.server != nil {
@@ -564,14 +572,14 @@ func (c *Cluster) Stop() {
 	}
 
 	// Shutdown all threads via ThreadManager
-	failedThreads := c.ThreadManager.Shutdown()
+	failedThreads := c.threadManager.Shutdown()
 	if len(failedThreads) > 0 {
-		c.Logger.Printf("Some threads failed to shutdown: %v", failedThreads)
+		c.Logger().Printf("Some threads failed to shutdown: %v", failedThreads)
 		c.debugf("Some threads failed to shutdown: %v", failedThreads)
 	}
 
-	c.Logger.Printf("Node %s stopped", c.ID)
-	c.debugf("Node %s stopped", c.ID)
+	c.Logger().Printf("Node %s stopped", c.NodeId)
+	c.debugf("Node %s stopped", c.NodeId)
 }
 
 // ---------- Repair ----------
@@ -710,7 +718,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 
 	c.server = server
 	c.debugf("HTTP data server listening on port %d (dir=%s)", port, c.DataDir)
-	c.Logger.Printf("🐸 Node %s ready on http://localhost:%d (monitor: http://localhost:%d/monitor)", c.ID, port, port)
+	c.Logger().Printf("🐸 Node %s ready on http://localhost:%d (monitor: http://localhost:%d/monitor)", c.NodeId, port, port)
 
 	// Start server in a goroutine so we can handle context cancellation
 	serverDone := make(chan error, 1)
@@ -721,18 +729,18 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	// Wait for context cancellation or server error
 	select {
 	case <-ctx.Done():
-		c.Logger.Printf("HTTP server shutting down (context cancelled)")
+		c.Logger().Printf("HTTP server shutting down (context cancelled)")
 		c.debugf("HTTP server shutting down (context cancelled)")
 		// Graceful shutdown
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			c.Logger.Printf("HTTP server shutdown error: %v", err)
+			c.Logger().Printf("HTTP server shutdown error: %v", err)
 			c.debugf("HTTP server shutdown error: %v", err)
 		}
 	case err := <-serverDone:
 		if err != nil && err != http.ErrServerClosed {
-			c.Logger.Printf("HTTP server error: %v", err)
+			c.Logger().Printf("HTTP server error: %v", err)
 			c.debugf("HTTP server error: %v", err)
 		}
 	}
@@ -743,9 +751,9 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Get partition stats without holding the main mutex
 	var partitionStats map[string]interface{}
-	if c.PartitionManager != nil {
+	if c.partitionManager != nil {
 		c.debugf("[STATUS] Getting partition stats")
-		partitionStats = c.PartitionManager.GetPartitionStats()
+		partitionStats = c.partitionManager.GetPartitionStats()
 		c.debugf("[STATUS] Got partition stats: %+v", partitionStats)
 	} else {
 		c.debugf("[STATUS] PartitionManager is nil")
@@ -763,7 +771,7 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Read basic fields without mutex - they're set once at startup
 	status := map[string]interface{}{
-		"node_id":            c.ID,
+		"node_id":            c.NodeId,
 		"data_dir":           c.DataDir,
 		"http_port":          c.HTTPDataPort,
 		"replication_factor": rf,
@@ -771,7 +779,7 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debug: log what we're sending
-	c.debugf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.ID, status["replication_factor"], partitionStats)
+	c.debugf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.NodeId, status["replication_factor"], partitionStats)
 
 	w.Header().Set("Content-Type", "application/json")
 	c.debugf("[STATUS] Set headers")
@@ -807,7 +815,7 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 
 	peerList := c.getPeerList()
 	stats := map[string]interface{}{
-		"node_id":            c.ID,
+		"node_id":            c.NodeId,
 		"http_port":          c.HTTPDataPort,
 		"discovery_port":     c.DiscoveryPort,
 		"data_dir":           c.DataDir,
@@ -817,7 +825,7 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debug: log what we're sending
-	c.Logger.Printf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.ID, len(peerList), stats["replication_factor"])
+	c.Logger().Printf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.NodeId, len(peerList), stats["replication_factor"])
 
 	json.NewEncoder(w).Encode(stats)
 }
@@ -850,7 +858,7 @@ func (c *Cluster) handlePartitionSyncAPI(w http.ResponseWriter, r *http.Request)
 	}
 
 	partitionID := partitionmanager.PartitionID(path)
-	c.PartitionManager.HandlePartitionSync(w, r, partitionID)
+	c.partitionManager.HandlePartitionSync(w, r, partitionID)
 }
 
 // handlePartitionStats returns partition statistics
@@ -860,7 +868,7 @@ func (c *Cluster) handlePartitionStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats := c.PartitionManager.GetPartitionStats()
+	stats := c.partitionManager.GetPartitionStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
 }
@@ -884,15 +892,15 @@ func (c *Cluster) periodicPeerSync(ctx context.Context) {
 
 // syncPeersFromDiscovery updates cluster peers from discovery manager
 func (c *Cluster) syncPeersFromDiscovery() {
-	discoveredPeers := c.DiscoveryManager.GetPeers()
+	discoveredPeers := c.DiscoveryManager().GetPeers()
 
 	// Track which peers are new
-	newPeers := make([]*discovery.PeerInfo, 0)
+	newPeers := make([]*types.PeerInfo, 0)
 
 	// Update peer addresses with discovered peers
 	for _, peer := range discoveredPeers {
-		nodeID := NodeID(peer.NodeID)
-		if nodeID != c.ID { // Don't add ourselves
+		nodeID := types.NodeID(peer.NodeID)
+		if nodeID != c.NodeId { // Don't add ourselves
 			// Check if this is a new peer
 			if _, exists := c.peerAddrs.Load(nodeID); !exists {
 				newPeers = append(newPeers, peer)
@@ -902,14 +910,14 @@ func (c *Cluster) syncPeersFromDiscovery() {
 	}
 
 	// Remove stale peers (could be enhanced with timeout logic)
-	activeNodeIDs := make(map[NodeID]bool)
+	activeNodeIDs := make(map[types.NodeID]bool)
 	for _, peer := range discoveredPeers {
-		activeNodeIDs[NodeID(peer.NodeID)] = true
+		activeNodeIDs[types.NodeID(peer.NodeID)] = true
 	}
-	activeNodeIDs[c.ID] = true // Keep ourselves
+	activeNodeIDs[c.NodeId] = true // Keep ourselves
 
 	// Clean up stale peers
-	c.peerAddrs.Range(func(nodeID NodeID, peer *discovery.PeerInfo) bool {
+	c.peerAddrs.Range(func(nodeID types.NodeID, peer *types.PeerInfo) bool {
 		if !activeNodeIDs[nodeID] {
 			c.peerAddrs.Delete(nodeID)
 		}
@@ -917,7 +925,7 @@ func (c *Cluster) syncPeersFromDiscovery() {
 	})
 
 	// Update our own discovery info with current HTTP port (in case it changed)
-	c.DiscoveryManager.UpdateNodeInfo(string(c.ID), c.HTTPDataPort)
+	c.DiscoveryManager().UpdateNodeInfo(string(c.NodeId), c.HTTPDataPort)
 
 	// Perform initial sync only once with the first peer we discover
 	if len(newPeers) > 0 && !c.initialSyncDone.Load() {
@@ -936,7 +944,7 @@ func (c *Cluster) initializeClusterSettings() {
 			_ = c.contentKV.Put([]byte("cluster/replication_factor"), rfJSON)
 		}
 		c.sendUpdatesToPeers(updates)
-		c.Logger.Printf("[INIT] Set default replication factor to %d", DefaultRF)
+		c.Logger().Printf("[INIT] Set default replication factor to %d", DefaultRF)
 	}
 
 }
@@ -1005,7 +1013,7 @@ func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request
 // moved to page_profiling.go
 
 // performInitialSyncWithPeer performs bidirectional full KV store sync with a new peer
-func (c *Cluster) performInitialSyncWithPeer(peer *discovery.PeerInfo) {
+func (c *Cluster) performInitialSyncWithPeer(peer *types.PeerInfo) {
 	_ = peer // trigger is independent of which peer we saw first
 
 	if !c.initialSyncDone.CompareAndSwap(false, true) {
@@ -1013,7 +1021,7 @@ func (c *Cluster) performInitialSyncWithPeer(peer *discovery.PeerInfo) {
 	}
 
 	if err := c.ensureInitialSyncWorker(); err != nil {
-		c.Logger.Printf("[INITIAL_SYNC] Failed to ensure worker: %v", err)
+		c.Logger().Printf("[INITIAL_SYNC] Failed to ensure worker: %v", err)
 		c.initialSyncDone.Store(false)
 		return
 	}
@@ -1026,16 +1034,16 @@ func (c *Cluster) performInitialSyncWithPeer(peer *discovery.PeerInfo) {
 	}
 
 	if peer != nil {
-		c.Logger.Printf("[INITIAL_SYNC] Triggered by discovery of %s", peer.NodeID)
+		c.Logger().Printf("[INITIAL_SYNC] Triggered by discovery of %s", peer.NodeID)
 	} else {
-		c.Logger.Printf("[INITIAL_SYNC] Triggered initial sync")
+		c.Logger().Printf("[INITIAL_SYNC] Triggered initial sync")
 	}
 }
 
 func (c *Cluster) ensureInitialSyncWorker() error {
 	var err error
 	c.initialSyncOnce.Do(func() {
-		startErr := c.ThreadManager.StartThreadWithRestart("initial-sync-retry", c.initialSyncWorker, true, nil)
+		startErr := c.threadManager.StartThreadWithRestart("initial-sync-retry", c.initialSyncWorker, true, nil)
 		if startErr != nil {
 			err = startErr
 		}
@@ -1097,20 +1105,20 @@ func (c *Cluster) runInitialSyncCycle(ctx context.Context) {
 		default:
 		}
 
-		peers := c.DiscoveryManager.GetPeers()
+		peers := c.DiscoveryManager().GetPeers()
 		if len(peers) == 0 {
 			time.Sleep(10 * time.Second)
 			continue
 		}
 
 		peer := peers[rand.Intn(len(peers))]
-		c.Logger.Printf("[SYNC_RETRY] Attempting full sync with %s", peer.NodeID)
+		c.Logger().Printf("[SYNC_RETRY] Attempting full sync with %s", peer.NodeID)
 		if c.requestFullStoreFromPeer(peer) {
-			c.Logger.Printf("[SYNC_RETRY] Successfully synced with %s", peer.NodeID)
+			c.Logger().Printf("[SYNC_RETRY] Successfully synced with %s", peer.NodeID)
 			break
 		}
 
-		c.Logger.Printf("[SYNC_RETRY] Failed to sync with %s, retrying in 10s", peer.NodeID)
+		c.Logger().Printf("[SYNC_RETRY] Failed to sync with %s, retrying in 10s", peer.NodeID)
 		time.Sleep(10 * time.Second)
 	}
 
@@ -1129,15 +1137,15 @@ func (c *Cluster) runInitialSyncCycle(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			peers := c.DiscoveryManager.GetPeers()
+			peers := c.DiscoveryManager().GetPeers()
 			if len(peers) == 0 {
 				continue
 			}
 
 			peer := peers[rand.Intn(len(peers))]
-			c.Logger.Printf("[HOURLY_SYNC] Full sync with random peer %s", peer.NodeID)
+			c.Logger().Printf("[HOURLY_SYNC] Full sync with random peer %s", peer.NodeID)
 			if !c.requestFullStoreFromPeer(peer) {
-				c.Logger.Printf("[HOURLY_SYNC] Failed to sync with %s", peer.NodeID)
+				c.Logger().Printf("[HOURLY_SYNC] Failed to sync with %s", peer.NodeID)
 			}
 		}
 	}
@@ -1145,10 +1153,10 @@ func (c *Cluster) runInitialSyncCycle(ctx context.Context) {
 
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
 // Returns true on success, false on failure
-func (c *Cluster) requestFullStoreFromPeer(peer *discovery.PeerInfo) bool {
+func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 	fullStoreURL, err := urlutil.BuildHTTPURL(peer.Address, peer.HTTPPort, "/frogpond/fullstore")
 	if err != nil {
-		c.Logger.Printf("[INITIAL_SYNC] Failed to build full store URL for %s: %v", peer.NodeID, err)
+		c.Logger().Printf("[INITIAL_SYNC] Failed to build full store URL for %s: %v", peer.NodeID, err)
 		return false
 	}
 
@@ -1159,26 +1167,26 @@ func (c *Cluster) requestFullStoreFromPeer(peer *discovery.PeerInfo) bool {
 
 	resp, err := client.Get(fullStoreURL)
 	if err != nil {
-		c.Logger.Printf("[INITIAL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
+		c.Logger().Printf("[INITIAL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
 		return false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.Logger.Printf("[INITIAL_SYNC] Peer %s returned %s", peer.NodeID, resp.Status)
+		c.Logger().Printf("[INITIAL_SYNC] Peer %s returned %s", peer.NodeID, resp.Status)
 		return false
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.Logger.Printf("[INITIAL_SYNC] Failed to read response from %s: %v", peer.NodeID, err)
+		c.Logger().Printf("[INITIAL_SYNC] Failed to read response from %s: %v", peer.NodeID, err)
 		return false
 	}
 
 	// Parse and apply the full store
 	var peerData []frogpond.DataPoint
 	if err := json.Unmarshal(body, &peerData); err != nil {
-		c.Logger.Printf("[INITIAL_SYNC] Failed to parse data from %s: %v", peer.NodeID, err)
+		c.Logger().Printf("[INITIAL_SYNC] Failed to parse data from %s: %v", peer.NodeID, err)
 		return false
 	}
 
@@ -1186,6 +1194,6 @@ func (c *Cluster) requestFullStoreFromPeer(peer *discovery.PeerInfo) bool {
 	resultingUpdates := c.frogpond.AppendDataPoints(peerData)
 	c.sendUpdatesToPeers(resultingUpdates)
 
-	c.Logger.Printf("[INITIAL_SYNC] Successfully synced %d data points from %s", len(peerData), peer.NodeID)
+	c.Logger().Printf("[INITIAL_SYNC] Successfully synced %d data points from %s", len(peerData), peer.NodeID)
 	return true
 }

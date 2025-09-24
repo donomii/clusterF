@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/donomii/clusterF/types"
 )
 
 // handleFilesAPI handles file system API operations.
@@ -68,15 +70,15 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 	content, metadata, err := c.FileSystem.GetFile(path)
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrIsDirectory):
+		case errors.Is(err, types.ErrIsDirectory):
 			serveDirectory()
 			return
-		case errors.Is(err, ErrFileNotFound):
+		case errors.Is(err, types.ErrFileNotFound):
 			c.debugf("[FILES] File %s not found", path)
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
 		default:
-			c.Logger.Printf("[FILES] Failed to retrieve %s: %v", path, err)
+			c.Logger().Printf("[FILES] Failed to retrieve %s: %v", path, err)
 			http.Error(w, "Failed to retrieve file", http.StatusInternalServerError)
 			return
 		}
@@ -106,20 +108,20 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path string) {
 	c.debugf("[FILES] HEAD request for path: %s", path)
 
-	metadata, err := c.FileSystem.getMetadata(path)
+	metadata, err := c.FileSystem.GetMetadata(path)
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrIsDirectory):
+		case errors.Is(err, types.ErrIsDirectory):
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-ClusterF-Is-Directory", "true")
 			w.WriteHeader(http.StatusOK)
 			return
-		case errors.Is(err, ErrFileNotFound):
+		case errors.Is(err, types.ErrFileNotFound):
 			c.debugf("[FILES] HEAD metadata not found for %s", path)
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
 		default:
-			c.Logger.Printf("[FILES] Failed HEAD metadata %s: %v", path, err)
+			c.Logger().Printf("[FILES] Failed HEAD metadata %s: %v", path, err)
 			http.Error(w, "Failed to retrieve metadata", http.StatusInternalServerError)
 			return
 		}
@@ -222,7 +224,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		}
 	}
 
-	c.Logger.Printf("[FILES] Stored %s (%d bytes)", path, len(content))
+	c.Logger().Printf("[FILES] Stored %s (%d bytes)", path, len(content))
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -310,7 +312,7 @@ func parseHeaderTimestamp(value string) (time.Time, error) {
 
 func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path string) {
 	if err := c.FileSystem.DeleteFile(path); err != nil {
-		if errors.Is(err, ErrFileNotFound) {
+		if errors.Is(err, types.ErrFileNotFound) {
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
 		}
@@ -318,7 +320,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		return
 	}
 
-	c.Logger.Printf("[FILES] Deleted %s", path)
+	c.Logger().Printf("[FILES] Deleted %s", path)
 	w.WriteHeader(http.StatusNoContent)
 }
 

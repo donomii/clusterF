@@ -1,5 +1,5 @@
 // filesystem.go - Distributed file system layer on top of partition system
-package main
+package filesystem
 
 import (
 	"bytes"
@@ -10,12 +10,12 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/donomii/clusterF/discovery"
-	exporter "github.com/donomii/clusterF/exporter"
+	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 )
 
@@ -24,25 +24,13 @@ const (
 	MaxPathLen     = 4096
 )
 
-// FileMetadata represents metadata for a file stored in the cluster
-type FileMetadata struct {
-	Name        string    `json:"name"`
-	Path        string    `json:"path"` // Full path like "/docs/readme.txt"
-	Size        int64     `json:"size"` // Total file size in bytes
-	ContentType string    `json:"content_type"`
-	CreatedAt   time.Time `json:"created_at"`
-	ModifiedAt  time.Time `json:"modified_at"`
-	IsDirectory bool      `json:"is_directory"`
-	Children    []string  `json:"children,omitempty"` // For directories
-}
-
 // ClusterFileSystem provides a file system interface over the cluster
 type ClusterFileSystem struct {
-	cluster *Cluster
+	cluster types.ClusterLike
 }
 
 // NewClusterFileSystem creates a new distributed file system
-func NewClusterFileSystem(cluster *Cluster) *ClusterFileSystem {
+func NewClusterFileSystem(cluster types.ClusterLike) *ClusterFileSystem {
 	return &ClusterFileSystem{
 		cluster: cluster,
 	}
@@ -51,6 +39,27 @@ func NewClusterFileSystem(cluster *Cluster) *ClusterFileSystem {
 // StoreFile requires explicit metadata; callers must provide modification time via StoreFileWithModTime.
 func (fs *ClusterFileSystem) StoreFile(path string, content []byte, contentType string) error {
 	return fmt.Errorf("StoreFile requires explicit modification time; use StoreFileWithModTime")
+}
+
+// logerrf formats an error message with call site information and returns the formatted message
+func logerrf(format string, args ...interface{}) error {
+	// Format the main error message
+	message := fmt.Sprintf(format, args...)
+
+	// Get caller information (1 step up the call stack)
+	_, file, line, ok := runtime.Caller(1)
+	if !ok {
+		return fmt.Errorf("at unknown location, %s", message)
+	}
+
+	// Extract just the filename from the full path
+	filename := file
+	if idx := strings.LastIndex(file, "/"); idx >= 0 {
+		filename = file[idx+1:]
+	}
+
+	// Format the complete error message with call site
+	return fmt.Errorf("at %s:%d, %s", filename, line, message)
 }
 
 func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
@@ -117,7 +126,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 	}
 
 	// Create file metadata for the file system layer
-	metadata := FileMetadata{
+	metadata := types.FileMetadata{
 		Name:        filepath.Base(path),
 		Path:        path,
 		Size:        int64(len(content)),
@@ -143,18 +152,18 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 	metadataJSON, _ := json.Marshal(enhancedMetadata)
 
 	// For no-store clients, forward uploads to storage nodes
-	if fs.cluster.NoStore {
+	if fs.cluster.NoStore() {
 		return fs.forwardUploadToStorageNode(path, metadataJSON, content, contentType)
 	}
 
-	if err := fs.cluster.PartitionManager.StoreFileInPartition(path, metadataJSON, content); err != nil {
+	if err := fs.cluster.PartitionManager().StoreFileInPartition(path, metadataJSON, content); err != nil {
 		return logerrf("failed to store file: %v", err)
 	}
 
 	// Mirror to OS export directory if configured
-	if fs.cluster != nil && fs.cluster.exporter != nil {
-		if err := fs.cluster.exporter.WriteFile(path, content, modTime); err != nil {
-			fs.cluster.Logger.Printf("[EXPORT] WriteFile mirror failed for %s: %v", path, err)
+	if fs.cluster != nil && fs.cluster.Exporter() != nil {
+		if err := fs.cluster.Exporter().WriteFile(path, content, modTime); err != nil {
+			fs.cluster.Logger().Printf("[EXPORT] WriteFile mirror failed for %s: %v", path, err)
 		}
 	}
 
@@ -164,8 +173,8 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 // forwardUploadToStorageNode forwards file uploads from no-store clients to storage nodes
 func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSON []byte, content []byte, contentType string) error {
 	// Find storage nodes that can hold this file
-	peers := fs.cluster.DiscoveryManager.GetPeers()
-	var storageNodes []*discovery.PeerInfo
+	peers := fs.cluster.DiscoveryManager().GetPeers()
+	var storageNodes []*types.PeerInfo
 
 	// Only forward to peers that are not no-store clients
 	// We can't easily detect if a peer is no-store, so try all peers
@@ -186,12 +195,12 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		if metaErr == nil {
 			upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size)
 			if err == nil && upToDate {
-				fs.cluster.Logger.Printf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339Nano))
+				fs.cluster.Logger().Printf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339Nano))
 				skippedPeers++
 				continue
 			}
 			if err != nil {
-				fs.cluster.Logger.Printf("[FILES] HEAD check failed for %s on %s: %v", path, peer.NodeID, err)
+				fs.cluster.Logger().Printf("[FILES] HEAD check failed for %s on %s: %v", path, peer.NodeID, err)
 			}
 		}
 
@@ -208,10 +217,10 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		}
 
 		req.Header.Set("Content-Type", contentType)
-		req.Header.Set("X-Forwarded-From", string(fs.cluster.ID))
+		req.Header.Set("X-Forwarded-From", string(fs.cluster.ID()))
 		req.Header.Set("X-ClusterF-Metadata", base64.StdEncoding.EncodeToString(metadataJSON))
 
-		resp, err := fs.cluster.httpDataClient.Do(req)
+		resp, err := fs.cluster.DataClient().Do(req)
 		if err != nil {
 			lastErr = err
 			continue
@@ -219,7 +228,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusCreated {
-			fs.cluster.Logger.Printf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
+			fs.cluster.Logger().Printf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
 			forwarded = true
 			return nil // Success
 		}
@@ -244,28 +253,28 @@ func (fs *ClusterFileSystem) GetFileWithContentType(path string) (io.ReadCloser,
 	if err != nil {
 		return nil, "", err
 	}
-	
+
 	return io.NopCloser(bytes.NewReader(content)), metadata.ContentType, nil
 }
 
 // GetFile retrieves a file from the partition system
-func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *FileMetadata, error) {
+func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, error) {
 	// Get file content and metadata together
-	content, metadataMap, err := fs.cluster.PartitionManager.GetFileAndMetaFromPartition(path)
+	content, metadataMap, err := fs.cluster.PartitionManager().GetFileAndMetaFromPartition(path)
 	if err != nil {
-		if errors.Is(err, ErrFileNotFound) {
-			return nil, nil, ErrFileNotFound
+		if errors.Is(err, types.ErrFileNotFound) {
+			return nil, nil, types.ErrFileNotFound
 		}
 		return nil, nil, err
 	}
 
 	// Check if file is marked as deleted
 	if deleted, ok := metadataMap["deleted"].(bool); ok && deleted {
-		return nil, nil, ErrFileNotFound
+		return nil, nil, types.ErrFileNotFound
 	}
 
 	// Convert metadata map to struct
-	metadata := &FileMetadata{}
+	metadata := &types.FileMetadata{}
 	if name, ok := metadataMap["name"].(string); ok {
 		metadata.Name = name
 	}
@@ -310,20 +319,20 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *FileMetadata, error)
 	}
 
 	if metadata.IsDirectory {
-		return nil, nil, ErrIsDirectory
+		return nil, nil, types.ErrIsDirectory
 	}
 
 	return content, metadata, nil
 }
 
 // ListDirectory lists the contents of a directory using search API
-func (fs *ClusterFileSystem) ListDirectory(path string) ([]*FileMetadata, error) {
+func (fs *ClusterFileSystem) ListDirectory(path string) ([]*types.FileMetadata, error) {
 	return fs.cluster.ListDirectoryUsingSearch(path)
 }
 
 // DeleteFile removes a file from the cluster
 func (fs *ClusterFileSystem) DeleteFile(path string) error {
-	metadata, err := fs.getMetadata(path)
+	metadata, err := fs.GetMetadata(path)
 	if err != nil {
 		return err
 	}
@@ -340,21 +349,21 @@ func (fs *ClusterFileSystem) DeleteFile(path string) error {
 	}
 
 	// Delete from partition system
-	if err := fs.cluster.PartitionManager.DeleteFileFromPartition(path); err != nil {
+	if err := fs.cluster.PartitionManager().DeleteFileFromPartition(path); err != nil {
 		return fmt.Errorf("failed to delete file: %v", err)
 	}
 
 	// Directory updates are no longer needed since we use search-based directory listing
 
 	// Mirror delete to OS export directory if configured
-	if fs.cluster != nil && fs.cluster.exporter != nil {
+	if fs.cluster != nil && fs.cluster.Exporter() != nil {
 		if metadata.IsDirectory {
-			if err := fs.cluster.exporter.RemoveDir(path); err != nil {
-				fs.cluster.Logger.Printf("[EXPORT] RemoveDir mirror failed for %s: %v", path, err)
+			if err := fs.cluster.Exporter().RemoveDir(path); err != nil {
+				fs.cluster.Logger().Printf("[EXPORT] RemoveDir mirror failed for %s: %v", path, err)
 			}
 		} else {
-			if err := fs.cluster.exporter.RemoveFile(path); err != nil {
-				fs.cluster.Logger.Printf("[EXPORT] RemoveFile mirror failed for %s: %v", path, err)
+			if err := fs.cluster.Exporter().RemoveFile(path); err != nil {
+				fs.cluster.Logger().Printf("[EXPORT] RemoveFile mirror failed for %s: %v", path, err)
 			}
 		}
 	}
@@ -397,23 +406,23 @@ func (fs *ClusterFileSystem) validatePath(path string) error {
 	return nil
 }
 
-func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
+func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, error) {
 	// Try to get metadata from partition system
-	metadataMap, err := fs.cluster.PartitionManager.GetMetadataFromPartition(path)
+	metadataMap, err := fs.cluster.PartitionManager().GetMetadataFromPartition(path)
 	if err != nil {
-		if errors.Is(err, ErrFileNotFound) {
-			return nil, ErrFileNotFound
+		if errors.Is(err, types.ErrFileNotFound) {
+			return nil, types.ErrFileNotFound
 		}
 		return nil, err
 	}
 
 	// Check if file is marked as deleted
 	if deleted, ok := metadataMap["deleted"].(bool); ok && deleted {
-		return nil, ErrFileNotFound
+		return nil, types.ErrFileNotFound
 	}
 
 	// Convert metadata map to struct
-	var metadata FileMetadata
+	var metadata types.FileMetadata
 	metadata.Name, _ = metadataMap["name"].(string)
 	metadata.Path, _ = metadataMap["path"].(string)
 	if sizeFloat, ok := metadataMap["size"].(float64); ok {
@@ -455,15 +464,15 @@ func (fs *ClusterFileSystem) getMetadata(path string) (*FileMetadata, error) {
 }
 
 // MetadataForPath adapts internal metadata to the exporter module's format.
-func (fs *ClusterFileSystem) MetadataForPath(path string) (*exporter.Metadata, error) {
-	meta, err := fs.getMetadata(path)
+func (fs *ClusterFileSystem) MetadataForPath(path string) (*types.Metadata, error) {
+	meta, err := fs.GetMetadata(path)
 	if err != nil {
 		return nil, err
 	}
 	if meta == nil {
 		return nil, nil
 	}
-	return &exporter.Metadata{
+	return &types.Metadata{
 		Size:        meta.Size,
 		ModifiedAt:  meta.ModifiedAt,
 		IsDirectory: meta.IsDirectory,
@@ -480,7 +489,7 @@ func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime tim
 	return nil // Directories are inferred from file paths
 }
 
-func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *discovery.PeerInfo, path string, modTime time.Time, size int64) (bool, error) {
+func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *types.PeerInfo, path string, modTime time.Time, size int64) (bool, error) {
 	fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, path)
 	if err != nil {
 		return false, err
@@ -489,7 +498,7 @@ func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *discovery.PeerInfo, path 
 	if err != nil {
 		return false, err
 	}
-	resp, err := fs.cluster.httpDataClient.Do(req)
+	resp, err := fs.cluster.DataClient().Do(req)
 	if err != nil {
 		return false, err
 	}

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/donomii/clusterF/discovery"
+	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 	"github.com/donomii/frogpond"
 )
@@ -23,9 +23,9 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 		return
 	}
 
-	peers := c.DiscoveryManager.GetPeers()
+	peers := c.DiscoveryManager().GetPeers()
 	for _, peer := range peers {
-		func(p *discovery.PeerInfo) {
+		func(p *types.PeerInfo) {
 			endpointURL, err := urlutil.BuildHTTPURL(p.Address, p.HTTPPort, "/frogpond/update")
 			if err != nil {
 				c.debugf("[FROGPOND] Failed to build update URL for %s: %v", p.NodeID, err)
@@ -42,9 +42,9 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 	}
 }
 
-func (c *Cluster) getPeerList() []discovery.PeerInfo {
-	peers := c.DiscoveryManager.GetPeers()
-	var peerList []discovery.PeerInfo
+func (c *Cluster) getPeerList() []types.PeerInfo {
+	peers := c.DiscoveryManager().GetPeers()
+	var peerList []types.PeerInfo
 	for _, p := range peers {
 		peerList = append(peerList, *p)
 	}
@@ -82,14 +82,14 @@ func (c *Cluster) setReplicationFactor(rf int) {
 	}
 	c.sendUpdatesToPeers(updates)
 
-	c.Logger.Printf("[RF] Set replication factor to %d", rf)
+	c.Logger().Printf("[RF] Set replication factor to %d", rf)
 
 }
 
 // getAvailableNodes returns list of available nodes from frogpond
-func (c *Cluster) getAvailableNodes() []NodeID {
+func (c *Cluster) getAvailableNodes() []types.NodeID {
 	nodes := c.frogpond.GetAllMatchingPrefix("nodes/")
-	var available []NodeID
+	var available []types.NodeID
 
 	for _, data := range nodes {
 		if data.Deleted {
@@ -103,7 +103,7 @@ func (c *Cluster) getAvailableNodes() []NodeID {
 
 		if avail, ok := nodeData["available"].(bool); ok && avail {
 			if nodeIDStr, ok := nodeData["node_id"].(string); ok {
-				available = append(available, NodeID(nodeIDStr))
+				available = append(available, types.NodeID(nodeIDStr))
 			}
 		}
 	}
@@ -131,9 +131,9 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 
 // updateNodeMetadata stores this node's metadata in frogpond
 func (c *Cluster) updateNodeMetadata() {
-	nodeKey := fmt.Sprintf("nodes/%s", c.ID)
+	nodeKey := fmt.Sprintf("nodes/%s", c.NodeId)
 	nodeData := map[string]interface{}{
-		"node_id":   string(c.ID),
+		"node_id":   string(c.NodeId),
 		"http_port": c.HTTPDataPort,
 		"last_seen": time.Now().Unix(),
 		"available": true,
@@ -192,7 +192,7 @@ func (c *Cluster) handleFrogpondFullSync(w http.ResponseWriter, r *http.Request)
 	resultingUpdates := c.frogpond.AppendDataPoints(peerData)
 	c.sendUpdatesToPeers(resultingUpdates)
 
-	c.Logger.Printf("[FULL_SYNC] Received and applied %d data points from peer", len(peerData))
+	c.Logger().Printf("[FULL_SYNC] Received and applied %d data points from peer", len(peerData))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -213,7 +213,7 @@ func (c *Cluster) persistCRDTToFile() {
 	dataPoints := c.frogpond.DataPool.ToList()
 	dataJSON, err := json.Marshal(dataPoints)
 	if err != nil {
-		c.Logger.Printf("Failed to marshal CRDT data for persistence: %v", err)
+		c.Logger().Printf("Failed to marshal CRDT data for persistence: %v", err)
 		return
 	}
 	ioutil.WriteFile(filepath.Join(c.DataDir, "crdt_backup.json"), dataJSON, 0644)
@@ -223,14 +223,14 @@ func (c *Cluster) persistCRDTToFile() {
 func (c *Cluster) loadCRDTFromFile() {
 	data, err := ioutil.ReadFile(filepath.Join(c.DataDir, "crdt_backup.json"))
 	if err != nil {
-		c.Logger.Printf("Could not read CRDT backup file: %v", err)
+		c.Logger().Printf("Could not read CRDT backup file: %v", err)
 		return
 	}
 	var allData []frogpond.DataPoint
 	if err := json.Unmarshal(data, &allData); err != nil {
-		c.Logger.Printf("Could not unmarshal CRDT backup data: %v", err)
+		c.Logger().Printf("Could not unmarshal CRDT backup data: %v", err)
 		return
 	}
 	c.frogpond.AppendDataPoints(allData)
-	c.Logger.Printf("Loaded CRDT from backup file")
+	c.Logger().Printf("Loaded CRDT from backup file")
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/donomii/clusterF/testenv"
 	"github.com/donomii/clusterF/threadmanager"
+	"github.com/donomii/clusterF/types"
 )
 
 // newTestLogger returns a quiet logger for tests
@@ -177,7 +178,7 @@ func TestDiscovery_CleanupRemovesStalePeers(t *testing.T) {
 
 	// Manually add a stale peer
 	dm.peersMux.Lock()
-	dm.peers["node-b"] = &PeerInfo{NodeID: "node-b", HTTPPort: 31502, Address: "127.0.0.1", LastSeen: time.Now().Add(-1 * time.Hour)}
+	dm.peers["node-b"] = &types.PeerInfo{NodeID: "node-b", HTTPPort: 31502, Address: "127.0.0.1", LastSeen: time.Now().Add(-1 * time.Hour)}
 	dm.peersMux.Unlock()
 
 	// Run cleanup once

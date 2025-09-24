@@ -4,7 +4,6 @@ package partitionmanager
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -16,53 +15,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
 )
-
-// ErrFileNotFound indicates that the requested file does not exist in any known partition.
-var ErrFileNotFound = errors.New("file not found")
 
 const (
 	DefaultPartitionCount    = 65536 // 2^16 partitions
 	defaultReplicationFactor = 3
 )
 
-type NodeID string
-
-type PartitionID string
-type PartitionVersion int64
-
-type PartitionInfo struct {
-	ID           PartitionID      `json:"id"`
-	Version      PartitionVersion `json:"version"`
-	LastModified int64            `json:"last_modified"`
-	FileCount    int              `json:"file_count"`
-	Holders      []NodeID         `json:"holders"`
-}
-
-type PeerInfo struct {
-	NodeID   string
-	Address  string
-	HTTPPort int
-}
-
-type DiscoveryProvider interface {
-	GetPeers() []*PeerInfo
-}
-
-type PeerLoader func(NodeID) (*PeerInfo, bool)
-
 type Dependencies struct {
-	NodeID                NodeID
+	NodeID                types.NodeID
 	NoStore               bool
 	Logger                *log.Logger
 	Debugf                func(string, ...interface{})
 	MetadataKV            ensemblekv.KvLike
 	ContentKV             ensemblekv.KvLike
 	HTTPDataClient        *http.Client
-	Discovery             DiscoveryProvider
+	Discovery             types.DiscoveryManagerLike
 	LoadPeer              PeerLoader
 	Frogpond              *frogpond.Node
 	SendUpdatesToPeers    func([]frogpond.DataPoint)
@@ -73,6 +45,19 @@ type Dependencies struct {
 type PartitionManager struct {
 	deps Dependencies
 }
+
+type PartitionID string
+type PartitionVersion int64
+
+type PartitionInfo struct {
+	ID           PartitionID      `json:"id"`
+	Version      PartitionVersion `json:"version"`
+	LastModified int64            `json:"last_modified"`
+	FileCount    int              `json:"file_count"`
+	Holders      []types.NodeID   `json:"holders"`
+}
+
+type PeerLoader func(types.NodeID) (*types.PeerInfo, bool)
 
 func NewPartitionManager(deps Dependencies) *PartitionManager {
 	return &PartitionManager{deps: deps}
@@ -102,7 +87,7 @@ func (pm *PartitionManager) notifyFileListChanged() {
 	}
 }
 
-func (pm *PartitionManager) loadPeer(id NodeID) (*PeerInfo, bool) {
+func (pm *PartitionManager) loadPeer(id types.NodeID) (*types.PeerInfo, bool) {
 	if pm.deps.LoadPeer == nil {
 		return nil, false
 	}
@@ -116,7 +101,7 @@ func (pm *PartitionManager) httpClient() *http.Client {
 	return http.DefaultClient
 }
 
-func (pm *PartitionManager) getPeers() []*PeerInfo {
+func (pm *PartitionManager) getPeers() []*types.PeerInfo {
 	if pm.deps.Discovery == nil {
 		return nil
 	}
@@ -171,7 +156,7 @@ func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byt
 	return nil
 }
 
-func (pm *PartitionManager) fetchFileFromPeer(peer *PeerInfo, filename string) ([]byte, error) {
+func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename string) ([]byte, error) {
 	// Try to get from this peer
 	decodedPath, err := url.PathUnescape(filename)
 	if err != nil {
@@ -209,7 +194,7 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *PeerInfo, filename string) (
 	return content, nil
 }
 
-func (pm *PartitionManager) fetchMetadataFromPeer(peer *PeerInfo, filename string) (map[string]interface{}, error) {
+func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename string) (map[string]interface{}, error) {
 	decodedPath, err := url.PathUnescape(filename)
 	if err != nil {
 		decodedPath = filename
@@ -296,7 +281,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 
 	// Check if file is marked as deleted
 	if deleted, ok := metadata["deleted"].(bool); ok && deleted {
-		return nil, nil, ErrFileNotFound
+		return nil, nil, types.ErrFileNotFound
 	}
 
 	// Get content from crdtKV (data store) using same key
@@ -324,14 +309,14 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 	}
 
 	peers := pm.getPeers()
-	peerLookup := make(map[NodeID]*PeerInfo, len(peers))
+	peerLookup := make(map[types.NodeID]*types.PeerInfo, len(peers))
 	for _, peer := range peers {
-		peerLookup[NodeID(peer.NodeID)] = peer
+		peerLookup[types.NodeID(peer.NodeID)] = peer
 	}
 
-	orderedPeers := make([]*PeerInfo, 0, len(partition.Holders))
-	seen := make(map[NodeID]bool)
-	addPeer := func(nodeID NodeID, peer *PeerInfo) {
+	orderedPeers := make([]*types.PeerInfo, 0, len(partition.Holders))
+	seen := make(map[types.NodeID]bool)
+	addPeer := func(nodeID types.NodeID, peer *types.PeerInfo) {
 		if peer == nil {
 			return
 		}
@@ -388,13 +373,13 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 		return content, metadata, nil
 	}
 
-	return nil, nil, fmt.Errorf("%w: %s", ErrFileNotFound, path)
+	return nil, nil, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
 }
 
 func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]interface{}, error) {
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: getting metadata %s from peers", path)
-		return pm.getMetadataFromPeers(path)
+		return pm.GetMetadataFromPeers(path)
 	}
 
 	partitionID := HashToPartition(path)
@@ -403,7 +388,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 	metadataData, err := pm.deps.MetadataKV.Get([]byte(fileKey))
 	if err != nil {
 		pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
-		return nil, ErrFileNotFound
+		return nil, types.ErrFileNotFound
 	}
 
 	var metadata map[string]interface{}
@@ -412,13 +397,13 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 	}
 
 	if deleted, ok := metadata["deleted"].(bool); ok && deleted {
-		return nil, ErrFileNotFound
+		return nil, types.ErrFileNotFound
 	}
 
 	return metadata, nil
 }
 
-func (pm *PartitionManager) getMetadataFromPeers(path string) (map[string]interface{}, error) {
+func (pm *PartitionManager) GetMetadataFromPeers(path string) (map[string]interface{}, error) {
 	partitionID := HashToPartition(path)
 	partition := pm.getPartitionInfo(partitionID)
 	if partition == nil {
@@ -430,14 +415,14 @@ func (pm *PartitionManager) getMetadataFromPeers(path string) (map[string]interf
 	}
 
 	peers := pm.getPeers()
-	peerLookup := make(map[NodeID]*PeerInfo, len(peers))
+	peerLookup := make(map[types.NodeID]*types.PeerInfo, len(peers))
 	for _, peer := range peers {
-		peerLookup[NodeID(peer.NodeID)] = peer
+		peerLookup[types.NodeID(peer.NodeID)] = peer
 	}
 
-	orderedPeers := make([]*PeerInfo, 0, len(partition.Holders))
-	seen := make(map[NodeID]bool)
-	addPeer := func(nodeID NodeID, peer *PeerInfo) {
+	orderedPeers := make([]*types.PeerInfo, 0, len(partition.Holders))
+	seen := make(map[types.NodeID]bool)
+	addPeer := func(nodeID types.NodeID, peer *types.PeerInfo) {
 		if peer == nil {
 			return
 		}
@@ -487,7 +472,7 @@ func (pm *PartitionManager) getMetadataFromPeers(path string) (map[string]interf
 		return metadata, nil
 	}
 
-	return nil, fmt.Errorf("%w: %s", ErrFileNotFound, path)
+	return nil, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
 }
 
 // deleteFileFromPartition removes a file from its partition
@@ -646,7 +631,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 	holderPrefix := fmt.Sprintf("%s/holders/", partitionKey)
 	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix(holderPrefix)
 
-	var holders []NodeID
+	var holders []types.NodeID
 	var totalFiles int
 	maxTimestamp := int64(0)
 
@@ -657,7 +642,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 
 		// Extract node ID from key
 		nodeID := strings.TrimPrefix(string(dp.Key), holderPrefix)
-		holders = append(holders, NodeID(nodeID))
+		holders = append(holders, types.NodeID(nodeID))
 
 		// Parse holder data
 		var holderData map[string]interface{}
@@ -723,12 +708,12 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 	// Convert to PartitionInfo objects
 	result := make(map[PartitionID]*PartitionInfo)
 	for partitionID, nodeData := range partitionMap {
-		var holders []NodeID
+		var holders []types.NodeID
 		var totalFiles int
 		maxTimestamp := int64(0)
 
 		for nodeID, data := range nodeData {
-			holders = append(holders, NodeID(nodeID))
+			holders = append(holders, types.NodeID(nodeID))
 
 			if holderData, ok := data.(map[string]interface{}); ok {
 				if joinedAt, ok := holderData["joined_at"].(float64); ok {
@@ -755,7 +740,7 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 }
 
 // syncPartitionFromPeer synchronizes a partition from a peer node using existing KV stores
-func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerID NodeID) error {
+func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerID types.NodeID) error {
 	if !pm.hasFrogpond() {
 		return fmt.Errorf("frogpond node is not configured")
 	}
@@ -765,7 +750,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 	var peerPort int
 	peers := pm.getPeers()
 	for _, peer := range peers {
-		if NodeID(peer.NodeID) == peerID {
+		if types.NodeID(peer.NodeID) == peerID {
 			peerAddr = peer.Address
 			peerPort = peer.HTTPPort
 			break
@@ -982,7 +967,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 }
 
 // findNextPartitionToSyncWithHolders finds a single partition that needs syncing and returns all available holders
-func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, []NodeID) {
+func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, []types.NodeID) {
 	// If in no-store mode, don't sync any partitions
 	if pm.deps.NoStore {
 		return "", nil
@@ -1025,7 +1010,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 		}
 
 		// Find all available holders to sync from (must be different nodes and currently available)
-		var availableHolders []NodeID
+		var availableHolders []types.NodeID
 		for _, holderID := range info.Holders {
 			if holderID != pm.deps.NodeID && availablePeerIDs[string(holderID)] {
 				availableHolders = append(availableHolders, holderID)

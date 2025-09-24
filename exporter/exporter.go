@@ -6,34 +6,20 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/donomii/clusterF/syncmap"
+	"github.com/donomii/clusterF/types"
 	"github.com/fsnotify/fsnotify"
 )
 
 // Logger captures the logging functionality required by the exporter.
 type Logger interface {
 	Printf(format string, v ...any)
-}
-
-// Metadata represents the subset of file metadata the exporter needs.
-type Metadata struct {
-	Size        int64
-	ModifiedAt  time.Time
-	IsDirectory bool
-}
-
-// FileSystem defines the file-system operations the exporter relies on.
-type FileSystem interface {
-	CreateDirectory(path string) error
-	CreateDirectoryWithModTime(path string, modTime time.Time) error
-	StoreFileWithModTime(path string, data []byte, contentType string, modTime time.Time) error
-	DeleteFile(path string) error
-	MetadataForPath(path string) (*Metadata, error)
 }
 
 // Exporter mirrors files/directories from the cluster FS to a local directory
@@ -44,12 +30,12 @@ type Exporter struct {
 	ignore  *syncmap.SyncMap[string, time.Time] // full path -> expiry
 	watched *syncmap.SyncMap[string, struct{}]
 
-	fs     FileSystem
-	logger Logger
+	fs     types.FileSystemLike
+	logger *log.Logger
 }
 
 // New creates a new exporter for a given local base directory.
-func New(base string, logger Logger, fs FileSystem) (*Exporter, error) {
+func New(base string, logger *log.Logger, fs types.FileSystemLike) (*Exporter, error) {
 	if base == "" {
 		return nil, fmt.Errorf("export base cannot be empty")
 	}
@@ -356,7 +342,7 @@ func (e *Exporter) importAll() error {
 	})
 }
 
-func metadataMatches(meta *Metadata, size int64, modTime time.Time) bool {
+func metadataMatches(meta *types.Metadata, size int64, modTime time.Time) bool {
 	if meta == nil || meta.IsDirectory {
 		return false
 	}

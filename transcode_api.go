@@ -56,7 +56,7 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 	// Get the original file
 	fileData, contentType, err := c.FileSystem.GetFileWithContentType(decodedPath)
 	if err != nil {
-		c.Logger.Printf("[TRANSCODE_API] Failed to get file %s: %v", decodedPath, err)
+		c.Logger().Printf("[TRANSCODE_API] Failed to get file %s: %v", decodedPath, err)
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
@@ -64,7 +64,7 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 
 	// Check if file needs transcoding
 	if !needsTranscoding(contentType, filepath.Base(decodedPath)) {
-		c.Logger.Printf("[TRANSCODE_API] File %s (%s) doesn't need transcoding", decodedPath, contentType)
+		c.Logger().Printf("[TRANSCODE_API] File %s (%s) doesn't need transcoding", decodedPath, contentType)
 		// Serve original file
 		c.serveFile(w, r, fileData, contentType, filepath.Base(decodedPath))
 		return
@@ -80,11 +80,11 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 	// If content type is generic, try to infer from filename
 	if contentType == "application/octet-stream" || contentType == "" {
 		filename := strings.ToLower(filepath.Base(decodedPath))
-		if strings.HasSuffix(filename, ".webm") || strings.HasSuffix(filename, ".avi") || 
-		   strings.HasSuffix(filename, ".mkv") || strings.HasSuffix(filename, ".mov") {
+		if strings.HasSuffix(filename, ".webm") || strings.HasSuffix(filename, ".avi") ||
+			strings.HasSuffix(filename, ".mkv") || strings.HasSuffix(filename, ".mov") {
 			req.ContentType = "video/unknown"
 		} else if strings.HasSuffix(filename, ".wav") || strings.HasSuffix(filename, ".flac") ||
-				  strings.HasSuffix(filename, ".ogg") {
+			strings.HasSuffix(filename, ".ogg") {
 			req.ContentType = "audio/unknown"
 		}
 	}
@@ -95,7 +95,7 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 
 	outputPath, err := c.Transcoder.TranscodeToWeb(ctx, fileData, req)
 	if err != nil {
-		c.Logger.Printf("[TRANSCODE_API] Transcoding failed for %s: %v", decodedPath, err)
+		c.Logger().Printf("[TRANSCODE_API] Transcoding failed for %s: %v", decodedPath, err)
 		http.Error(w, fmt.Sprintf("transcoding failed: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -103,7 +103,7 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 	// Serve transcoded file
 	transcodedFile, err := os.Open(outputPath)
 	if err != nil {
-		c.Logger.Printf("[TRANSCODE_API] Failed to open transcoded file %s: %v", outputPath, err)
+		c.Logger().Printf("[TRANSCODE_API] Failed to open transcoded file %s: %v", outputPath, err)
 		http.Error(w, "failed to open transcoded file", http.StatusInternalServerError)
 		return
 	}
@@ -243,7 +243,7 @@ func (c *Cluster) serveFileWithSeeker(w http.ResponseWriter, r *http.Request, fi
 
 		// Seek to start position
 		if _, err := file.Seek(start, io.SeekStart); err != nil {
-			c.Logger.Printf("[TRANSCODE_API] Seek failed: %v", err)
+			c.Logger().Printf("[TRANSCODE_API] Seek failed: %v", err)
 			return
 		}
 
