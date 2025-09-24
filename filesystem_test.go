@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/partitionmanager"
+	"github.com/donomii/clusterF/testenv"
 )
 
 var testModTimeBase = time.Unix(1_700_000_000, 0)
@@ -294,7 +295,7 @@ func TestFileSystem_HTTPEndpoints(t *testing.T) {
 }
 
 func TestFileSystem_MultiNode_Replication(t *testing.T) {
-
+	testenv.RequireUDPSupport(t)
 	config := TestConfig{
 		NodeCount:     3,
 		FileCount:     5,
