@@ -73,21 +73,22 @@
         function renderList(data, append) {
             const tree = document.getElementById('tree');
             if (!append) tree.innerHTML='';
+            curPrefix = data.prefix || '';
+            document.getElementById('prefix').value = curPrefix;
             const items = data.items || [];
             for (const it of items) {
                 const row = document.createElement('div');
                 row.className = 'row';
                 const kind = document.createElement('div');
                 kind.className = 'kind';
-                kind.textContent = it.type === 'dir' ? '📁' : '🔑';
                 const span = document.createElement('div');
                 span.className = 'path';
-                const label = (it.type === 'dir' && typeof it.count === 'number') ? `${it.name} (${it.count})` : it.name;
+                const label = (it.count > 1) ? `${it.name} (${it.count})` : it.name;
                 span.textContent = label;
                 row.appendChild(kind); row.appendChild(span);
                 row.onclick = () => {
-                    if (it.type === 'dir') setPrefix((curPrefix||'') + it.name + '/');
-                    else openKey((curPrefix||'') + it.name);
+                    if (it.count > 1) setPrefix(it.key);
+                    else openKey(it.key);
                 }
                 tree.appendChild(row);
             }
