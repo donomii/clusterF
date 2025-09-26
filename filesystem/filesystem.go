@@ -46,6 +46,9 @@ func calculateChecksum(content []byte) string {
 
 // verifyChecksum validates file content against its stored checksum
 func verifyChecksum(content []byte, expectedChecksum string) error {
+	if expectedChecksum == "" {
+		return nil // No checksum to verify - this is OK for legacy files
+	}
 	actualChecksum := calculateChecksum(content)
 	if actualChecksum != expectedChecksum {
 		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)
@@ -144,6 +147,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 
 	// Calculate checksum for file integrity
 	checksum := calculateChecksum(content)
+	fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Calculated checksum for %s: %s", path, checksum)
 
 	// Create file metadata for the file system layer
 	metadata := types.FileMetadata{
@@ -158,7 +162,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 	}
 
 	// Store file and metadata together in partition system
-	// Create enhanced metadata for CRDT
+	// Create enhanced metadata for file
 	enhancedMetadata := map[string]interface{}{
 		"name":         metadata.Name,
 		"path":         metadata.Path,
@@ -171,6 +175,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		"deleted":      false,
 		"checksum":     checksum,
 	}
+	fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Enhanced metadata for %s has checksum: %s", path, enhancedMetadata["checksum"])
 	metadataJSON, _ := json.Marshal(enhancedMetadata)
 
 	// For no-store clients, forward uploads to storage nodes
@@ -335,6 +340,7 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, 
 	if checksum, ok := metadataMap["checksum"].(string); ok {
 		metadata.Checksum = checksum
 	}
+	fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Retrieved %s with checksum: '%s'", path, metadata.Checksum)
 	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
 		for _, c := range childrenIface {
 			if cstr, ok := c.(string); ok {

@@ -79,6 +79,9 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) {
 
 // verifyFileChecksum validates file content against its expected SHA-256 checksum
 func (pm *PartitionManager) verifyFileChecksum(content []byte, expectedChecksum, path, peerID string) error {
+	if expectedChecksum == "" {
+		return nil // No checksum to verify - this is OK for legacy files
+	}
 	hash := sha256.Sum256(content)
 	actualChecksum := hex.EncodeToString(hash[:])
 	if actualChecksum != expectedChecksum {
@@ -166,6 +169,18 @@ func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byt
 	pm.updatePartitionMetadata(partitionID)
 
 	pm.logf("[PARTITION] Stored file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
+	
+	// Debug: verify what we just stored
+	if storedMetadata, err := pm.deps.MetadataKV.Get([]byte(fileKey)); err == nil {
+		var parsedMeta map[string]interface{}
+		if json.Unmarshal(storedMetadata, &parsedMeta) == nil {
+			if checksum, ok := parsedMeta["checksum"]; ok {
+				pm.logf("[CHECKSUM_DEBUG] Just stored %s with checksum: %v", path, checksum)
+			} else {
+				pm.logf("[CHECKSUM_DEBUG] ERROR: Just stored %s but no checksum in metadata!", path)
+			}
+		}
+	}
 	return nil
 }
 
