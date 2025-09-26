@@ -3,7 +3,9 @@ package filesystem
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,24 @@ func NewClusterFileSystem(cluster types.ClusterLike) *ClusterFileSystem {
 	return &ClusterFileSystem{
 		cluster: cluster,
 	}
+}
+
+// calculateChecksum computes SHA-256 hash of file content
+func calculateChecksum(content []byte) string {
+	hash := sha256.Sum256(content)
+	return hex.EncodeToString(hash[:])
+}
+
+// verifyChecksum validates file content against its stored checksum
+func verifyChecksum(content []byte, expectedChecksum string) error {
+	if expectedChecksum == "" {
+		return nil // No checksum to verify
+	}
+	actualChecksum := calculateChecksum(content)
+	if actualChecksum != expectedChecksum {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)
+	}
+	return nil
 }
 
 // StoreFile requires explicit metadata; callers must provide modification time via StoreFileWithModTime.
@@ -125,6 +145,9 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		return err
 	}
 
+	// Calculate checksum for file integrity
+	checksum := calculateChecksum(content)
+
 	// Create file metadata for the file system layer
 	metadata := types.FileMetadata{
 		Name:        filepath.Base(path),
@@ -134,6 +157,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		CreatedAt:   modTime,
 		ModifiedAt:  modTime,
 		IsDirectory: false,
+		Checksum:    checksum,
 	}
 
 	// Store file and metadata together in partition system
@@ -148,6 +172,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		"is_directory": metadata.IsDirectory,
 		"version":      float64(modTime.UnixNano()),
 		"deleted":      false,
+		"checksum":     checksum,
 	}
 	metadataJSON, _ := json.Marshal(enhancedMetadata)
 
@@ -310,6 +335,9 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, 
 	if isDir, ok := metadataMap["is_directory"].(bool); ok {
 		metadata.IsDirectory = isDir
 	}
+	if checksum, ok := metadataMap["checksum"].(string); ok {
+		metadata.Checksum = checksum
+	}
 	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
 		for _, c := range childrenIface {
 			if cstr, ok := c.(string); ok {
@@ -320,6 +348,11 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, 
 
 	if metadata.IsDirectory {
 		return nil, nil, types.ErrIsDirectory
+	}
+
+	// Verify file integrity using checksum
+	if err := verifyChecksum(content, metadata.Checksum); err != nil {
+		return nil, nil, fmt.Errorf("file integrity check failed for %s: %v", path, err)
 	}
 
 	return content, metadata, nil
@@ -429,6 +462,7 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, erro
 		metadata.Size = int64(sizeFloat)
 	}
 	metadata.ContentType, _ = metadataMap["content_type"].(string)
+	metadata.Checksum, _ = metadataMap["checksum"].(string)
 	if createdVal, ok := metadataMap["created_at"]; ok {
 		switch v := createdVal.(type) {
 		case string:

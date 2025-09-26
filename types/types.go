@@ -98,6 +98,7 @@ type FileMetadata struct {
 	ModifiedAt  time.Time `json:"modified_at"`
 	IsDirectory bool      `json:"is_directory"`
 	Children    []string  `json:"children,omitempty"` // For directories
+	Checksum    string    `json:"checksum,omitempty"`  // SHA-256 hash in hex format
 }
 
 type NodeID string
