@@ -101,6 +101,9 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
 	w.Header().Set("Last-Modified", metadata.ModifiedAt.Format(http.TimeFormat))
 	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
+	if metadata.Checksum != "" {
+		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
+	}
 	w.WriteHeader(http.StatusOK)
 	w.Write(content)
 }
@@ -143,6 +146,9 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 	w.Header().Set("Last-Modified", metadata.ModifiedAt.Format(http.TimeFormat))
 	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
 	w.Header().Set("X-ClusterF-Is-Directory", "false")
+	if metadata.Checksum != "" {
+		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 

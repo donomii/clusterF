@@ -3,6 +3,8 @@ package partitionmanager
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
@@ -73,6 +75,17 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) {
 	if pm.deps.Logger != nil {
 		pm.deps.Logger.Printf(format, args...)
 	}
+}
+
+// verifyFileChecksum validates file content against its expected SHA-256 checksum
+func (pm *PartitionManager) verifyFileChecksum(content []byte, expectedChecksum, path, peerID string) error {
+	hash := sha256.Sum256(content)
+	actualChecksum := hex.EncodeToString(hash[:])
+	if actualChecksum != expectedChecksum {
+		return fmt.Errorf("checksum mismatch for %s from peer %s: expected %s, got %s",
+			path, peerID, expectedChecksum, actualChecksum)
+	}
+	return nil
 }
 
 func (pm *PartitionManager) sendUpdates(updates []frogpond.DataPoint) {
@@ -252,6 +265,10 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 		metadata["created_at"] = created
 	}
 
+	if checksum := headers.Get("X-ClusterF-Checksum"); checksum != "" {
+		metadata["checksum"] = checksum
+	}
+
 	return metadata, nil
 }
 
@@ -289,6 +306,18 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 	if err != nil {
 		pm.debugf("[PARTITION] File %s content not found locally (err: %v), trying peers", path, err)
 		return pm.getFileFromPeers(path)
+	}
+
+	// Verify checksum if available
+	if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
+		if err := pm.verifyFileChecksum(content, checksum, path, string(pm.deps.NodeID)); err != nil {
+			pm.logf("[PARTITION] Local file corruption detected for %s: %v", path, err)
+			// File is corrupted locally, try to get from peers
+			return pm.getFileFromPeers(path)
+		}
+		pm.debugf("[PARTITION] Local checksum verified for %s", path)
+	} else {
+		pm.debugf("[PARTITION] No checksum available for local file %s", path)
 	}
 
 	pm.debugf("[PARTITION] Found file %s locally in partition %s", path, partitionID)
@@ -368,6 +397,17 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 		if err != nil {
 			pm.debugf("[PARTITION] Failed content fetch for %s from %s: %v", path, peer.NodeID, err)
 			continue
+		}
+
+		// Verify checksum if available
+		if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
+			if err := pm.verifyFileChecksum(content, checksum, path, peer.NodeID); err != nil {
+				pm.logf("[PARTITION] Checksum verification failed for %s from %s: %v", path, peer.NodeID, err)
+				continue // Try next peer
+			}
+			pm.debugf("[PARTITION] Checksum verified for %s from %s", path, peer.NodeID)
+		} else {
+			pm.debugf("[PARTITION] No checksum available for %s from %s", path, peer.NodeID)
 		}
 
 		return content, metadata, nil
@@ -739,6 +779,78 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 	return result
 }
 
+// VerifyStoredFileIntegrity checks the integrity of all stored files by verifying their checksums
+func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
+	if pm.deps.NoStore {
+		return map[string]interface{}{
+			"status": "skipped",
+			"reason": "no-store mode",
+		}
+	}
+
+	verifiedCount := 0
+	corruptedFiles := []string{}
+	missingChecksums := 0
+	totalFiles := 0
+
+	pm.deps.MetadataKV.MapFunc(func(k, v []byte) error {
+		key := string(k)
+		if !strings.HasPrefix(key, "partition:") || !strings.Contains(key, ":file:") {
+			return nil // Skip non-file entries
+		}
+
+		totalFiles++
+
+		// Parse metadata
+		var metadata map[string]interface{}
+		if err := json.Unmarshal(v, &metadata); err != nil {
+			pm.debugf("[INTEGRITY] Failed to parse metadata for %s: %v", key, err)
+			return nil
+		}
+
+		// Skip deleted files
+		if deleted, ok := metadata["deleted"].(bool); ok && deleted {
+			return nil
+		}
+
+		// Get checksum
+		checksum, ok := metadata["checksum"].(string)
+		if !ok || checksum == "" {
+			missingChecksums++
+			return nil
+		}
+
+		// Get file content
+		content, err := pm.deps.ContentKV.Get(k)
+		if err != nil {
+			pm.debugf("[INTEGRITY] Content not found for %s: %v", key, err)
+			corruptedFiles = append(corruptedFiles, key)
+			return nil
+		}
+
+		// Verify checksum
+		if path, ok := metadata["path"].(string); ok {
+			if err := pm.verifyFileChecksum(content, checksum, path, string(pm.deps.NodeID)); err != nil {
+				pm.logf("[INTEGRITY] Corruption detected in %s: %v", path, err)
+				corruptedFiles = append(corruptedFiles, path)
+				return nil
+			}
+			verifiedCount++
+		}
+
+		return nil
+	})
+
+	return map[string]interface{}{
+		"total_files":       totalFiles,
+		"verified":          verifiedCount,
+		"corrupted":         len(corruptedFiles),
+		"missing_checksums": missingChecksums,
+		"corrupted_files":   corruptedFiles,
+		"status":            "completed",
+	}
+}
+
 // syncPartitionFromPeer synchronizes a partition from a peer node using existing KV stores
 func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerID types.NodeID) error {
 	if !pm.hasFrogpond() {
@@ -836,8 +948,25 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 						shouldUpdate = true
 					}
 				}
+			} else if entry.Store == "content" && strings.Contains(entry.Key, ":file:") {
+				// For content entries, verify checksum if we have metadata
+				metadataKey := entry.Key // Same key for metadata and content
+				if metadataBytes, err := pm.deps.MetadataKV.Get([]byte(metadataKey)); err == nil {
+					var metadata map[string]interface{}
+					if json.Unmarshal(metadataBytes, &metadata) == nil {
+						if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
+							// Verify incoming content checksum
+							if err := pm.verifyFileChecksum(entry.Value, checksum, entry.Key, string(peerID)); err != nil {
+								pm.logf("[PARTITION] Sync checksum verification failed for %s from %s: %v", entry.Key, peerID, err)
+								continue // Skip corrupted content
+							}
+							pm.debugf("[PARTITION] Sync checksum verified for %s from %s", entry.Key, peerID)
+						}
+					}
+				}
+				shouldUpdate = true
 			} else {
-				// For content entries or non-file entries, just accept newer data
+				// For other entries, just accept newer data
 				shouldUpdate = true
 			}
 		}

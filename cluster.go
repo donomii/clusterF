@@ -706,6 +706,8 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	// Partition sync endpoints
 	mux.HandleFunc("/api/partition-sync/", corsMiddleware(c.handlePartitionSyncAPI))
 	mux.HandleFunc("/api/partition-stats", corsMiddleware(c.handlePartitionStats))
+	// Integrity check endpoint
+	mux.HandleFunc("/api/integrity-check", corsMiddleware(c.handleIntegrityCheck))
 	// Search API
 	mux.HandleFunc("/api/search", corsMiddleware(c.handleSearchAPI))
 	// Transcode API
@@ -871,6 +873,21 @@ func (c *Cluster) handlePartitionStats(w http.ResponseWriter, r *http.Request) {
 	stats := c.partitionManager.GetPartitionStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+// handleIntegrityCheck performs file integrity verification
+func (c *Cluster) handleIntegrityCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	c.Logger().Printf("[INTEGRITY] Starting file integrity check")
+	results := c.partitionManager.VerifyStoredFileIntegrity()
+	c.Logger().Printf("[INTEGRITY] Completed file integrity check")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }
 
 // ---------- Utilities ----------

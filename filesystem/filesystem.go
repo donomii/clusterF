@@ -46,9 +46,6 @@ func calculateChecksum(content []byte) string {
 
 // verifyChecksum validates file content against its stored checksum
 func verifyChecksum(content []byte, expectedChecksum string) error {
-	if expectedChecksum == "" {
-		return nil // No checksum to verify
-	}
 	actualChecksum := calculateChecksum(content)
 	if actualChecksum != expectedChecksum {
 		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)
