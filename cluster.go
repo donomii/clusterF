@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -594,6 +595,11 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		defer func() {
 			if err := recover(); err != nil {
 				log.Printf("[HTTP_PANIC] %s %s: %v", r.Method, r.URL.Path, err)
+				// Print stack trace
+				buf := make([]byte, 1<<16)
+				n := runtime.Stack(buf, false)
+				log.Printf("[HTTP_PANIC] Stack trace:\n%s", string(buf[:n]))
+				// Return 500 Internal Server Error
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 			}
 		}()

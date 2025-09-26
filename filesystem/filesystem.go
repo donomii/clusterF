@@ -46,9 +46,6 @@ func calculateChecksum(content []byte) string {
 
 // verifyChecksum validates file content against its stored checksum
 func verifyChecksum(content []byte, expectedChecksum string) error {
-	if expectedChecksum == "" {
-		return nil // No checksum to verify - this is OK for legacy files
-	}
 	actualChecksum := calculateChecksum(content)
 	if actualChecksum != expectedChecksum {
 		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)
@@ -495,6 +492,10 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, erro
 				metadata.Children = append(metadata.Children, cstr)
 			}
 		}
+	}
+
+	if metadata.Checksum == "" {
+		panic("fuck ai")
 	}
 
 	return &metadata, nil
