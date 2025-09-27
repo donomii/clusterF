@@ -70,6 +70,18 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
             <div class="stat-value" id="pending_sync">-</div>
             <div class="stat-label">Pending Sync</div>
         </div>
+        <div class="stat-card">
+            <div class="stat-value" id="cluster_bytes_stored">-</div>
+            <div class="stat-label">Cluster Bytes Stored</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="cluster_disk_usage">-</div>
+            <div class="stat-label">Cluster Disk Usage %</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="cluster_disk_free">-</div>
+            <div class="stat-label">Cluster Disk Free</div>
+        </div>
     </div>
     
     <div class="controls">
@@ -87,6 +99,9 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
         <div>HTTP Port: ` + httpPort + `</div>
         <div>Discovery Port: ` + discoveryPort + `</div>
         <div>Data Directory: ` + dataDir + `</div>
+        <div>Bytes Stored: <span id="node_bytes_stored">-</span></div>
+        <div>Disk Usage: <span id="node_disk_usage">-</span></div>
+        <div>Disk Free: <span id="node_disk_free">-</span></div>
         <div id="debug-info" style="margin-top: 10px; color: #facc15; font-size: 12px;">API Status: Checking...</div>
         <div>Endpoints:</div>
         <div style="margin-left: 20px;">
@@ -99,6 +114,18 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
     </div>
     
     <script>
+        function formatBytes(bytes, decimals = 2) {
+            if (bytes === 0) return '0 B';
+            
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+            
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+        }
+        
         function normalizeAPIPath(path) {
             if (!path) {
                 return '/';
@@ -164,6 +191,98 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
                 document.getElementById('total_files').textContent = partitionStats.total_files || 0;
                 document.getElementById('pending_sync').textContent = partitionStats.pending_sync || 0;
                 
+                // Calculate cluster-wide disk usage totals
+                debugDiv.textContent = 'Calculating cluster totals...';
+                const nodeId = status.node_id;
+                let currentNodeData = null;
+                let clusterTotalBytesStored = 0;
+                let clusterTotalDiskSize = 0;
+                let clusterTotalDiskFree = 0;
+                let nodeCount = 0;
+                
+                if (clusterStats.peer_list) {
+                    for (const peer of clusterStats.peer_list) {
+                        if (peer.bytes_stored !== undefined) {
+                            clusterTotalBytesStored += peer.bytes_stored;
+                            nodeCount++;
+                        }
+                        if (peer.disk_size !== undefined) {
+                            clusterTotalDiskSize += peer.disk_size;
+                        }
+                        if (peer.disk_free !== undefined) {
+                            clusterTotalDiskFree += peer.disk_free;
+                        }
+                        
+                        // Find our own node data
+                        if (peer.node_id === nodeId) {
+                            currentNodeData = peer;
+                        }
+                    }
+                }
+                
+                // Display cluster totals
+                document.getElementById('cluster_bytes_stored').textContent = formatBytes(clusterTotalBytesStored);
+                document.getElementById('cluster_disk_free').textContent = formatBytes(clusterTotalDiskFree);
+                
+                if (clusterTotalDiskSize > 0) {
+                    const clusterUsedBytes = clusterTotalDiskSize - clusterTotalDiskFree;
+                    const clusterUsagePercent = Math.round((clusterUsedBytes / clusterTotalDiskSize) * 100);
+                    document.getElementById('cluster_disk_usage').textContent = clusterUsagePercent + '%';
+                } else {
+                    document.getElementById('cluster_disk_usage').textContent = 'N/A';
+                }
+                
+                // Display current node's disk usage in Node Information section
+                if (currentNodeData && currentNodeData.bytes_stored !== undefined) {
+                    document.getElementById('node_bytes_stored').textContent = formatBytes(currentNodeData.bytes_stored);
+                    
+                    if (currentNodeData.disk_size && currentNodeData.disk_size > 0) {
+                        const nodeUsedBytes = currentNodeData.disk_size - currentNodeData.disk_free;
+                        const nodeUsagePercent = Math.round((nodeUsedBytes / currentNodeData.disk_size) * 100);
+                        document.getElementById('node_disk_usage').textContent = nodeUsagePercent + '% of ' + formatBytes(currentNodeData.disk_size);
+                        document.getElementById('node_disk_free').textContent = formatBytes(currentNodeData.disk_free);
+                    } else {
+                        document.getElementById('node_disk_usage').textContent = 'N/A';
+                        document.getElementById('node_disk_free').textContent = 'N/A';
+                    }
+                } else {
+                    // Try to get disk info from a direct CRDT query
+                    try {
+                        const crdtResponse = await fetch('/api/crdt/get?key=nodes/' + nodeId);
+                        if (crdtResponse.ok) {
+                            const crdtData = await crdtResponse.json();
+                            if (crdtData.value) {
+                                const nodeInfo = JSON.parse(atob(crdtData.value));
+                                if (nodeInfo.bytes_stored !== undefined) {
+                                    document.getElementById('node_bytes_stored').textContent = formatBytes(nodeInfo.bytes_stored);
+                                    
+                                    if (nodeInfo.disk_size && nodeInfo.disk_size > 0) {
+                                        const nodeUsedBytes = nodeInfo.disk_size - nodeInfo.disk_free;
+                                        const nodeUsagePercent = Math.round((nodeUsedBytes / nodeInfo.disk_size) * 100);
+                                        document.getElementById('node_disk_usage').textContent = nodeUsagePercent + '% of ' + formatBytes(nodeInfo.disk_size);
+                                        document.getElementById('node_disk_free').textContent = formatBytes(nodeInfo.disk_free);
+                                    } else {
+                                        document.getElementById('node_disk_usage').textContent = 'N/A';
+                                        document.getElementById('node_disk_free').textContent = 'N/A';
+                                    }
+                                } else {
+                                    document.getElementById('node_bytes_stored').textContent = 'N/A';
+                                    document.getElementById('node_disk_usage').textContent = 'N/A';
+                                    document.getElementById('node_disk_free').textContent = 'N/A';
+                                }
+                            }
+                        } else {
+                            document.getElementById('node_bytes_stored').textContent = 'N/A';
+                            document.getElementById('node_disk_usage').textContent = 'N/A';
+                            document.getElementById('node_disk_free').textContent = 'N/A';
+                        }
+                    } catch (e) {
+                        document.getElementById('node_bytes_stored').textContent = 'ERR';
+                        document.getElementById('node_disk_usage').textContent = 'ERR';
+                        document.getElementById('node_disk_free').textContent = 'ERR';
+                    }
+                }
+                
                 // Update input fields with current values
                 document.getElementById('rfInput').value = rf;
                 
@@ -181,6 +300,12 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
                 document.getElementById('local_partitions').textContent = 'ERR';
                 document.getElementById('total_files').textContent = 'ERR';
                 document.getElementById('pending_sync').textContent = 'ERR';
+                document.getElementById('cluster_bytes_stored').textContent = 'ERR';
+                document.getElementById('cluster_disk_usage').textContent = 'ERR';
+                document.getElementById('cluster_disk_free').textContent = 'ERR';
+                document.getElementById('node_bytes_stored').textContent = 'ERR';
+                document.getElementById('node_disk_usage').textContent = 'ERR';
+                document.getElementById('node_disk_free').textContent = 'ERR';
             }
         }
         

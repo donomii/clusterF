@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 	"github.com/donomii/frogpond"
+	"golang.org/x/sys/unix"
 )
 
 // sendUpdatesToPeers sends frogpond updates to all discovered peers
@@ -48,6 +50,41 @@ func (c *Cluster) getPeerList() []types.PeerInfo {
 	for _, p := range peers {
 		peerList = append(peerList, *p)
 	}
+	
+	// Add our own node information from the CRDT with disk usage data
+	nodeKey := fmt.Sprintf("nodes/%s", c.NodeId)
+	nodeData := c.frogpond.GetDataPoint(nodeKey)
+	if !nodeData.Deleted && len(nodeData.Value) > 0 {
+		var nodeInfo map[string]interface{}
+		if err := json.Unmarshal(nodeData.Value, &nodeInfo); err == nil {
+			// Create a PeerInfo structure for our own node with disk usage
+			selfPeer := types.PeerInfo{
+				NodeID:   string(c.NodeId),
+				Address:  "127.0.0.1", // Local address
+				HTTPPort: c.HTTPDataPort,
+			}
+			
+			// Add disk usage fields if they exist
+			if bytesStored, ok := nodeInfo["bytes_stored"].(float64); ok {
+				selfPeer.BytesStored = int64(bytesStored)
+			}
+			if diskSize, ok := nodeInfo["disk_size"].(float64); ok {
+				selfPeer.DiskSize = int64(diskSize)
+			}
+			if diskFree, ok := nodeInfo["disk_free"].(float64); ok {
+				selfPeer.DiskFree = int64(diskFree)
+			}
+			if lastSeen, ok := nodeInfo["last_seen"].(float64); ok {
+				selfPeer.LastSeen = time.Unix(int64(lastSeen), 0)
+			}
+			if available, ok := nodeInfo["available"].(bool); ok {
+				selfPeer.Available = available
+			}
+			
+			peerList = append(peerList, selfPeer)
+		}
+	}
+	
 	return peerList
 }
 
@@ -129,14 +166,57 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 	}
 }
 
+// calculateDataDirSize calculates the total size of all files in the data directory
+func (c *Cluster) calculateDataDirSize() int64 {
+	var totalSize int64
+	err := filepath.Walk(c.DataDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip files with errors
+		}
+		if !info.IsDir() {
+			totalSize += info.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		c.debugf("[DISK_USAGE] Error calculating data directory size: %v", err)
+		return 0
+	}
+	return totalSize
+}
+
+// getDiskUsage gets disk size and free space for the data directory
+func (c *Cluster) getDiskUsage() (diskSize int64, diskFree int64) {
+	var stat unix.Statfs_t
+	err := unix.Statfs(c.DataDir, &stat)
+	if err != nil {
+		c.debugf("[DISK_USAGE] Error getting disk stats for %s: %v", c.DataDir, err)
+		return 0, 0
+	}
+	
+	// Calculate total size and free space in bytes
+	diskSize = int64(stat.Blocks) * int64(stat.Bsize)
+	diskFree = int64(stat.Bavail) * int64(stat.Bsize)
+	
+	return diskSize, diskFree
+}
+
 // updateNodeMetadata stores this node's metadata in frogpond
 func (c *Cluster) updateNodeMetadata() {
 	nodeKey := fmt.Sprintf("nodes/%s", c.NodeId)
+	
+	// Calculate disk usage information
+	bytesStored := c.calculateDataDirSize()
+	diskSize, diskFree := c.getDiskUsage()
+	
 	nodeData := map[string]interface{}{
-		"node_id":   string(c.NodeId),
-		"http_port": c.HTTPDataPort,
-		"last_seen": time.Now().Unix(),
-		"available": true,
+		"node_id":      string(c.NodeId),
+		"http_port":    c.HTTPDataPort,
+		"last_seen":    time.Now().Unix(),
+		"available":    true,
+		"bytes_stored": bytesStored,
+		"disk_size":    diskSize,
+		"disk_free":    diskFree,
 	}
 	nodeJSON, _ := json.Marshal(nodeData)
 	updates := c.frogpond.SetDataPoint(nodeKey, nodeJSON)

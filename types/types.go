@@ -76,10 +76,14 @@ type FileSystemLike interface {
 
 // PeerInfo represents information about a discovered peer
 type PeerInfo struct {
-	NodeID   string    `json:"node_id"`
-	HTTPPort int       `json:"http_port"`
-	Address  string    `json:"address"`
-	LastSeen time.Time `json:"last_seen"`
+	NodeID      string    `json:"node_id"`
+	HTTPPort    int       `json:"http_port"`
+	Address     string    `json:"address"`
+	LastSeen    time.Time `json:"last_seen"`
+	BytesStored int64     `json:"bytes_stored,omitempty"`
+	DiskSize    int64     `json:"disk_size,omitempty"`
+	DiskFree    int64     `json:"disk_free,omitempty"`
+	Available   bool      `json:"available,omitempty"`
 }
 
 type NodeInfo struct {
