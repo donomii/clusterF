@@ -535,6 +535,7 @@ func (c *Cluster) Start() {
 	c.threadManager.StartThread("periodic-peer-sync", c.periodicPeerSync)
 	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
 	c.threadManager.StartThread("partition-check", c.partitionManager.PeriodicPartitionCheck)
+	c.threadManager.StartThread("node-pruning", c.periodicNodePruning)
 	c.debugf("Started all threads")
 }
 

@@ -219,6 +219,72 @@ func (c *Cluster) persistCRDTToFile() {
 	ioutil.WriteFile(filepath.Join(c.DataDir, "crdt_backup.json"), dataJSON, 0644)
 }
 
+// periodicNodePruning creates backdated tombstones for all node entries every 10 minutes
+// This forces nodes to re-apply their keys or be removed from the cluster
+func (c *Cluster) periodicNodePruning(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.pruneOldNodes()
+		}
+	}
+}
+
+// pruneOldNodes creates backdated tombstones for all node entries
+// Tombstones are backdated by 30 minutes so active nodes will override them
+// but nodes that have been gone for >30 minutes will be removed
+func (c *Cluster) pruneOldNodes() {
+	c.Logger().Printf("[NODE_PRUNING] Starting periodic node pruning")
+	
+	// Get all node keys
+	nodeKeys := c.frogpond.GetAllMatchingPrefix("nodes/")
+	
+	// Create backdated tombstones for all node entries
+	backdateTime := time.Now().Add(-30 * time.Minute)
+	tombstones := []frogpond.DataPoint{}
+	
+	for _, nodeData := range nodeKeys {
+		// Skip if already deleted
+		if nodeData.Deleted {
+			continue
+		}
+		
+		// Create a backdated tombstone
+		tombstone := frogpond.DataPoint{
+			Key:     nodeData.Key,
+			Value:   nil,
+			Name:    nodeData.Name,
+			Updated: backdateTime,
+			Deleted: true,
+		}
+		
+		tombstones = append(tombstones, tombstone)
+	}
+	
+	if len(tombstones) > 0 {
+		c.Logger().Printf("[NODE_PRUNING] Created %d backdated tombstones for node entries", len(tombstones))
+		
+		// Apply the tombstones to our own CRDT and get resulting updates
+		resultingUpdates := c.frogpond.AppendDataPoints(tombstones)
+		
+		// Send the tombstones to all peers
+		c.sendUpdatesToPeers(tombstones)
+		
+		// Also send any resulting updates (in case some nodes were actually pruned)
+		if len(resultingUpdates) > 0 {
+			c.sendUpdatesToPeers(resultingUpdates)
+			c.Logger().Printf("[NODE_PRUNING] Pruned %d stale node entries", len(resultingUpdates))
+		}
+	} else {
+		c.Logger().Printf("[NODE_PRUNING] No node entries found to prune")
+	}
+}
+
 // loadCRDTFromKV seeds the in-memory CRDT from the persistent KV
 func (c *Cluster) loadCRDTFromFile() {
 	data, err := ioutil.ReadFile(filepath.Join(c.DataDir, "crdt_backup.json"))
