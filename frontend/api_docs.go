@@ -56,17 +56,17 @@ func (f *Frontend) HandleAPIDocs(w http.ResponseWriter, r *http.Request) {
                 <div class="card">
                     <div class="ep"><span class="verb GET">GET</span> <span class="code">/status</span></div>
                     <div>Node status JSON.</div>
-                    <div><a href="/status" target="_blank">Open</a></div>
+                    <div><a href="/status" >Open</a></div>
                 </div>
                 <div class="card">
                     <div class="ep"><span class="verb GET">GET</span> <span class="code">/api/cluster-stats</span></div>
                     <div>Extended cluster information.</div>
-                    <div><a href="/api/cluster-stats" target="_blank">Open</a></div>
+                    <div><a href="/api/cluster-stats" >Open</a></div>
                 </div>
                 <div class="card">
                     <div class="ep"><span class="verb GET">GET</span> <span class="code">/api/partition-stats</span></div>
                     <div>Partition replication statistics.</div>
-                    <div><a href="/api/partition-stats" target="_blank">Open</a></div>
+                    <div><a href="/api/partition-stats" >Open</a></div>
                 </div>
             </div>
         </div>
@@ -81,7 +81,7 @@ func (f *Frontend) HandleAPIDocs(w http.ResponseWriter, r *http.Request) {
                     <div class="ep"><span class="verb DELETE">DELETE</span> <span class="code">/api/files/{path}</span></div>
                     <div class="ep"><span class="verb POST">POST</span> <span class="code">/api/files/{path}</span> (with <span class="code">X-Create-Directory: true</span>)</div>
                     <div>File system API.</div>
-                    <div><a href="/api/files/" target="_blank">Browse</a></div>
+                    <div><a href="/api/files/" >Browse</a></div>
                 </div>
             </div>
         </div>
@@ -117,7 +117,7 @@ func (f *Frontend) HandleAPIDocs(w http.ResponseWriter, r *http.Request) {
                     <div class="ep"><span class="verb GET">GET</span> <span class="code">/api/crdt/search?prefix=...&q=...&limit=100&after=...</span></div>
                     <div class="ep"><span class="verb GET">GET</span> <span class="code">/api/crdt/get?key=...</span></div>
                     <div>CRDT inspector UI and APIs.</div>
-                    <div><a href="/crdt" target="_blank">Open</a></div>
+                    <div><a href="/crdt" >Open</a></div>
                 </div>
             </div>
         </div>

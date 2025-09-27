@@ -43,8 +43,18 @@ func (f *Frontend) HandleProfilingPage(w http.ResponseWriter, r *http.Request) {
     <div class="profiles">
         <div class="profile-card">
             <h3>CPU Flame Graph</h3>
-            <p>Click to generate and view flame graph</p>
-            <a href="/flamegraph" class="btn">🔥 Generate Flame Graph</a>
+            <p>Shows CPU usage patterns over time</p>
+            <a href="/flamegraph"  class="btn">🔥 CPU Flame Graph</a>
+        </div>
+        <div class="profile-card">
+            <h3>Memory Flame Graph</h3>
+            <p>Shows current memory allocation patterns</p>
+            <a href="/memorygraph"  class="btn">🧠 Memory Flame Graph</a>
+        </div>
+        <div class="profile-card">
+            <h3>Allocation Flame Graph</h3>
+            <p>Shows memory allocation call sites</p>
+            <a href="/allocgraph"  class="btn">📊 Allocation Flame Graph</a>
         </div>
     </div>
     
@@ -53,7 +63,9 @@ func (f *Frontend) HandleProfilingPage(w http.ResponseWriter, r *http.Request) {
         <ul style="text-align: left; max-width: 600px; margin: 0 auto;">
             <li>Click "Start Profiling" to enable detailed profiling</li>
             <li>Use your application normally to generate load</li>
-            <li>Click "Generate Flame Graph" to view CPU flame graph</li>
+            <li>Click "CPU Flame Graph" to view CPU usage patterns (30s sample)</li>
+            <li>Click "Memory Flame Graph" to view current heap allocation patterns</li>
+            <li>Click "Allocation Flame Graph" to view memory allocation call sites</li>
             <li>Click "Stop Profiling" to disable when done</li>
         </ul>
     </div>

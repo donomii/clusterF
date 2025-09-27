@@ -169,6 +169,8 @@ type ClusterOpts struct {
 }
 
 func NewCluster(opts ClusterOpts) *Cluster {
+	// Enable allocation tracking for profiling
+	runtime.MemProfileRate = 4096 // Default memory profiling rate
 
 	id := opts.ID
 	if id == "" {
@@ -677,6 +679,8 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/frogpond/fullstore", corsMiddleware(c.handleFrogpondFullStore))
 	mux.HandleFunc("/api/replication-factor", corsMiddleware(c.handleReplicationFactor))
 	mux.HandleFunc("/flamegraph", corsMiddleware(c.handleFlameGraph))
+	mux.HandleFunc("/memorygraph", corsMiddleware(c.handleMemoryFlameGraph))
+	mux.HandleFunc("/allocgraph", corsMiddleware(c.handleAllocFlameGraph))
 	mux.HandleFunc("/profiling", corsMiddleware(ui.HandleProfilingPage))
 	mux.HandleFunc("/api/profiling", corsMiddleware(c.handleProfilingAPI))
 	// Add pprof endpoints manually

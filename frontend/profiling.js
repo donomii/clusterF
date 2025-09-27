@@ -126,9 +126,9 @@ async function showRuntimeStats() {
             '</div>' +
             '<div style="margin-top: 20px;">' +
                 '<h4>Profile Links</h4>' +
-                '<a href="/debug/pprof/goroutine?debug=2" target="_blank" style="color: #06b6d4; margin-right: 20px;">📋 Detailed Goroutines</a>' +
-                '<a href="/debug/pprof/heap?debug=2" target="_blank" style="color: #06b6d4; margin-right: 20px;">🧠 Detailed Memory</a>' +
-                '<a href="/debug/pprof/" target="_blank" style="color: #06b6d4;">📊 All Profiles</a>' +
+                '<a href="/debug/pprof/goroutine?debug=2"  style="color: #06b6d4; margin-right: 20px;">📋 Detailed Goroutines</a>' +
+                '<a href="/debug/pprof/heap?debug=2"  style="color: #06b6d4; margin-right: 20px;">🧠 Detailed Memory</a>' +
+                '<a href="/debug/pprof/"  style="color: #06b6d4;">📊 All Profiles</a>' +
             '</div>';
         
         dataDiv.innerHTML = html;
@@ -140,9 +140,9 @@ async function showRuntimeStats() {
             '<div style="color: #ef4444; margin-bottom: 15px;">Error: ' + error.message + '</div>' +
             '<div style="color: #888; font-size: 14px;">Direct links:</div>' +
             '<div style="margin-top: 10px;">' +
-                '<a href="/debug/pprof/goroutine?debug=1" target="_blank" style="color: #06b6d4; margin-right: 15px;">🔄 Goroutines</a>' +
-                '<a href="/debug/pprof/heap?debug=1" target="_blank" style="color: #06b6d4; margin-right: 15px;">🧠 Memory</a>' +
-                '<a href="/debug/pprof/" target="_blank" style="color: #06b6d4;">📊 All Profiles</a>' +
+                '<a href="/debug/pprof/goroutine?debug=1"  style="color: #06b6d4; margin-right: 15px;">🔄 Goroutines</a>' +
+                '<a href="/debug/pprof/heap?debug=1"  style="color: #06b6d4; margin-right: 15px;">🧠 Memory</a>' +
+                '<a href="/debug/pprof/"  style="color: #06b6d4;">📊 All Profiles</a>' +
             '</div>';
         statsDiv.style.display = 'block';
     }
