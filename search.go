@@ -255,15 +255,16 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 		parts := strings.SplitN(relPath, "/", 2)
 		c.debugf("[SEARCH] Path split into parts: %v", parts)
 		if len(parts) > 1 {
-
-			dir := parts[0] + "/"
-			c.debugf("[SEARCH] Processing result: %s (rel: %s) is a directory", dir, relPath)
-			if !seen[dir] {
-				seen[dir] = true
-				results = append(results, SearchResult{
-					Name: dir,
-					Path: dir,
-				})
+			if parts[0] != "" {
+				dir := parts[0] + "/"
+				c.debugf("[SEARCH] Processing result: %s (rel: %s) is a directory", dir, relPath)
+				if !seen[dir] {
+					seen[dir] = true
+					results = append(results, SearchResult{
+						Name: dir,
+						Path: dir,
+					})
+				}
 			}
 		} else {
 			// It's a file in the current directory

@@ -167,7 +167,6 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		"content_type": metadata.ContentType,
 		"created_at":   metadata.CreatedAt.Format(time.RFC3339Nano),
 		"modified_at":  modTime.Format(time.RFC3339Nano),
-		"is_directory": metadata.IsDirectory,
 		"version":      float64(modTime.UnixNano()),
 		"deleted":      false,
 		"checksum":     checksum,
@@ -331,9 +330,6 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, 
 			metadata.ModifiedAt = time.Unix(int64(v), 0)
 		}
 	}
-	if isDir, ok := metadataMap["is_directory"].(bool); ok {
-		metadata.IsDirectory = isDir
-	}
 	if checksum, ok := metadataMap["checksum"].(string); ok {
 		metadata.Checksum = checksum
 	}
@@ -482,9 +478,6 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, erro
 		case float64:
 			metadata.ModifiedAt = time.Unix(int64(v), 0)
 		}
-	}
-	if isDir, ok := metadataMap["is_directory"].(bool); ok {
-		metadata.IsDirectory = isDir
 	}
 	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
 		for _, c := range childrenIface {

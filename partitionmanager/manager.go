@@ -267,10 +267,9 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 
 	headers := resp.Header
 	metadata := map[string]interface{}{
-		"name":         path.Base(decodedPath),
-		"path":         decodedPath,
-		"deleted":      false,
-		"is_directory": false,
+		"name":    path.Base(decodedPath),
+		"path":    decodedPath,
+		"deleted": false,
 	}
 
 	if cl := headers.Get("Content-Length"); cl != "" {
