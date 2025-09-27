@@ -35,6 +35,7 @@ func main() {
 	noDesktop := flag.Bool("no-desktop", false, "Do not open the desktop drop window")
 	mountPoint := flag.String("mount", "", "[DISABLED] FUSE mounting not supported")
 	exportDir := flag.String("export-dir", "", "Mirror cluster files to this local directory (share via macOS File Sharing for SMB)")
+	clusterDir := flag.String("cluster-dir", "", "Cluster path prefix to export (must be used with --export-dir)")
 	httpPort := flag.Int("http-port", 0, "HTTP port to bind (0 = dynamic near 30000)")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	noStore := flag.Bool("no-store", false, "Client mode: participate in CRDT but don't store partitions locally")
@@ -50,7 +51,12 @@ func main() {
 	if *simNodes > 0 {
 		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir, *profiling)
 	} else {
-		runSingleNode(*noDesktop, *mountPoint, *exportDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling)
+		// Validate export options
+		if (*exportDir != "" && *clusterDir == "") || (*exportDir == "" && *clusterDir != "") {
+			log.Fatal("Both --export-dir and --cluster-dir must be specified together, or neither")
+		}
+		
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling)
 	}
 }
 
@@ -196,12 +202,13 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, exportDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:           nodeID,
 		DataDir:      dataDir,
 		ExportDir:    exportDir,
+		ClusterDir:   clusterDir,
 		HTTPDataPort: httpPort,
 		NoStore:      noStore,
 	})

@@ -123,8 +123,9 @@ type Cluster struct {
 	profilingMutex  sync.Mutex
 
 	// Optional local export directory for OS sharing (SMB/NFS/etc.)
-	ExportDir string
-	exporter  types.ExporterLike
+	ExportDir  string
+	ClusterDir string // Optional cluster path prefix to export (e.g., "/photos")
+	exporter   types.ExporterLike
 
 	// Optional transcoder for media files
 	Transcoder *Transcoder
@@ -165,6 +166,7 @@ type ClusterOpts struct {
 	BroadcastIP   net.IP
 	Logger        *log.Logger
 	ExportDir     string // if set, mirror files to this directory for OS sharing
+	ClusterDir    string // if set, only export files with this path prefix
 	NoStore       bool   // if true, don't store partitions locally (client mode)
 }
 
@@ -223,6 +225,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		BroadcastIP:     opts.BroadcastIP,
 		logger:          opts.Logger,
 		ExportDir:       opts.ExportDir,
+		ClusterDir:      opts.ClusterDir,
 		noStore:         opts.NoStore,
 		initialSyncTrig: make(chan struct{}, 1),
 		peerAddrs:       syncmap.NewSyncMap[types.NodeID, *types.PeerInfo](),
@@ -363,11 +366,15 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 	// Initialize exporter if configured
 	if opts.ExportDir != "" {
-		if exp, err := exporter.New(opts.ExportDir, c.Logger(), c.FileSystem); err != nil {
+		if exp, err := exporter.NewWithClusterDir(opts.ExportDir, opts.ClusterDir, c.Logger(), c.FileSystem); err != nil {
 			c.Logger().Printf("[EXPORT] Failed to init exporter for %s: %v", opts.ExportDir, err)
 		} else {
 			c.exporter = exp
-			c.Logger().Printf("[EXPORT] Mirroring files to %s for OS sharing", opts.ExportDir)
+			if opts.ClusterDir != "" {
+				c.Logger().Printf("[EXPORT] Mirroring files with prefix %s to %s for OS sharing", opts.ClusterDir, opts.ExportDir)
+			} else {
+				c.Logger().Printf("[EXPORT] Mirroring files to %s for OS sharing", opts.ExportDir)
+			}
 		}
 	}
 	c.debugf("Initialized exporter (if configured)\n")
