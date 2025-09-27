@@ -52,37 +52,37 @@ func (f *Frontend) HandleWelcome(w http.ResponseWriter, r *http.Request) {
         <div class="endpoints">
             <div class="endpoint-card">
                 <h3>🔍 Profiling</h3>
-                <p>Performance analysis and debugging tools</p>
+                <p>Performance analysis</p>
                 <a href="/profiling">Open Profiling</a>
             </div>
             
             <div class="endpoint-card">
                 <h3>📁 File Browser</h3>
-                <p>Web-based file manager with drag & drop</p>
+                <p>Web-based file manager</p>
                 <a href="/files/">Open File Browser</a>
             </div>
             
             <div class="endpoint-card">
                 <h3>📊 Monitor</h3>
-                <p>Real-time node statistics and controls</p>
+                <p>Node statistics and controls</p>
                 <a href="/monitor">Open Monitor Dashboard</a>
             </div>
             
             <div class="endpoint-card">
                 <h3>🧪 CRDT Inspector</h3>
-                <p>Browse frogpond keys and values</p>
+                <p>Browse frogpond</p>
                 <a href="/crdt">Open CRDT Inspector</a>
             </div>
             
             <div class="endpoint-card">
                 <h3>📊 Cluster Visualizer</h3>
-                <p>Interactive network visualization</p>
+                <p>Network visualization</p>
                 <a href="/cluster-visualizer.html">Open Visualizer</a>
             </div>
             
             <div class="endpoint-card">
                 <h3>🧩 API Reference</h3>
-                <p>Browse all REST and JSON endpoints</p>
+                <p>Browse endpoints</p>
                 <a href="/api">Open API Page</a>
             </div>
         </div>
