@@ -33,7 +33,6 @@
             font-size: 18px;
         }
         .frog-logo { position: relative; display: inline-block; line-height: 1; margin-right: 6px; }
-        .frog-logo::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -3px; width: 0.95em; height: 0.26em; background: radial-gradient(ellipse at center, rgba(6,182,212,0.35), rgba(6,182,212,0.05)); border-radius: 50% / 60%; filter: blur(0.3px); }
         .controls {
             display: inline-block;
             float: right;
@@ -158,7 +157,7 @@
 </head>
 <body>
     <div class="header">
-        <h1><span class="frog-logo" aria-hidden="true">🐸</span>Cluster Network Visualizer</h1>
+        <h1>🐸 Cluster Network Visualizer</h1>
         <div class="controls">
             <button class="btn" onclick="resetLayout()">🔄 Reset Layout</button>
             <button class="btn" onclick="togglePause()" id="pauseBtn">⏸️ Pause</button>

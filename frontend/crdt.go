@@ -25,6 +25,7 @@ func (f *Frontend) HandleCRDTInspectorPageUI(w http.ResponseWriter, r *http.Requ
         .container { display: grid; grid-template-columns: 360px 1fr; gap: 16px; padding: 20px; height: 100vh; }
         .panel { background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(59,130,246,0.25); border-radius: 12px; overflow: hidden; display:flex; flex-direction:column; }
         .panel h2 { margin: 0; padding: 14px 16px; border-bottom: 1px solid rgba(148,163,184,0.2); color: #93c5fd; font-size: 16px; }
+        .frog-logo { position: relative; display: inline-block; line-height: 1; margin-right: 6px; }
         .tools { padding: 10px 12px; display: grid; grid-template-columns: 1fr auto auto auto auto; gap: 8px; border-bottom: 1px solid rgba(148,163,184,0.15); align-items:center; }
         .tools input { padding: 10px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.3); background: rgba(2,6,23,0.6); color: #e5e7eb; }
         .btn { background: linear-gradient(45deg, #3b82f6, #8b5cf6); color: white; border: none; padding: 10px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; }
@@ -173,7 +174,7 @@ func (f *Frontend) HandleCRDTInspectorPageUI(w http.ResponseWriter, r *http.Requ
 <body>
     <div class="container">
         <div class="panel">
-            <h2>CRDT Browser</h2>
+            <h2>🐸 CRDT Browser</h2>
             <div class="tools">
                 <input id="prefix" placeholder="Prefix, e.g. partitions">
                 <button class="btn" onclick="go()">Go</button>

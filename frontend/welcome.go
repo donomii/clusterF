@@ -25,7 +25,6 @@ func (f *Frontend) HandleWelcome(w http.ResponseWriter, r *http.Request) {
         .container { max-width: 800px; margin: 0 auto; text-align: center; }
         .header h1 { font-size: 3em; margin-bottom: 10px; background: linear-gradient(45deg, #3b82f6, #8b5cf6, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .frog-logo { position: relative; display: inline-block; line-height: 1; margin-right: 6px; }
-        .frog-logo::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -3px; width: 1.1em; height: 0.3em; background: radial-gradient(ellipse at center, rgba(6,182,212,0.35), rgba(6,182,212,0.05)); border-radius: 50% / 60%; filter: blur(0.3px); }
         .subtitle { font-size: 1.2em; color: #94a3b8; margin-bottom: 40px; }
         .node-info { background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 12px; padding: 30px; margin: 30px 0; }
         .endpoints { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 30px; }
@@ -39,7 +38,7 @@ func (f *Frontend) HandleWelcome(w http.ResponseWriter, r *http.Request) {
 <body>
     <div class="container">
         <div class="header">
-            <h1><span class="frog-logo" aria-hidden="true">🐸</span>Frogpond</h1>
+            <h1>🐸 Frogpond</h1>
             <div class="subtitle">Zero-Config Self-Organizing Storage Cluster</div>
         </div>
         

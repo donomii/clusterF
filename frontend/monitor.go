@@ -25,7 +25,6 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
         .header { text-align: center; margin-bottom: 30px; }
         .header h1 { background: linear-gradient(45deg, #3b82f6, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .frog-logo { position: relative; display: inline-block; line-height: 1; margin-right: 6px; }
-        .frog-logo::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -3px; width: 1.0em; height: 0.28em; background: radial-gradient(ellipse at center, rgba(6,182,212,0.35), rgba(6,182,212,0.05)); border-radius: 50% / 60%; filter: blur(0.3px); }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
         .stat-card { background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 20px; text-align: center; }
         .stat-value { font-size: 2em; font-weight: bold; color: #06b6d4; }
@@ -38,7 +37,7 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
 </head>
 <body>
     <div class="header">
-        <h1><span class="frog-logo" aria-hidden="true">🐸</span>Cluster Monitor</h1>
+        <h1>🐸 Cluster Monitor</h1>
         <p>Node: ` + nodeID + ` | Port: ` + httpPort + ` | <a href="/" style="color:#06b6d4;">← Back to Home</a></p>
     </div>
     
