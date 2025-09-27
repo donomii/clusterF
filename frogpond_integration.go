@@ -45,44 +45,31 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 }
 
 func (c *Cluster) getPeerList() []types.PeerInfo {
-	peers := c.DiscoveryManager().GetPeers()
+	nodes := c.frogpond.GetAllMatchingPrefix("nodes/")
 	var peerList []types.PeerInfo
-	for _, p := range peers {
-		peerList = append(peerList, *p)
-	}
 	
-	// Add our own node information from the CRDT with disk usage data
-	nodeKey := fmt.Sprintf("nodes/%s", c.NodeId)
-	nodeData := c.frogpond.GetDataPoint(nodeKey)
-	if !nodeData.Deleted && len(nodeData.Value) > 0 {
-		var nodeInfo map[string]interface{}
-		if err := json.Unmarshal(nodeData.Value, &nodeInfo); err == nil {
-			// Create a PeerInfo structure for our own node with disk usage
-			selfPeer := types.PeerInfo{
-				NodeID:   string(c.NodeId),
-				Address:  "127.0.0.1", // Local address
-				HTTPPort: c.HTTPDataPort,
-			}
-			
-			// Add disk usage fields if they exist
-			if bytesStored, ok := nodeInfo["bytes_stored"].(float64); ok {
-				selfPeer.BytesStored = int64(bytesStored)
-			}
-			if diskSize, ok := nodeInfo["disk_size"].(float64); ok {
-				selfPeer.DiskSize = int64(diskSize)
-			}
-			if diskFree, ok := nodeInfo["disk_free"].(float64); ok {
-				selfPeer.DiskFree = int64(diskFree)
-			}
-			if lastSeen, ok := nodeInfo["last_seen"].(float64); ok {
-				selfPeer.LastSeen = time.Unix(int64(lastSeen), 0)
-			}
-			if available, ok := nodeInfo["available"].(bool); ok {
-				selfPeer.Available = available
-			}
-			
-			peerList = append(peerList, selfPeer)
+	for _, nodeDataPoint := range nodes {
+		if nodeDataPoint.Deleted {
+			continue
 		}
+		
+		var nodeData types.NodeData
+		if err := json.Unmarshal(nodeDataPoint.Value, &nodeData); err != nil {
+			continue
+		}
+		
+		peer := types.PeerInfo{
+			NodeID:      nodeData.NodeID,
+			HTTPPort:    nodeData.HTTPPort,
+			LastSeen:    time.Unix(nodeData.LastSeen, 0),
+			Available:   nodeData.Available,
+			BytesStored: nodeData.BytesStored,
+			DiskSize:    nodeData.DiskSize,
+			DiskFree:    nodeData.DiskFree,
+			IsStorage:   nodeData.IsStorage,
+		}
+		
+		peerList = append(peerList, peer)
 	}
 	
 	return peerList
@@ -209,14 +196,15 @@ func (c *Cluster) updateNodeMetadata() {
 	bytesStored := c.calculateDataDirSize()
 	diskSize, diskFree := c.getDiskUsage()
 	
-	nodeData := map[string]interface{}{
-		"node_id":      string(c.NodeId),
-		"http_port":    c.HTTPDataPort,
-		"last_seen":    time.Now().Unix(),
-		"available":    true,
-		"bytes_stored": bytesStored,
-		"disk_size":    diskSize,
-		"disk_free":    diskFree,
+	nodeData := types.NodeData{
+		NodeID:      string(c.NodeId),
+		HTTPPort:    c.HTTPDataPort,
+		LastSeen:    time.Now().Unix(),
+		Available:   true,
+		BytesStored: bytesStored,
+		DiskSize:    diskSize,
+		DiskFree:    diskFree,
+		IsStorage:   !c.noStore,
 	}
 	nodeJSON, _ := json.Marshal(nodeData)
 	updates := c.frogpond.SetDataPoint(nodeKey, nodeJSON)

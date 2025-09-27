@@ -202,15 +202,18 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
                 
                 if (clusterStats.peer_list) {
                     for (const peer of clusterStats.peer_list) {
-                        if (peer.bytes_stored !== undefined) {
-                            clusterTotalBytesStored += peer.bytes_stored;
-                            nodeCount++;
-                        }
-                        if (peer.disk_size !== undefined) {
-                            clusterTotalDiskSize += peer.disk_size;
-                        }
-                        if (peer.disk_free !== undefined) {
-                            clusterTotalDiskFree += peer.disk_free;
+                        // Only count storage nodes for cluster totals
+                        if (peer.is_storage !== false) {
+                            if (peer.bytes_stored !== undefined) {
+                                clusterTotalBytesStored += peer.bytes_stored;
+                                nodeCount++;
+                            }
+                            if (peer.disk_size !== undefined) {
+                                clusterTotalDiskSize += peer.disk_size;
+                            }
+                            if (peer.disk_free !== undefined) {
+                                clusterTotalDiskFree += peer.disk_free;
+                            }
                         }
                         
                         // Find our own node data
@@ -264,6 +267,22 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
                                     } else {
                                         document.getElementById('node_disk_usage').textContent = 'N/A';
                                         document.getElementById('node_disk_free').textContent = 'N/A';
+                                    }
+                                    
+                                    // Add to cluster totals if this is a storage node
+                                    if (nodeInfo.is_storage !== false) {
+                                        clusterTotalBytesStored += nodeInfo.bytes_stored || 0;
+                                        clusterTotalDiskSize += nodeInfo.disk_size || 0;
+                                        clusterTotalDiskFree += nodeInfo.disk_free || 0;
+                                        
+                                        // Update cluster totals display
+                                        document.getElementById('cluster_bytes_stored').textContent = formatBytes(clusterTotalBytesStored);
+                                        document.getElementById('cluster_disk_free').textContent = formatBytes(clusterTotalDiskFree);
+                                        if (clusterTotalDiskSize > 0) {
+                                            const clusterUsedBytes = clusterTotalDiskSize - clusterTotalDiskFree;
+                                            const clusterUsagePercent = Math.round((clusterUsedBytes / clusterTotalDiskSize) * 100);
+                                            document.getElementById('cluster_disk_usage').textContent = clusterUsagePercent + '%';
+                                        }
                                     }
                                 } else {
                                     document.getElementById('node_bytes_stored').textContent = 'N/A';

@@ -84,6 +84,7 @@ type PeerInfo struct {
 	DiskSize    int64     `json:"disk_size,omitempty"`
 	DiskFree    int64     `json:"disk_free,omitempty"`
 	Available   bool      `json:"available,omitempty"`
+	IsStorage   bool      `json:"is_storage,omitempty"`
 }
 
 type NodeInfo struct {
@@ -103,6 +104,17 @@ type FileMetadata struct {
 	IsDirectory bool      `json:"is_directory"`
 	Children    []string  `json:"children,omitempty"` // For directories
 	Checksum    string    `json:"checksum,omitempty"`  // SHA-256 hash in hex format
+}
+
+type NodeData struct {
+	NodeID      string `json:"node_id"`
+	HTTPPort    int    `json:"http_port"`
+	LastSeen    int64  `json:"last_seen"`
+	Available   bool   `json:"available"`
+	BytesStored int64  `json:"bytes_stored"`
+	DiskSize    int64  `json:"disk_size"`
+	DiskFree    int64  `json:"disk_free"`
+	IsStorage   bool   `json:"is_storage"`
 }
 
 type NodeID string
