@@ -92,3 +92,17 @@ func (c *Cluster) stopProfiling() {
 	runtime.MemProfileRate = 0 // Disable memory profiling
 	c.Logger().Printf("[PROFILING] Disabled block, mutex, and memory profiling")
 }
+
+// enableProfiling enables profiling with proper mutex handling
+func (c *Cluster) enableProfiling() error {
+	c.profilingMutex.Lock()
+	defer c.profilingMutex.Unlock()
+	
+	if !c.profilingActive {
+		if err := c.startProfiling(); err != nil {
+			return err
+		}
+		c.profilingActive = true
+	}
+	return nil
+}

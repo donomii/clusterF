@@ -38,6 +38,7 @@ func main() {
 	httpPort := flag.Int("http-port", 0, "HTTP port to bind (0 = dynamic near 30000)")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	noStore := flag.Bool("no-store", false, "Client mode: participate in CRDT but don't store partitions locally")
+	profiling := flag.Bool("profiling", false, "Enable profiling immediately at startup")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
 
@@ -47,9 +48,9 @@ func main() {
 	}
 
 	if *simNodes > 0 {
-		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir)
+		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir, *profiling)
 	} else {
-		runSingleNode(*noDesktop, *mountPoint, *exportDir, *nodeID, *dataDir, *httpPort, *debug, *noStore)
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling)
 	}
 }
 
@@ -75,7 +76,7 @@ func hasGraphicsEnvironment() bool {
 }
 
 // runSimulation starts multiple nodes in simulation mode
-func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir string) {
+func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir string, profiling bool) {
 	log.Printf("🐸 Starting cluster simulation with %d nodes...", nodeCount)
 
 	if baseDataDir == "" {
@@ -122,6 +123,15 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 
 				nodes[index] = node
 				node.Start()
+
+				// Enable profiling if requested
+				if profiling {
+					if err := node.enableProfiling(); err != nil {
+						log.Printf("[WARNING] Failed to enable profiling on %s: %v", nodeID, err)
+					} else {
+						log.Printf("[PROFILING] Enabled on %s", nodeID)
+					}
+				}
 			}(i)
 		}
 
@@ -137,6 +147,9 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 
 	log.Printf("🎉 All %d simulation nodes started!", nodeCount)
 	log.Printf("📊 Web interfaces available on ports %d-%d", basePort, basePort+nodeCount-1)
+	if profiling {
+		log.Printf("🔍 Profiling enabled on all nodes - access via /profiling on any node")
+	}
 	log.Printf("🔍 Try: http://localhost:%d/monitor (first node)", basePort)
 	log.Printf("📈 Try: http://localhost:%d/cluster-visualizer.html (network view)", basePort)
 	log.Printf("📁 Data directory: %s", baseDataDir)
@@ -183,7 +196,7 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, exportDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:           nodeID,
@@ -203,6 +216,15 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, nodeID s
 
 	// Start the cluster
 	cluster.Start()
+
+	// Enable profiling if requested
+	if profiling {
+		if err := cluster.enableProfiling(); err != nil {
+			cluster.Logger().Printf("[WARNING] Failed to enable profiling at startup: %v", err)
+		} else {
+			cluster.Logger().Printf("[PROFILING] Enabled at startup")
+		}
+	}
 	// Attempt to open the desktop drop window by default. If it fails, continue silently.
 	if !noDesktop {
 		// Check if we have a display environment before attempting desktop UI
@@ -257,6 +279,7 @@ Try these commands:
    curl -X POST -H "X-Create-Directory: true" http://localhost:%d/api/files/newfolder
 
 🔧 Client Mode: Use --no-store to connect without local storage
+🔍 Profiling: Use --profiling to enable profiling at startup
 
 Press Ctrl+C to stop...
 `, cluster.NodeId, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.DataDir,
