@@ -543,6 +543,16 @@ func (c *Cluster) runExportSync(ctx context.Context) {
 	}
 	c.Logger().Printf("[EXPORT] Starting export sync from %s", c.ExportDir)
 	c.Exporter().Run(ctx)
+	// FIXME: stop threadmanager constantly restarting this, set a configurable retry time
+	c.Logger().Printf("[EXPORT] Export sync stopped")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(24 * time.Hour):
+			c.Logger().Printf("[EXPORT] Export sync thread exiting; restarting")
+		}
+	}
 }
 
 func (c *Cluster) Stop() {
