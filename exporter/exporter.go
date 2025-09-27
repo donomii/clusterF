@@ -91,7 +91,7 @@ func (e *Exporter) pathFor(clusterPath string) string {
 	if len(rel) > 0 && rel[0] == '/' {
 		rel = rel[1:]
 	}
-	
+
 	// If we have a cluster directory filter, strip it from the path
 	if e.clusterDir != "" {
 		clusterDirTrimmed := strings.TrimPrefix(e.clusterDir, "/")
@@ -103,7 +103,7 @@ func (e *Exporter) pathFor(clusterPath string) string {
 			rel = ""
 		}
 	}
-	
+
 	return filepath.Join(e.base, filepath.FromSlash(rel))
 }
 
@@ -352,7 +352,7 @@ func (e *Exporter) clusterPathFor(full string) (string, bool) {
 		return "", false
 	}
 	rel = filepath.ToSlash(rel)
-	
+
 	// If we have a cluster directory filter, prepend it to the path
 	if e.clusterDir != "" {
 		if rel == "." || rel == "" {
@@ -363,7 +363,7 @@ func (e *Exporter) clusterPathFor(full string) (string, bool) {
 		clusterDirTrimmed := strings.TrimPrefix(e.clusterDir, "/")
 		return "/" + clusterDirTrimmed + "/" + rel, true
 	}
-	
+
 	// No cluster directory filter - use original logic
 	if rel == "." || rel == "" {
 		return "/", true
@@ -380,12 +380,12 @@ func (e *Exporter) importAll() error {
 		if !ok {
 			return nil
 		}
-		
+
 		// If we have a cluster directory filter, verify the path is within it
 		if !e.shouldExportPath(clusterPath) {
 			return nil
 		}
-		
+
 		if d.IsDir() {
 			// ensure directory exists in cluster
 			if meta, err := e.fs.MetadataForPath(clusterPath); err == nil && meta != nil && meta.IsDirectory {
@@ -414,7 +414,7 @@ func (e *Exporter) importAll() error {
 	})
 }
 
-func metadataMatches(meta *types.Metadata, size int64, modTime time.Time) bool {
+func metadataMatches(meta *types.FileMetadata, size int64, modTime time.Time) bool {
 	if meta == nil || meta.IsDirectory {
 		return false
 	}

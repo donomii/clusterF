@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/donomii/clusterF/webdav"
 )
 
 // Populated via -ldflags during build
@@ -36,6 +38,7 @@ func main() {
 	mountPoint := flag.String("mount", "", "[DISABLED] FUSE mounting not supported")
 	exportDir := flag.String("export-dir", "", "Mirror cluster files to this local directory (share via macOS File Sharing for SMB)")
 	clusterDir := flag.String("cluster-dir", "", "Cluster path prefix to export (must be used with --export-dir)")
+	webdavDir := flag.String("webdav", "", "Serve cluster path prefix over WebDAV (e.g., '/photos')")
 	httpPort := flag.Int("http-port", 0, "HTTP port to bind (0 = dynamic near 30000)")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	noStore := flag.Bool("no-store", false, "Client mode: participate in CRDT but don't store partitions locally")
@@ -56,7 +59,7 @@ func main() {
 			log.Fatal("Both --export-dir and --cluster-dir must be specified together, or neither")
 		}
 		
-		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling)
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling)
 	}
 }
 
@@ -202,7 +205,7 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:           nodeID,
@@ -223,6 +226,17 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 
 	// Start the cluster
 	cluster.Start()
+
+	// Start WebDAV server if requested
+	if webdavDir != "" {
+		go func() {
+			defer func() { _ = recover() }()
+			webdavPort := 8080 // Default WebDAV port
+			if err := webdav.StartWebDAVServer(cluster.FileSystem, webdavDir, webdavPort, cluster.Logger()); err != nil {
+				cluster.Logger().Printf("[WEBDAV] Failed to start WebDAV server: %v", err)
+			}
+		}()
+	}
 
 	// Enable profiling if requested
 	if profiling {
@@ -265,6 +279,7 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
    File Browser: http://localhost:%d/files/
    Data Dir: %s
    %s
+   %s
 
 Try these commands:
    # Upload a file
@@ -294,6 +309,13 @@ Press Ctrl+C to stop...
 		func() string {
 			if exportDir != "" {
 				return fmt.Sprintf("   📤 Export Dir (share via SMB): %s", exportDir)
+			}
+			return ""
+		}(),
+		
+		func() string {
+			if webdavDir != "" {
+				return fmt.Sprintf("   📂 WebDAV Server: http://localhost:8080 (serving %s)", webdavDir)
 			}
 			return ""
 		}(),

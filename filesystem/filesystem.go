@@ -502,19 +502,8 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, erro
 }
 
 // MetadataForPath adapts internal metadata to the exporter module's format.
-func (fs *ClusterFileSystem) MetadataForPath(path string) (*types.Metadata, error) {
-	meta, err := fs.GetMetadata(path)
-	if err != nil {
-		return nil, err
-	}
-	if meta == nil {
-		return nil, nil
-	}
-	return &types.Metadata{
-		Size:        meta.Size,
-		ModifiedAt:  meta.ModifiedAt,
-		IsDirectory: meta.IsDirectory,
-	}, nil
+func (fs *ClusterFileSystem) MetadataForPath(path string) (*types.FileMetadata, error) {
+	return fs.GetMetadata(path)
 }
 
 // CreateDirectory is a no-op since directories are inferred from file paths

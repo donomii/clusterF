@@ -24,10 +24,13 @@ replace github.com/donomii/clusterF/types => ./types
 
 replace github.com/donomii/clusterF/partitionmanager => ./partitionmanager
 
+replace github.com/donomii/clusterF/webdav => ./webdav
+
 require (
 	github.com/OneOfOne/xxhash v1.2.8 // indirect
 	github.com/aws/aws-sdk-go v1.55.7 // indirect
 	github.com/donomii/clusterF/frontend v0.0.0-20250923003059-d35f4c0bb184 // indirect
+	github.com/donomii/go-webdav v0.0.0-20240304173232-8e8f80405603 // indirect
 	github.com/donomii/goof v0.0.0-20241124064022-84f417f466df // indirect
 	github.com/go-logr/logr v1.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

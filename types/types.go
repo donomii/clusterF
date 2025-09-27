@@ -58,20 +58,16 @@ type ExporterLike interface {
 	Run(ctx context.Context)
 }
 
-// Metadata represents the subset of file metadata the exporter needs.
-type Metadata struct {
-	Size        int64
-	ModifiedAt  time.Time
-	IsDirectory bool
-}
-
 // FileSystem defines the file-system operations the exporter relies on.
 type FileSystemLike interface {
 	CreateDirectory(path string) error
 	CreateDirectoryWithModTime(path string, modTime time.Time) error
 	StoreFileWithModTime(path string, data []byte, contentType string, modTime time.Time) error
 	DeleteFile(path string) error
-	MetadataForPath(path string) (*Metadata, error)
+	MetadataForPath(path string) (*FileMetadata, error)
+	// Additional methods for WebDAV support
+	GetFile(path string) ([]byte, *FileMetadata, error)
+	ListDirectory(path string) ([]*FileMetadata, error)
 }
 
 // PeerInfo represents information about a discovered peer
@@ -103,7 +99,7 @@ type FileMetadata struct {
 	ModifiedAt  time.Time `json:"modified_at"`
 	IsDirectory bool      `json:"is_directory"`
 	Children    []string  `json:"children,omitempty"` // For directories
-	Checksum    string    `json:"checksum,omitempty"`  // SHA-256 hash in hex format
+	Checksum    string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
 }
 
 type NodeData struct {
