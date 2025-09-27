@@ -233,12 +233,12 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, nodeID s
 				// macOS WebView must run on main thread; protect from panic to avoid crashing.
 				func() {
 					defer func() { _ = recover() }()
-					StartDesktopUI(cluster.HTTPDataPort) // blocks until window closes
+					StartDesktopUI(cluster.HTTPDataPort, cluster) // blocks until window closes
 				}()
 			} else {
 				go func() {
-					defer func() { _ = recover() }()
-					StartDesktopUI(cluster.HTTPDataPort)
+				defer func() { _ = recover() }()
+				StartDesktopUI(cluster.HTTPDataPort, cluster)
 				}()
 			}
 		} else {

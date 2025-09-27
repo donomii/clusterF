@@ -820,6 +820,31 @@
             document.getElementById('loading').style.display = show ? 'flex' : 'none';
         }
 
+        // Enhanced clipboard functionality
+        function copyTextToClipboard(text) {
+            // Use the webview binding if available (desktop app)
+            if (window.copyToClipboard) {
+                window.copyToClipboard(text);
+                return;
+            }
+        }
+
+        // Add copy functionality to file items
+        function copyFileName(fileName) {
+            copyTextToClipboard(fileName);
+        }
+
+        function copyFilePath(fileName) {
+            const filePath = currentPath.endsWith('/') ? currentPath + fileName : currentPath + '/' + fileName;
+            copyTextToClipboard(filePath);
+        }
+
+        function copyFileURL(fileName) {
+            const filePath = currentPath.endsWith('/') ? currentPath + fileName : currentPath + '/' + fileName;
+            const fileUrl = buildFilesUrl(filePath);
+            copyTextToClipboard(fileUrl);
+        }
+
         // Keyboard shortcuts
         document.addEventListener('keydown', function(e) {
             if (e.ctrlKey || e.metaKey) {
@@ -831,6 +856,16 @@
                     case 'u':
                         e.preventDefault();
                         document.getElementById('fileInput').click();
+                        break;
+                    case 'c':
+                        // Copy selected text or current path
+                        e.preventDefault();
+                        var selection = window.getSelection().toString();
+                        if (selection) {
+                            copyTextToClipboard(selection);
+                        } else {
+                            copyTextToClipboard(currentPath);
+                        }
                         break;
                 }
             }
