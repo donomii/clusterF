@@ -24,16 +24,14 @@ const (
 
 // SearchRequest represents a search query
 type SearchRequest struct {
-	Mode  SearchMode `json:"mode"`
-	Query string     `json:"query"`
-	Limit int        `json:"limit,omitempty"`
+	Query string `json:"query"`
+	Limit int    `json:"limit,omitempty"`
 }
 
 // SearchResult represents a search result entry
 type SearchResult struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
-	IsDirectory bool   `json:"is_directory"`
 	Size        int64  `json:"size,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 	ModifiedAt  int64  `json:"modified_at,omitempty"`
@@ -61,14 +59,14 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []SearchResult {
 		// Extract file path from partition key
 		parts := strings.Split(key, ":file:")
 		if len(parts) != 2 {
-			return nil
+			c.logger.Panicf("invalid metadata key format for %v", key)
 		}
 		filePath := parts[1]
 
 		// Parse the metadata
 		var metadata map[string]interface{}
 		if err := json.Unmarshal(v, &metadata); err != nil {
-			return nil
+			c.logger.Panicf("failed to unmarshal metadata for %v: %v", key, err)
 		}
 
 		// Skip deleted files
@@ -76,14 +74,17 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []SearchResult {
 			return nil
 		}
 
-		// Apply search logic based on mode
-		switch req.Mode {
-		case SearchModeDirectory:
-			c.addDirectorySearchResult(filePath, req.Query, metadata, &results, seen)
-		case SearchModeFile:
-			c.addFileSearchResult(filePath, req.Query, metadata, &results, seen)
+		c.logger.Printf("[SEARCH_DEBUG] Found local file: %s, %v", filePath, filepath.Base(filePath))
+		if !seen[filePath] {
+			seen[filePath] = true
+			results = append(results, SearchResult{
+				Name:        filepath.Base(filePath),
+				Path:        filePath,
+				Size:        c.GetMetadataSize(metadata),
+				ContentType: c.GetMetadataContentType(metadata),
+				ModifiedAt:  c.GetMetadataModifiedAt(metadata),
+			})
 		}
-
 		// Apply limit if specified
 		if req.Limit > 0 && len(results) >= req.Limit {
 			return fmt.Errorf("limit reached") // Break the loop
@@ -92,71 +93,9 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []SearchResult {
 		return nil
 	})
 
+	c.logger.Printf("[SEARCH] Found %d local results for query: %s", len(results), req.Query)
+
 	return results
-}
-
-// addDirectorySearchResult adds results for directory mode (prefix search with collapsing)
-func (c *Cluster) addDirectorySearchResult(filePath, query string, metadata map[string]interface{}, results *[]SearchResult, seen map[string]bool) {
-	// Check if file path starts with the query prefix
-	if !strings.HasPrefix(filePath, query) {
-		return
-	}
-
-	// Skip the query path itself
-	if filePath == query {
-		return
-	}
-
-	// Get the part after the query prefix
-	remainder := strings.TrimPrefix(filePath, query)
-
-	if strings.Contains(remainder, "/") {
-		// File is in a subdirectory - create directory entry
-		dirName := strings.Split(remainder, "/")[0]
-		dirPath := query + dirName + "/" // Directories end with /
-
-		if !seen[dirPath] {
-			seen[dirPath] = true
-			*results = append(*results, SearchResult{
-				Name:        dirName,
-				Path:        dirPath,
-				IsDirectory: true,
-			})
-		}
-	} else {
-		// File is directly in the query directory
-		if !seen[filePath] {
-			seen[filePath] = true
-			*results = append(*results, SearchResult{
-				Name:        filepath.Base(filePath),
-				Path:        filePath,
-				IsDirectory: false,
-				Size:        c.GetMetadataSize(metadata),
-				ContentType: c.GetMetadataContentType(metadata),
-				ModifiedAt:  c.GetMetadataModifiedAt(metadata),
-			})
-		}
-	}
-}
-
-// addFileSearchResult adds results for file mode (suffix search)
-func (c *Cluster) addFileSearchResult(filePath, query string, metadata map[string]interface{}, results *[]SearchResult, seen map[string]bool) {
-	// Check if file path ends with the query
-	if !strings.HasSuffix(filePath, query) {
-		return
-	}
-
-	if !seen[filePath] {
-		seen[filePath] = true
-		*results = append(*results, SearchResult{
-			Name:        filepath.Base(filePath),
-			Path:        filePath,
-			IsDirectory: false,
-			Size:        c.GetMetadataSize(metadata),
-			ContentType: c.GetMetadataContentType(metadata),
-			ModifiedAt:  c.GetMetadataModifiedAt(metadata),
-		})
-	}
 }
 
 // Helper functions to extract metadata fields
@@ -207,11 +146,8 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 		}
 	}
 
-	// Sort results (directories first, then files, both alphabetically)
+	// Sort results alphabetically
 	sort.Slice(allResults, func(i, j int) bool {
-		if allResults[i].IsDirectory != allResults[j].IsDirectory {
-			return allResults[i].IsDirectory
-		}
 		return allResults[i].Name < allResults[j].Name
 	})
 
@@ -266,12 +202,6 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate request
-	if req.Mode != SearchModeDirectory && req.Mode != SearchModeFile {
-		http.Error(w, "invalid search mode", http.StatusBadRequest)
-		return
-	}
-
 	if req.Query == "" {
 		http.Error(w, "query cannot be empty", http.StatusBadRequest)
 		return
@@ -306,24 +236,60 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 
 	// Create search request for directory mode
 	req := SearchRequest{
-		Mode:  SearchModeDirectory,
 		Query: path,
 		Limit: 1000, // Reasonable limit for directory listings
 	}
 
 	// Search all peers
-	results := c.searchAllPeers(req)
-	c.debugf("[SEARCH] Found %d results for %s", len(results), path)
+	raw_results := c.searchAllPeers(req)
+	c.debugf("[SEARCH] Found %d results for %s", len(raw_results), path)
+
+	// Create directories by collapsing paths
+	c.debugf("[SEARCH] Found %d file results for %s", len(raw_results), path)
+	results := make([]SearchResult, 0, len(raw_results))
+	seen := make(map[string]bool)
+	for _, res := range raw_results {
+		// Clip off the prefix path
+		relPath := strings.TrimPrefix(res.Path, path)
+		//Take the string up to the first /
+		parts := strings.SplitN(relPath, "/", 2)
+		c.debugf("[SEARCH] Path split into parts: %v", parts)
+		if len(parts) > 1 {
+
+			dir := parts[0] + "/"
+			c.debugf("[SEARCH] Processing result: %s (rel: %s) is a directory", dir, relPath)
+			if !seen[dir] {
+				seen[dir] = true
+				results = append(results, SearchResult{
+					Name: dir,
+					Path: dir,
+				})
+			}
+		} else {
+			// It's a file in the current directory
+			c.debugf("[SEARCH] Processing result: %s (rel: %s) is a file", relPath, relPath)
+			if !seen[relPath] {
+				seen[relPath] = true //Could get multiple files with same name from different peers
+				results = append(results, SearchResult{
+					Name:        relPath,
+					Path:        relPath,
+					Size:        res.Size,
+					ContentType: res.ContentType,
+					ModifiedAt:  res.ModifiedAt,
+				})
+			}
+		}
+	}
 
 	// Convert to FileMetadata format
 	var fileMetadata []*types.FileMetadata
 	for _, result := range results {
 		metadata := &types.FileMetadata{
-			Name:        result.Name,
+			Name:        strings.TrimSuffix(result.Name, "/"),
 			Path:        result.Path,
 			Size:        result.Size,
 			ContentType: result.ContentType,
-			IsDirectory: result.IsDirectory,
+			IsDirectory: strings.HasSuffix(result.Name, "/"),
 		}
 
 		if result.ModifiedAt > 0 {
@@ -339,20 +305,29 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 // SearchFiles implements file search using the search API
 func (c *Cluster) SearchFiles(filename string) ([]*types.FileMetadata, error) {
 	req := SearchRequest{
-		Mode:  SearchModeFile,
 		Query: filename,
 		Limit: 100, // Reasonable limit for file search
 	}
 
 	// Search all peers
-	results := c.searchAllPeers(req)
+	raw_results := c.searchAllPeers(req)
+
+	results := make([]SearchResult, 0, len(raw_results))
+	seen := make(map[string]bool)
+	for _, res := range raw_results {
+		dir := filepath.Dir(res.Path)
+		if !seen[dir] {
+			seen[dir] = true
+			results = append(results, SearchResult{
+				Name: filepath.Base(dir) + "/",
+				Path: dir,
+			})
+		}
+	}
 
 	// Convert to FileMetadata format
 	var fileMetadata []*types.FileMetadata
 	for _, result := range results {
-		if result.IsDirectory {
-			continue // Skip directories in file search results
-		}
 
 		metadata := &types.FileMetadata{
 			Name:        result.Name,

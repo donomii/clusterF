@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -67,13 +68,25 @@ func NewPartitionManager(deps Dependencies) *PartitionManager {
 
 func (pm *PartitionManager) debugf(format string, args ...interface{}) {
 	if pm.deps.Debugf != nil {
-		pm.deps.Debugf(format, args...)
+		// Get caller info
+		_, file, line, ok := runtime.Caller(1) // 1 = caller of debugf
+		loc := ""
+		if ok {
+			loc = fmt.Sprintf("%s:%d: ", file, line)
+		}
+		pm.deps.Debugf(loc+format, args...)
 	}
 }
 
 func (pm *PartitionManager) logf(format string, args ...interface{}) {
 	if pm.deps.Logger != nil {
-		pm.deps.Logger.Printf(format, args...)
+		// Get caller info
+		_, file, line, ok := runtime.Caller(1)
+		loc := ""
+		if ok {
+			loc = fmt.Sprintf("%s:%d: ", file, line)
+		}
+		pm.deps.Logger.Printf(loc+format, args...)
 	}
 }
 
@@ -152,30 +165,32 @@ func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byt
 	partitionID := HashToPartition(path)
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
+	pm.deps.Logger.Printf("[PARTITION] Storing file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
+
 	// Store metadata in filesKV (metadata store)
 	if err := pm.deps.MetadataKV.Put([]byte(fileKey), metadataJSON); err != nil {
-		return fmt.Errorf("failed to store file metadata: %v", err)
+		pm.deps.Logger.Panicf("failed to store file metadata: %v", err)
 	}
 
 	// Store content in crdtKV (data store) using same key
 	if err := pm.deps.ContentKV.Put([]byte(fileKey), fileContent); err != nil {
-		return fmt.Errorf("failed to store file content: %v", err)
+		pm.deps.Logger.Panicf("failed to store file content: %v", err)
 	}
 
 	// Update partition metadata in CRDT
 	pm.updatePartitionMetadata(partitionID)
 
-	pm.logf("[PARTITION] Stored file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
+	pm.logf("[PARTITION] Stored file %s  (%d bytes)", fileKey, len(fileContent))
 
 	// Debug: verify what we just stored
 	if storedMetadata, err := pm.deps.MetadataKV.Get([]byte(fileKey)); err == nil {
 		var parsedMeta map[string]interface{}
 		if json.Unmarshal(storedMetadata, &parsedMeta) == nil {
-			if checksum, ok := parsedMeta["checksum"]; ok {
-				pm.logf("[CHECKSUM_DEBUG] Just stored %s with checksum: %v", path, checksum)
+			if _, ok := parsedMeta["checksum"]; ok {
+				//pm.logf("[CHECKSUM_DEBUG] Just stored %s with checksum: %v", path, checksum)
 			} else {
 				panic("fuck ai")
-				pm.logf("[CHECKSUM_DEBUG] ERROR: Just stored %s but no checksum in metadata!", path)
+				//pm.logf("[CHECKSUM_DEBUG] ERROR: Just stored %s but no checksum in metadata!", path)
 			}
 		}
 	}
@@ -301,7 +316,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 	// Get metadata from filesKV (metadata store)
 	metadataData, err := pm.deps.MetadataKV.Get([]byte(fileKey))
 	if err != nil {
-		pm.debugf("[PARTITION] File %s metadata not found locally (err: %v), trying peers", path, err)
+		pm.debugf("[PARTITION] File %s metadata not found locally (err: %v), trying peers", fileKey, err)
 		return pm.getFileFromPeers(path)
 	}
 
@@ -444,7 +459,8 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 
 	metadataData, err := pm.deps.MetadataKV.Get([]byte(fileKey))
 	if err != nil {
-		pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
+		// It's normal for a file not to be found locally
+		//pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
 		return nil, types.ErrFileNotFound
 	}
 
@@ -1105,7 +1121,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(10 * time.Second):
+				case <-time.After(3 * time.Minute):
 				}
 			}
 		}
@@ -1137,7 +1153,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 		if len(info.Holders) >= currentRF {
 			continue // Already properly replicated
 		}
-		pm.debugf("[PARTITION] Partition %s has %d holders (need %d): %v", partitionID, len(info.Holders), currentRF, info.Holders)
+		//pm.debugf("[PARTITION] Partition %s has %d holders (need %d): %v", partitionID, len(info.Holders), currentRF, info.Holders)
 
 		// Check if we already have this partition by scanning metadata store
 		hasPartition := false
@@ -1150,7 +1166,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 			return nil
 		})
 
-		pm.debugf("[PARTITION] Partition %s: hasPartition=%v (checked prefix %s)", partitionID, hasPartition, prefix)
+		//pm.debugf("[PARTITION] Partition %s: hasPartition=%v (checked prefix %s)", partitionID, hasPartition, prefix)
 		if hasPartition {
 			continue // We already have it
 		}

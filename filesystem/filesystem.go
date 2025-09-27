@@ -144,7 +144,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 
 	// Calculate checksum for file integrity
 	checksum := calculateChecksum(content)
-	fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Calculated checksum for %s: %s", path, checksum)
+	//fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Calculated checksum for %s: %s", path, checksum)
 
 	// Create file metadata for the file system layer
 	metadata := types.FileMetadata{
@@ -172,7 +172,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		"deleted":      false,
 		"checksum":     checksum,
 	}
-	fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Enhanced metadata for %s has checksum: %s", path, enhancedMetadata["checksum"])
+	//fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Enhanced metadata for %s has checksum: %s", path, enhancedMetadata["checksum"])
 	metadataJSON, _ := json.Marshal(enhancedMetadata)
 
 	// For no-store clients, forward uploads to storage nodes
@@ -337,7 +337,7 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, 
 	if checksum, ok := metadataMap["checksum"].(string); ok {
 		metadata.Checksum = checksum
 	}
-	fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Retrieved %s with checksum: '%s'", path, metadata.Checksum)
+	//fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Retrieved %s with checksum: '%s'", path, metadata.Checksum)
 	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
 		for _, c := range childrenIface {
 			if cstr, ok := c.(string); ok {
