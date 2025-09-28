@@ -11,29 +11,26 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
 type Transcoder struct {
-	cacheDir    string
+	cacheDir     string
 	maxCacheSize int64 // bytes
-	logger      *log.Logger
-	mu          sync.RWMutex
+	logger       *log.Logger
 	cacheEntries map[string]*CacheEntry
 }
 
 type CacheEntry struct {
-	Path      string
-	Size      int64
+	Path       string
+	Size       int64
 	AccessTime time.Time
 	InProgress bool
-	mu        sync.RWMutex
 }
 
 type TranscodeRequest struct {
-	InputPath   string
-	ContentType string
+	InputPath    string
+	ContentType  string
 	OutputFormat string // "web" for now
 }
 
@@ -51,7 +48,7 @@ func NewTranscoder(cacheDir string, maxCacheSize int64, logger *log.Logger) *Tra
 
 	// Load existing cache entries
 	t.scanCacheDir()
-	
+
 	return t
 }
 
@@ -86,11 +83,11 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 	}
 
 	cacheKey := t.generateCacheKey(req)
-	
+
 	// Determine output format and extension
 	var outputExt string
 	var ffmpegArgs []string
-	
+
 	if strings.HasPrefix(req.ContentType, "video/") {
 		outputExt = ".mp4"
 		ffmpegArgs = []string{
@@ -118,48 +115,34 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 	}
 
 	outputPath := t.getCachedPath(cacheKey, outputExt)
-	
+
 	// Check if already cached
-	t.mu.RLock()
-	if entry, exists := t.cacheEntries[cacheKey]; exists {
-		if !entry.InProgress {
-			// Update access time
-			entry.mu.Lock()
-			entry.AccessTime = time.Now()
-			entry.mu.Unlock()
-			t.mu.RUnlock()
-			
-			// Verify file still exists
-			if _, err := os.Stat(outputPath); err == nil {
-				t.logger.Printf("[TRANSCODE] Cache hit for %s", cacheKey)
-				return outputPath, nil
-			} else {
-				// File missing, remove from cache map
-				t.mu.RUnlock()
-				t.mu.Lock()
-				delete(t.cacheEntries, cacheKey)
-				t.mu.Unlock()
-				t.mu.RLock()
-			}
+	entry, exists := t.cacheEntries[cacheKey]
+	if exists && !entry.InProgress {
+		// Update access time
+		entry.AccessTime = time.Now()
+		// Verify file still exists
+		if _, err := os.Stat(outputPath); err == nil {
+			t.logger.Printf("[TRANSCODE] Cache hit for %s", cacheKey)
+			return outputPath, nil
+		} else {
+			// File missing, remove from cache map
+			delete(t.cacheEntries, cacheKey)
 		}
 	}
-	t.mu.RUnlock()
 
-	// Mark as in progress
-	t.mu.Lock()
-	entry := &CacheEntry{
+	entry = &CacheEntry{
 		Path:       outputPath,
 		AccessTime: time.Now(),
 		InProgress: true,
 	}
 	t.cacheEntries[cacheKey] = entry
-	t.mu.Unlock()
 
 	// Ensure we clean up on failure
 	defer func() {
-		entry.mu.Lock()
+
 		entry.InProgress = false
-		entry.mu.Unlock()
+
 	}()
 
 	t.logger.Printf("[TRANSCODE] Starting transcode to %s", outputPath)
@@ -192,7 +175,7 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 
 	// Run ffmpeg
 	cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
-	
+
 	// Capture stderr for debugging
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -227,14 +210,13 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 	}
 
 	duration := time.Since(start)
-	
+
 	// Get file size
 	if stat, err := os.Stat(outputPath); err == nil {
-		entry.mu.Lock()
+
 		entry.Size = stat.Size()
-		entry.mu.Unlock()
-		
-		t.logger.Printf("[TRANSCODE] Completed %s in %v (size: %d bytes)", 
+
+		t.logger.Printf("[TRANSCODE] Completed %s in %v (size: %d bytes)",
 			cacheKey, duration, stat.Size())
 	} else {
 		t.logger.Printf("[TRANSCODE] Completed %s in %v", cacheKey, duration)
@@ -253,24 +235,21 @@ func (t *Transcoder) scanCacheDir() {
 		return
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		
+
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".mp4") {
 			continue
 		}
-		
+
 		cacheKey := strings.TrimSuffix(name, ".mp4")
 		if len(cacheKey) != 16 { // Our cache keys are 16 hex chars
 			continue
 		}
-		
+
 		fullPath := filepath.Join(t.cacheDir, name)
 		if stat, err := os.Stat(fullPath); err == nil {
 			t.cacheEntries[cacheKey] = &CacheEntry{
@@ -281,21 +260,19 @@ func (t *Transcoder) scanCacheDir() {
 			}
 		}
 	}
-	
+
 	t.logger.Printf("[TRANSCODE] Loaded %d cache entries", len(t.cacheEntries))
 }
 
 // cleanupCache removes old entries if cache size exceeds limit
 func (t *Transcoder) cleanupCache() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	// Calculate total cache size
 	var totalSize int64
 	for _, entry := range t.cacheEntries {
-		entry.mu.RLock()
+
 		totalSize += entry.Size
-		entry.mu.RUnlock()
+
 	}
 
 	if totalSize <= t.maxCacheSize {
@@ -312,23 +289,19 @@ func (t *Transcoder) cleanupCache() {
 
 	var entries []entryWithKey
 	for key, entry := range t.cacheEntries {
-		entry.mu.RLock()
 		if !entry.InProgress {
 			entries = append(entries, entryWithKey{key, entry})
 		}
-		entry.mu.RUnlock()
 	}
 
 	// Sort by access time
 	for i := 0; i < len(entries)-1; i++ {
 		for j := i + 1; j < len(entries); j++ {
-			entries[i].entry.mu.RLock()
-			entries[j].entry.mu.RLock()
+
 			if entries[i].entry.AccessTime.After(entries[j].entry.AccessTime) {
 				entries[i], entries[j] = entries[j], entries[i]
 			}
-			entries[j].entry.mu.RUnlock()
-			entries[i].entry.mu.RUnlock()
+
 		}
 	}
 
@@ -338,12 +311,11 @@ func (t *Transcoder) cleanupCache() {
 		if totalSize <= t.maxCacheSize {
 			break
 		}
-		
+
 		entry := entryWithKey.entry
-		entry.mu.RLock()
+
 		size := entry.Size
 		path := entry.Path
-		entry.mu.RUnlock()
 
 		if err := os.Remove(path); err != nil {
 			t.logger.Printf("[TRANSCODE] Failed to remove cache file %s: %v", path, err)
@@ -361,19 +333,17 @@ func (t *Transcoder) cleanupCache() {
 
 // GetCacheStats returns cache statistics
 func (t *Transcoder) GetCacheStats() map[string]interface{} {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
 
 	var totalSize int64
 	var inProgress int
-	
+
 	for _, entry := range t.cacheEntries {
-		entry.mu.RLock()
+
 		totalSize += entry.Size
 		if entry.InProgress {
 			inProgress++
 		}
-		entry.mu.RUnlock()
+
 	}
 
 	return map[string]interface{}{
