@@ -90,6 +90,19 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) {
 	}
 }
 
+// unmarshalError creates a detailed error with full stack trace and human-readable dump
+func (pm *PartitionManager) unmarshalError(received []byte, errorMessage string) error {
+	// Get full stack trace
+	stack := make([]byte, 4096)
+	runtime.Stack(stack, false)
+
+	// Log comprehensive debug info
+	pm.logf("UNMARSHAL ERROR: %s\nStack trace:\n%s\nReceived data (%d bytes):\n%s",
+		errorMessage, string(stack), len(received), string(received))
+
+	return fmt.Errorf("%s (received %d bytes, see logs for full details)", errorMessage, len(received))
+}
+
 // verifyFileChecksum validates file content against its expected SHA-256 checksum
 func (pm *PartitionManager) verifyFileChecksum(content []byte, expectedChecksum, path, peerID string) error {
 	hash := sha256.Sum256(content)
@@ -322,7 +335,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 	// Parse metadata
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataData, &metadata); err != nil {
-		return nil, nil, fmt.Errorf("corrupt file metadata: %v", err)
+		return nil, nil, pm.unmarshalError(metadataData, "corrupt file metadata")
 	}
 
 	// Check if file is marked as deleted
@@ -470,7 +483,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataData, &metadata); err != nil {
-		return nil, fmt.Errorf("corrupt file metadata: %v", err)
+		return nil, pm.unmarshalError(metadataData, "corrupt file metadata")
 	}
 
 	if deleted, ok := metadata["deleted"].(bool); ok && deleted {
@@ -621,14 +634,15 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 		if strings.HasPrefix(key, prefix) && strings.Contains(key, ":file:") {
 			// Parse the metadata to check if it's deleted
 			var metadata map[string]interface{}
-			if err := json.Unmarshal(v, &metadata); err == nil {
-				// Check if file is marked as deleted
-				if deleted, ok := metadata["deleted"].(bool); !ok || !deleted {
-					// File is not deleted, count it
-					fileCount++
-				}
-			} else {
+			if err := json.Unmarshal(v, &metadata); err != nil {
+				pm.unmarshalError(v, "corrupt metadata in updatePartitionMetadata")
 				// Parse error - count as existing file
+				fileCount++
+				return nil
+			}
+			// Check if file is marked as deleted
+			if deleted, ok := metadata["deleted"].(bool); !ok || !deleted {
+				// File is not deleted, count it
 				fileCount++
 			}
 		}
@@ -723,15 +737,17 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 
 		// Parse holder data
 		var holderData map[string]interface{}
-		if err := json.Unmarshal(dp.Value, &holderData); err == nil {
-			if joinedAt, ok := holderData["joined_at"].(float64); ok {
-				if int64(joinedAt) > maxTimestamp {
-					maxTimestamp = int64(joinedAt)
-				}
+		if err := json.Unmarshal(dp.Value, &holderData); err != nil {
+			pm.unmarshalError(dp.Value, "corrupt holder data")
+			continue
+		}
+		if joinedAt, ok := holderData["joined_at"].(float64); ok {
+			if int64(joinedAt) > maxTimestamp {
+				maxTimestamp = int64(joinedAt)
 			}
-			if fileCount, ok := holderData["file_count"].(float64); ok {
-				totalFiles = int(fileCount) // Use the latest file count
-			}
+		}
+		if fileCount, ok := holderData["file_count"].(float64); ok {
+			totalFiles = int(fileCount) // Use the latest file count
 		}
 	}
 
@@ -777,9 +793,11 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 		}
 
 		var holderData map[string]interface{}
-		if err := json.Unmarshal(dp.Value, &holderData); err == nil {
-			partitionMap[partitionID][nodeID] = holderData
+		if err := json.Unmarshal(dp.Value, &holderData); err != nil {
+			pm.unmarshalError(dp.Value, "corrupt holder data in getAllPartitions")
+			continue
 		}
+		partitionMap[partitionID][nodeID] = holderData
 	}
 
 	// Convert to PartitionInfo objects
@@ -841,7 +859,7 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 		// Parse metadata
 		var metadata map[string]interface{}
 		if err := json.Unmarshal(v, &metadata); err != nil {
-			pm.debugf("[INTEGRITY] Failed to parse metadata for %s: %v", key, err)
+			pm.unmarshalError(v, "corrupt metadata in VerifyStoredFileIntegrity")
 			return nil
 		}
 
@@ -962,43 +980,51 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 			if strings.Contains(entry.Key, ":file:") && entry.Store == "metadata" {
 				// Parse both local and remote metadata for comparison
 				var remoteMetadata, localMetadata map[string]interface{}
-				if json.Unmarshal(entry.Value, &remoteMetadata) == nil && json.Unmarshal(localValue, &localMetadata) == nil {
-					// CRDT rule: use latest timestamp, break ties with version
-					// Also handle deleted_at timestamps for tombstones
-					remoteTime, _ := remoteMetadata["modified_at"].(float64)
-					localTime, _ := localMetadata["modified_at"].(float64)
-					remoteDeletedAt, _ := remoteMetadata["deleted_at"].(float64)
-					localDeletedAt, _ := localMetadata["deleted_at"].(float64)
+				if json.Unmarshal(entry.Value, &remoteMetadata) != nil {
+					pm.unmarshalError(entry.Value, "corrupt remote metadata in syncPartitionFromPeer")
+					continue
+				}
+				if json.Unmarshal(localValue, &localMetadata) != nil {
+					pm.unmarshalError(localValue, "corrupt local metadata in syncPartitionFromPeer")
+					continue
+				}
+				// CRDT rule: use latest timestamp, break ties with version
+				// Also handle deleted_at timestamps for tombstones
+				remoteTime, _ := remoteMetadata["modified_at"].(float64)
+				localTime, _ := localMetadata["modified_at"].(float64)
+				remoteDeletedAt, _ := remoteMetadata["deleted_at"].(float64)
+				localDeletedAt, _ := localMetadata["deleted_at"].(float64)
 
-					// Use the latest of modified_at or deleted_at
-					if remoteDeletedAt > remoteTime {
-						remoteTime = remoteDeletedAt
-					}
-					if localDeletedAt > localTime {
-						localTime = localDeletedAt
-					}
+				// Use the latest of modified_at or deleted_at
+				if remoteDeletedAt > remoteTime {
+					remoteTime = remoteDeletedAt
+				}
+				if localDeletedAt > localTime {
+					localTime = localDeletedAt
+				}
 
-					remoteVersion, _ := remoteMetadata["version"].(float64)
-					localVersion, _ := localMetadata["version"].(float64)
+				remoteVersion, _ := remoteMetadata["version"].(float64)
+				localVersion, _ := localMetadata["version"].(float64)
 
-					if remoteTime > localTime || (remoteTime == localTime && remoteVersion > localVersion) {
-						shouldUpdate = true
-					}
+				if remoteTime > localTime || (remoteTime == localTime && remoteVersion > localVersion) {
+					shouldUpdate = true
 				}
 			} else if entry.Store == "content" && strings.Contains(entry.Key, ":file:") {
 				// For content entries, verify checksum if we have metadata
 				metadataKey := entry.Key // Same key for metadata and content
 				if metadataBytes, err := pm.deps.MetadataKV.Get([]byte(metadataKey)); err == nil {
 					var metadata map[string]interface{}
-					if json.Unmarshal(metadataBytes, &metadata) == nil {
-						if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
-							// Verify incoming content checksum
-							if err := pm.verifyFileChecksum(entry.Value, checksum, entry.Key, string(peerID)); err != nil {
-								pm.logf("[PARTITION] Sync checksum verification failed for %s from %s: %v", entry.Key, peerID, err)
-								continue // Skip corrupted content
-							}
-							pm.debugf("[PARTITION] Sync checksum verified for %s from %s", entry.Key, peerID)
+					if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+						pm.unmarshalError(metadataBytes, "corrupt metadata in syncPartitionFromPeer content validation")
+						continue
+					}
+					if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
+						// Verify incoming content checksum
+						if err := pm.verifyFileChecksum(entry.Value, checksum, entry.Key, string(peerID)); err != nil {
+							pm.logf("[PARTITION] Sync checksum verification failed for %s from %s: %v", entry.Key, peerID, err)
+							continue // Skip corrupted content
 						}
+						pm.debugf("[PARTITION] Sync checksum verified for %s from %s", entry.Key, peerID)
 					}
 				}
 				shouldUpdate = true
