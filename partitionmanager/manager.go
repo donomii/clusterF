@@ -90,8 +90,8 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) {
 	}
 }
 
-// unmarshalError creates a detailed error with full stack trace and human-readable dump
-func (pm *PartitionManager) unmarshalError(received []byte, errorMessage string) error {
+// errorf creates a detailed error with full stack trace and human-readable dump
+func (pm *PartitionManager) errorf(received []byte, errorMessage string) error {
 	// Get full stack trace
 	stack := make([]byte, 4096)
 	runtime.Stack(stack, false)
@@ -335,7 +335,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 	// Parse metadata
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataData, &metadata); err != nil {
-		return nil, nil, pm.unmarshalError(metadataData, "corrupt file metadata")
+		return nil, nil, pm.errorf(metadataData, "corrupt file metadata")
 	}
 
 	// Check if file is marked as deleted
@@ -483,7 +483,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataData, &metadata); err != nil {
-		return nil, pm.unmarshalError(metadataData, "corrupt file metadata")
+		return nil, pm.errorf(metadataData, "corrupt file metadata")
 	}
 
 	if deleted, ok := metadata["deleted"].(bool); ok && deleted {
@@ -635,7 +635,7 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 			// Parse the metadata to check if it's deleted
 			var metadata map[string]interface{}
 			if err := json.Unmarshal(v, &metadata); err != nil {
-				pm.unmarshalError(v, "corrupt metadata in updatePartitionMetadata")
+				pm.errorf(v, "corrupt metadata in updatePartitionMetadata")
 				// Parse error - count as existing file
 				fileCount++
 				return nil
@@ -738,7 +738,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 		// Parse holder data
 		var holderData map[string]interface{}
 		if err := json.Unmarshal(dp.Value, &holderData); err != nil {
-			pm.unmarshalError(dp.Value, "corrupt holder data")
+			pm.errorf(dp.Value, "corrupt holder data")
 			continue
 		}
 		if joinedAt, ok := holderData["joined_at"].(float64); ok {
@@ -794,7 +794,7 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 
 		var holderData map[string]interface{}
 		if err := json.Unmarshal(dp.Value, &holderData); err != nil {
-			pm.unmarshalError(dp.Value, "corrupt holder data in getAllPartitions")
+			pm.errorf(dp.Value, "corrupt holder data in getAllPartitions")
 			continue
 		}
 		partitionMap[partitionID][nodeID] = holderData
@@ -859,7 +859,7 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 		// Parse metadata
 		var metadata map[string]interface{}
 		if err := json.Unmarshal(v, &metadata); err != nil {
-			pm.unmarshalError(v, "corrupt metadata in VerifyStoredFileIntegrity")
+			pm.errorf(v, "corrupt metadata in VerifyStoredFileIntegrity")
 			return nil
 		}
 
@@ -972,7 +972,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 		localValue, err := pm.deps.MetadataKV.Get([]byte(entry.Key))
 		shouldUpdate := false
 
-		if err != nil {
+		if err != nil || len(localValue) == 0 { //FIXME bolt seems to return nil data with no error for not found
 			// We don't have this key, add it
 			shouldUpdate = true
 		} else {
@@ -981,11 +981,11 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 				// Parse both local and remote metadata for comparison
 				var remoteMetadata, localMetadata map[string]interface{}
 				if json.Unmarshal(entry.Value, &remoteMetadata) != nil {
-					pm.unmarshalError(entry.Value, "corrupt remote metadata in syncPartitionFromPeer")
+					pm.errorf(entry.Value, "corrupt remote metadata in syncPartitionFromPeer")
 					continue
 				}
 				if json.Unmarshal(localValue, &localMetadata) != nil {
-					pm.unmarshalError(localValue, "corrupt local metadata in syncPartitionFromPeer")
+					pm.errorf(localValue, "corrupt local metadata in syncPartitionFromPeer")
 					continue
 				}
 				// CRDT rule: use latest timestamp, break ties with version
@@ -1015,7 +1015,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 				if metadataBytes, err := pm.deps.MetadataKV.Get([]byte(metadataKey)); err == nil {
 					var metadata map[string]interface{}
 					if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-						pm.unmarshalError(metadataBytes, "corrupt metadata in syncPartitionFromPeer content validation")
+						pm.errorf(metadataBytes, "corrupt metadata in syncPartitionFromPeer content validation")
 						continue
 					}
 					if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
