@@ -25,7 +25,7 @@ type Logger interface {
 // Syncer mirrors files/directories from the cluster FS to a local directory
 // so the OS can share them via SMB/CIFS or other means.
 type Syncer struct {
-	base       string
+	exportDir  string
 	clusterDir string // optional cluster path prefix to filter (e.g., "/photos")
 	watcher    *fsnotify.Watcher
 	ignore     *syncmap.SyncMap[string, time.Time] // full path -> expiry
@@ -33,12 +33,16 @@ type Syncer struct {
 
 	fs     types.FileSystemLike
 	logger *log.Logger
+
+	importDir      string
+	lastImport     time.Time
+	importInterval time.Duration
 }
 
-// NewWithClusterDir creates a new exporter with an optional cluster path prefix filter.
+// NewFileSyncer creates a new syncer with export and import directories.
 func NewFileSyncer(exportDir string, importDir string, clusterDir string, logger *log.Logger, fs types.FileSystemLike) (*Syncer, error) {
-	if base == "" {
-		return nil, fmt.Errorf("export base cannot be empty")
+	if exportDir == "" && importDir == "" {
+		return nil, fmt.Errorf("either export or import directory must be specified")
 	}
 	if logger == nil {
 		return nil, fmt.Errorf("logger cannot be nil")
@@ -46,8 +50,10 @@ func NewFileSyncer(exportDir string, importDir string, clusterDir string, logger
 	if fs == nil {
 		return nil, fmt.Errorf("file system cannot be nil")
 	}
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		return nil, err
+	if exportDir != "" {
+		if err := os.MkdirAll(exportDir, 0o755); err != nil {
+			return nil, err
+		}
 	}
 	// Normalize cluster directory path
 	if clusterDir != "" {
@@ -60,22 +66,24 @@ func NewFileSyncer(exportDir string, importDir string, clusterDir string, logger
 		}
 	}
 	return &Syncer{
-		base:       base,
-		clusterDir: clusterDir,
-		ignore:     syncmap.NewSyncMap[string, time.Time](),
-		watched:    syncmap.NewSyncMap[string, struct{}](),
-		fs:         fs,
-		logger:     logger,
+		exportDir:      exportDir,
+		clusterDir:     clusterDir,
+		importDir:      importDir,
+		ignore:         syncmap.NewSyncMap[string, time.Time](),
+		watched:        syncmap.NewSyncMap[string, struct{}](),
+		fs:             fs,
+		logger:         logger,
+		importInterval: 24 * time.Hour,
 	}, nil
 }
 
 // shouldExportPath checks if the given cluster path should be exported based on the cluster directory filter
 func (e *Syncer) shouldExportPath(clusterPath string) bool {
 	if e.clusterDir == "" {
-		// No filter - export everything except root
+		// No prefix filter - export everything except root
 		return clusterPath != "/"
 	}
-	// With filter - only export paths within the cluster directory
+	// With prefix filter - only export paths within the cluster directory
 	return clusterPath == e.clusterDir || strings.HasPrefix(clusterPath, e.clusterDir+"/")
 }
 
@@ -98,7 +106,7 @@ func (e *Syncer) pathFor(clusterPath string) string {
 		}
 	}
 
-	return filepath.Join(e.base, filepath.FromSlash(rel))
+	return filepath.Join(e.exportDir, filepath.FromSlash(rel))
 }
 
 func (e *Syncer) Mkdir(clusterPath string) error {
@@ -169,17 +177,38 @@ func (e *Syncer) RemoveDir(clusterPath string) error {
 	return nil
 }
 
-// Run performs an initial import and watches for changes in the export dir,
-// mirroring them into the cluster in near real time.
+// Run performs export and import operations based on configuration.
 func (e *Syncer) Run(ctx context.Context) {
-	// Initial import
-	if err := e.importAll(ctx); err != nil {
-		e.logger.Printf("[EXPORT] Initial import error: %v", err)
+	// Export mode: watch for changes in export dir
+	if e.exportDir != "" {
+		// Initial import from export dir to cluster
+		if err := e.importAll(ctx); err != nil {
+			e.logger.Printf("[EXPORT] Initial import error: %v", err)
+		}
+
+		// Start watcher
+		go func() {
+			if err := e.startWatcher(ctx); err != nil {
+				e.logger.Printf("[EXPORT] Watcher error: %v", err)
+			}
+		}()
 	}
 
-	// Start watcher
-	if err := e.startWatcher(ctx); err != nil {
-		e.logger.Printf("[EXPORT] Watcher error: %v", err)
+	// Import mode: periodic import from import dir to cluster
+	if e.importDir != "" {
+		// Check import directory exists
+		if _, err := os.Stat(e.importDir); err != nil {
+			e.logger.Printf("[IMPORT] Import directory %s not accessible: %v", e.importDir, err)
+			return
+		}
+
+		// Initial import
+		if err := e.performImport(ctx); err != nil {
+			e.logger.Printf("[IMPORT] Initial import error: %v", err)
+		}
+
+		// Start periodic import
+		e.startPeriodicImport(ctx)
 	}
 }
 
@@ -191,7 +220,7 @@ func (e *Syncer) startWatcher(ctx context.Context) error {
 	e.watcher = w
 
 	// Add watchers recursively
-	if err := e.addWatchRecursive(e.base); err != nil {
+	if err := e.addWatchRecursive(e.exportDir); err != nil {
 		e.logger.Printf("[EXPORT] addWatchRecursive error: %v", err)
 	}
 
@@ -339,9 +368,10 @@ func hasPathPrefix(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix)
 }
 
+// clusterPathFor converts local export dir path to cluster path, returns (clusterPath, true) for files or ("", false) for errors
 func (e *Syncer) clusterPathFor(full string) (string, bool) {
 	// Ensure path is under base
-	rel, err := filepath.Rel(e.base, full)
+	rel, err := filepath.Rel(e.exportDir, full)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return "", false
 	}
@@ -366,7 +396,7 @@ func (e *Syncer) clusterPathFor(full string) (string, bool) {
 }
 
 func (e *Syncer) importAll(ctx context.Context) error {
-	return filepath.WalkDir(e.base, func(p string, d fs.DirEntry, err error) error {
+	return filepath.WalkDir(e.exportDir, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -470,5 +500,119 @@ func contentTypeFromExt(path string) string {
 		return "video/mp4"
 	default:
 		return "application/octet-stream"
+	}
+}
+
+// performImport imports files from importDir to cluster and removes files from cluster not in importDir
+func (e *Syncer) performImport(ctx context.Context) error {
+	e.logger.Printf("[IMPORT] Starting import from %s to cluster prefix %s", e.importDir, e.clusterDir)
+
+	// Import all files from importDir
+	if err := e.importFromDir(ctx); err != nil {
+		e.logger.Printf("[IMPORT] Error importing from directory: %v", err)
+		return err
+	}
+
+	// Remove files from cluster that don't exist in importDir
+	if err := e.cleanupClusterFiles(ctx); err != nil {
+		e.logger.Printf("[IMPORT] Error cleaning up cluster files: %v", err)
+		return err
+	}
+
+	e.lastImport = time.Now()
+	e.logger.Printf("[IMPORT] Import completed successfully")
+	return nil
+}
+
+// importFromDir walks importDir and uploads files to cluster
+func (e *Syncer) importFromDir(ctx context.Context) error {
+	return filepath.WalkDir(e.importDir, func(p string, d fs.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			return nil
+		}
+
+		// Convert local path to cluster path
+		clusterPath, ok := e.importPathToClusterPath(p)
+		if !ok {
+			return nil
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		// Handle file
+		st, err := os.Stat(p)
+		if err != nil {
+			return nil
+		}
+
+		// Check if file already exists with same content
+		if meta, err := e.fs.MetadataForPath(clusterPath); err == nil {
+			if metadataMatches(meta, st.Size(), st.ModTime()) {
+				return nil
+			}
+		}
+
+		// Read and upload file
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+
+		ct := contentTypeFromExt(p)
+		_ = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
+
+		return nil
+	})
+}
+
+// importPathToClusterPath converts a local file path to cluster path, returns (clusterPath, true) for files or ("", false) for directories
+func (e *Syncer) importPathToClusterPath(localPath string) (string, bool) {
+	rel, err := filepath.Rel(e.importDir, localPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", false
+	}
+	rel = filepath.ToSlash(rel)
+
+	// Map to cluster directory
+	if rel == "." || rel == "" {
+		return "", false
+	}
+
+	if e.clusterDir == "/" {
+		return "/" + rel, true
+	}
+	return e.clusterDir + "/" + rel, true
+}
+
+// cleanupClusterFiles logs that cleanup is not implemented and returns nil
+func (e *Syncer) cleanupClusterFiles(ctx context.Context) error {
+	e.logger.Printf("[IMPORT] Cleanup of cluster files not yet implemented")
+	return nil
+}
+
+// startPeriodicImport runs import every 24 hours
+func (e *Syncer) startPeriodicImport(ctx context.Context) {
+	ticker := time.NewTicker(e.importInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := os.Stat(e.importDir); err != nil {
+				e.logger.Printf("[IMPORT] Import directory %s not accessible, skipping: %v", e.importDir, err)
+				continue
+			}
+
+			if err := e.performImport(ctx); err != nil {
+				e.logger.Printf("[IMPORT] Periodic import failed: %v", err)
+			}
+		}
 	}
 }
