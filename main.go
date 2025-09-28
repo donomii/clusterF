@@ -56,7 +56,7 @@ func main() {
 		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir, *profiling)
 	} else {
 		// Validate export options
-		if (*exportDir != "" && *clusterDir == "") || (*exportDir == "" && *clusterDir != "") {
+		if *exportDir != "" && *clusterDir == "" {
 			log.Fatal("Both --export-dir and --cluster-dir must be specified together, or neither")
 		}
 
@@ -301,18 +301,18 @@ Press Ctrl+C to stop...
 		}(),
 
 		func() string {
-		if webdavDir != "" {
-		return fmt.Sprintf("   📂 WebDAV Server: http://localhost:8080 (serving %s)", webdavDir)
-		}
-		return ""
+			if webdavDir != "" {
+				return fmt.Sprintf("   📂 WebDAV Server: http://localhost:8080 (serving %s)", webdavDir)
+			}
+			return ""
 		}(),
 
-			func() string {
-				if importDir != "" {
-					return fmt.Sprintf("   📥 Import Dir (backup source): %s", importDir)
-				}
-				return ""
-			}(),
+		func() string {
+			if importDir != "" {
+				return fmt.Sprintf("   📥 Import Dir (backup source): %s", importDir)
+			}
+			return ""
+		}(),
 		cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort)
 
 	// Attempt to open the desktop drop window by default. If it fails, continue silently.
