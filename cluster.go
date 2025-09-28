@@ -609,7 +609,7 @@ func (c *Cluster) Stop() {
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Log all incoming requests
-		log.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		fmt.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 
 		// Panic recovery
 		defer func() {

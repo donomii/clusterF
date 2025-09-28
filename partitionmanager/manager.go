@@ -97,8 +97,8 @@ func (pm *PartitionManager) unmarshalError(received []byte, errorMessage string)
 	runtime.Stack(stack, false)
 
 	// Log comprehensive debug info
-	pm.logf("UNMARSHAL ERROR: %s\nStack trace:\n%s\nReceived data (%d bytes):\n%s",
-		errorMessage, string(stack), len(received), string(received))
+	pm.logf("UNMARSHAL ERROR: %s\nStack trace:\n%v\nReceived data (%d bytes):\n%s",
+		errorMessage, stack, len(received), string(received))
 
 	return fmt.Errorf("%s (received %d bytes, see logs for full details)", errorMessage, len(received))
 }
@@ -477,7 +477,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 	}
 
 	//FIXME: bolt seems to return nil data with no error for not found
-	if metadataData == nil {
+	if len(metadataData) == 0 {
 		return nil, types.ErrFileNotFound
 	}
 
