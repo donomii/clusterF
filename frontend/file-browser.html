@@ -317,6 +317,18 @@
         </div>
     </div>
 
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">🗑️ Confirm Delete</div>
+            <div id="deleteMessage" style="margin-bottom: 20px;">Are you sure you want to delete this file?</div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('deleteModal')">Cancel</button>
+                <button class="btn" id="confirmDeleteBtn" style="background: linear-gradient(45deg, #ef4444, #dc2626);">Delete</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Create Folder Modal -->
     <div id="createFolderModal" class="modal">
         <div class="modal-content">
@@ -516,9 +528,9 @@
                     '<div class="file-name">' + escapeHtml(file.name) + '</div>' +
                     '<div class="file-size">' + size + '</div>' +
                     '<div class="file-actions">' +
-                        (file.is_directory ? '' : '<button class="file-action" onclick="openPreview(\'' + escapeHtml(file.name) + '\', \'" + (file.content_type||"") + "\', " + (file.size||0) + ")" title="Preview">👁️</button>') +
-                        (file.is_directory ? '' : '<button class="file-action" onclick="downloadFile(\'' + escapeHtml(file.name) + '\')" title="Download">⬇️</button>') +
-                        '<button class="file-action" onclick="deleteFile(\'' + escapeHtml(file.name) + '\')" title="Delete">🗑️</button>' +
+                        (file.is_directory ? '' : '<button class="file-action" onclick="event.stopPropagation(); openPreview(\'' + escapeHtml(file.name) + '\', \'" + (file.content_type||"") + "\', " + (file.size||0) + ")" title="Preview">👁️</button>') +
+                        (file.is_directory ? '' : '<button class="file-action" onclick="event.stopPropagation(); downloadFile(\'' + escapeHtml(file.name) + '\')" title="Download">⬇️</button>') +
+                        '<button class="file-action" onclick="event.stopPropagation(); deleteFile(\'' + escapeHtml(file.name) + '\')" title="Delete">🗑️</button>' +
                     '</div>';
                 
                 item.addEventListener('click', () => {
@@ -751,21 +763,49 @@
             }
         }
 
+        let pendingDeleteFile = null;
+
         async function deleteFile(fileName) {
-            if (!confirm('Are you sure you want to delete "' + fileName + '"?')) return;
+            pendingDeleteFile = fileName;
+            document.getElementById('deleteMessage').textContent = 'Are you sure you want to delete "' + fileName + '"?';
+            document.getElementById('deleteModal').style.display = 'flex';
+            
+            // Set up the confirm button handler
+            document.getElementById('confirmDeleteBtn').onclick = function() {
+                performDelete(fileName);
+                closeModal('deleteModal');
+            };
+        }
+        
+        async function performDelete(fileName) {
+            console.log('performDelete called with fileName:', fileName);
+            console.log('currentPath:', currentPath);
             
             try {
                 const filePath = currentPath.endsWith('/') ? currentPath + fileName : currentPath + '/' + fileName;
-                const response = await fetch(buildFilesUrl(filePath), { method: 'DELETE' });
+                console.log('Computed filePath:', filePath);
+                
+                const deleteUrl = buildFilesUrl(filePath);
+                console.log('Delete URL:', deleteUrl);
+                
+                console.log('Making DELETE request...');
+                const response = await fetch(deleteUrl, { method: 'DELETE' });
+                
+                console.log('Response status:', response.status);
+                console.log('Response headers:', Object.fromEntries(response.headers.entries()));
                 
                 if (response.ok) {
+                    console.log('Delete successful');
                     showNotification('✅ Deleted: ' + fileName, 'success');
                     refreshFiles();
                 } else {
-                    showNotification('❌ Failed to delete: ' + fileName, 'error');
+                    const errorText = await response.text().catch(() => response.statusText);
+                    console.error('Delete failed. Status:', response.status, 'Response text:', errorText);
+                    showNotification('❌ Delete failed (HTTP ' + response.status + '): ' + errorText, 'error');
                 }
             } catch (error) {
-                showNotification('❌ Error: ' + error.message, 'error');
+                console.error('Delete exception:', error);
+                showNotification('❌ Delete error: ' + error.message, 'error');
             }
         }
 
