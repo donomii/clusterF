@@ -58,7 +58,7 @@ func main() {
 		if (*exportDir != "" && *clusterDir == "") || (*exportDir == "" && *clusterDir != "") {
 			log.Fatal("Both --export-dir and --cluster-dir must be specified together, or neither")
 		}
-		
+
 		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling)
 	}
 }
@@ -246,26 +246,6 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 			cluster.Logger().Printf("[PROFILING] Enabled at startup")
 		}
 	}
-	// Attempt to open the desktop drop window by default. If it fails, continue silently.
-	if !noDesktop {
-		// Check if we have a display environment before attempting desktop UI
-		if hasGraphicsEnvironment() {
-			if runtime.GOOS == "darwin" {
-				// macOS WebView must run on main thread; protect from panic to avoid crashing.
-				func() {
-					defer func() { _ = recover() }()
-					StartDesktopUI(cluster.HTTPDataPort, cluster) // blocks until window closes
-				}()
-			} else {
-				go func() {
-				defer func() { _ = recover() }()
-				StartDesktopUI(cluster.HTTPDataPort, cluster)
-				}()
-			}
-		} else {
-			cluster.Logger().Printf("[UI] No graphics environment detected, skipping desktop UI")
-		}
-	}
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
@@ -312,7 +292,7 @@ Press Ctrl+C to stop...
 			}
 			return ""
 		}(),
-		
+
 		func() string {
 			if webdavDir != "" {
 				return fmt.Sprintf("   📂 WebDAV Server: http://localhost:8080 (serving %s)", webdavDir)
@@ -320,6 +300,27 @@ Press Ctrl+C to stop...
 			return ""
 		}(),
 		cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort)
+
+	// Attempt to open the desktop drop window by default. If it fails, continue silently.
+	if !noDesktop {
+		// Check if we have a display environment before attempting desktop UI
+		if hasGraphicsEnvironment() {
+			if runtime.GOOS == "darwin" {
+				// macOS WebView must run on main thread; protect from panic to avoid crashing.
+				func() {
+					defer func() { _ = recover() }()
+					go StartDesktopUI(cluster.HTTPDataPort, cluster) // blocks until window closes
+				}()
+			} else {
+				go func() {
+					defer func() { _ = recover() }()
+					go StartDesktopUI(cluster.HTTPDataPort, cluster)
+				}()
+			}
+		} else {
+			cluster.Logger().Printf("[UI] No graphics environment detected, skipping desktop UI")
+		}
+	}
 
 	<-sigChan
 	fmt.Println("\nShutting down...")

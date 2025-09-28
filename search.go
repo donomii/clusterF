@@ -85,7 +85,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 		return nil
 	})
 
-	c.logger.Printf("[SEARCH] Found %d local results for query: %s", len(results), req.Query)
+	c.debugf("[SEARCH] Found %d local results for query: %s", len(results), req.Query)
 
 	return results
 }

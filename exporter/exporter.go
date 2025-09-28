@@ -179,7 +179,7 @@ func (e *Exporter) RemoveDir(clusterPath string) error {
 // mirroring them into the cluster in near real time.
 func (e *Exporter) Run(ctx context.Context) {
 	// Initial import
-	if err := e.importAll(); err != nil {
+	if err := e.importAll(ctx); err != nil {
 		e.logger.Printf("[EXPORT] Initial import error: %v", err)
 	}
 
@@ -371,8 +371,11 @@ func (e *Exporter) clusterPathFor(full string) (string, bool) {
 	return "/" + rel, true
 }
 
-func (e *Exporter) importAll() error {
+func (e *Exporter) importAll(ctx context.Context) error {
 	return filepath.WalkDir(e.base, func(p string, d fs.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
 			return nil
 		}

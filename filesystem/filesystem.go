@@ -29,12 +29,14 @@ const (
 // ClusterFileSystem provides a file system interface over the cluster
 type ClusterFileSystem struct {
 	cluster types.ClusterLike
+	Debug   bool
 }
 
 // NewClusterFileSystem creates a new distributed file system
-func NewClusterFileSystem(cluster types.ClusterLike) *ClusterFileSystem {
+func NewClusterFileSystem(cluster types.ClusterLike, debug bool) *ClusterFileSystem {
 	return &ClusterFileSystem{
 		cluster: cluster,
+		Debug:   debug,
 	}
 }
 
@@ -56,6 +58,18 @@ func verifyChecksum(content []byte, expectedChecksum string) error {
 // StoreFile requires explicit metadata; callers must provide modification time via StoreFileWithModTime.
 func (fs *ClusterFileSystem) StoreFile(path string, content []byte, contentType string) error {
 	return fmt.Errorf("StoreFile requires explicit modification time; use StoreFileWithModTime")
+}
+
+// debugf logs a debug message if Debug is enabled
+func (c *ClusterFileSystem) debugf(format string, v ...interface{}) {
+	if !c.Debug {
+		return
+	}
+	// Use Logger.Output with a call depth so the log shows the
+	// caller of debugf (file:line), not this wrapper function.
+	// calldepth=2: Output -> debugf -> caller
+	msg := fmt.Sprintf(format, v...)
+	_ = c.cluster.Logger().Output(2, msg)
 }
 
 // logerrf formats an error message with call site information and returns the formatted message
@@ -144,7 +158,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 
 	// Calculate checksum for file integrity
 	checksum := calculateChecksum(content)
-	//fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Calculated checksum for %s: %s", path, checksum)
+	//fs.debugf("[CHECKSUM_DEBUG] Calculated checksum for %s: %s", path, checksum)
 
 	// Create file metadata for the file system layer
 	metadata := types.FileMetadata{
@@ -171,7 +185,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		"deleted":      false,
 		"checksum":     checksum,
 	}
-	//fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Enhanced metadata for %s has checksum: %s", path, enhancedMetadata["checksum"])
+	//fs.debugf("[CHECKSUM_DEBUG] Enhanced metadata for %s has checksum: %s", path, enhancedMetadata["checksum"])
 	metadataJSON, _ := json.Marshal(enhancedMetadata)
 
 	// For no-store clients, forward uploads to storage nodes
@@ -186,7 +200,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 	// Mirror to OS export directory if configured
 	if fs.cluster != nil && fs.cluster.Exporter() != nil {
 		if err := fs.cluster.Exporter().WriteFile(path, content, modTime); err != nil {
-			fs.cluster.Logger().Printf("[EXPORT] WriteFile mirror failed for %s: %v", path, err)
+			fs.debugf("[EXPORT] WriteFile mirror failed for %s: %v", path, err)
 		}
 	}
 
@@ -218,12 +232,12 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		if metaErr == nil {
 			upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size)
 			if err == nil && upToDate {
-				fs.cluster.Logger().Printf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339Nano))
+				fs.debugf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339Nano))
 				skippedPeers++
 				continue
 			}
 			if err != nil {
-				fs.cluster.Logger().Printf("[FILES] HEAD check failed for %s on %s: %v", path, peer.NodeID, err)
+				fs.debugf("[FILES] HEAD check failed for %s on %s: %v", path, peer.NodeID, err)
 			}
 		}
 
@@ -251,7 +265,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusCreated {
-			fs.cluster.Logger().Printf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
+			fs.debugf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
 			forwarded = true
 			return nil // Success
 		}
@@ -333,7 +347,7 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, 
 	if checksum, ok := metadataMap["checksum"].(string); ok {
 		metadata.Checksum = checksum
 	}
-	//fs.cluster.Logger().Printf("[CHECKSUM_DEBUG] Retrieved %s with checksum: '%s'", path, metadata.Checksum)
+	//fs.debugf("[CHECKSUM_DEBUG] Retrieved %s with checksum: '%s'", path, metadata.Checksum)
 	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
 		for _, c := range childrenIface {
 			if cstr, ok := c.(string); ok {
@@ -388,11 +402,11 @@ func (fs *ClusterFileSystem) DeleteFile(path string) error {
 	if fs.cluster != nil && fs.cluster.Exporter() != nil {
 		if metadata.IsDirectory {
 			if err := fs.cluster.Exporter().RemoveDir(path); err != nil {
-				fs.cluster.Logger().Printf("[EXPORT] RemoveDir mirror failed for %s: %v", path, err)
+				fs.debugf("[EXPORT] RemoveDir mirror failed for %s: %v", path, err)
 			}
 		} else {
 			if err := fs.cluster.Exporter().RemoveFile(path); err != nil {
-				fs.cluster.Logger().Printf("[EXPORT] RemoveFile mirror failed for %s: %v", path, err)
+				fs.debugf("[EXPORT] RemoveFile mirror failed for %s: %v", path, err)
 			}
 		}
 	}

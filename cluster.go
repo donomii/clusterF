@@ -361,7 +361,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Initialized partition manager\n")
 
 	// Initialize file system
-	c.FileSystem = filesystem.NewClusterFileSystem(c)
+	c.FileSystem = filesystem.NewClusterFileSystem(c, c.Debug)
 	c.debugf("Initialized file system\n")
 
 	// Initialize exporter if configured
@@ -480,6 +480,16 @@ func (c *Cluster) debugf(format string, v ...interface{}) {
 	// calldepth=2: Output -> debugf -> caller
 	msg := fmt.Sprintf(format, v...)
 	_ = c.Logger().Output(2, msg)
+}
+
+// panicf logs a debug message and then panics
+func (c *Cluster) panicf(format string, v ...interface{}) {
+	// Use Logger.Output with a call depth so the log shows the
+	// caller of debugf (file:line), not this wrapper function.
+	// calldepth=2: Output -> debugf -> caller
+	msg := fmt.Sprintf(format, v...)
+	_ = c.Logger().Output(2, msg)
+	panic(msg)
 }
 
 func broadcastPortFromEnv() int {
@@ -606,11 +616,11 @@ func (c *Cluster) Stop() {
 // ---------- Repair ----------
 
 // corsMiddleware adds CORS headers to allow browser access and logs requests
-func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+func corsMiddleware(debug bool, logger *log.Logger, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Log all incoming requests
-		fmt.Printf("[HTTP] %s %s from %s\n", r.Method, r.URL.Path, r.RemoteAddr)
-
+		if debug {
+			logger.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		}
 		// Panic recovery
 		defer func() {
 			if err := recover(); err != nil {
@@ -678,69 +688,69 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 
 	mux := http.NewServeMux()
 	ui := frontend.New(c)
-	mux.HandleFunc("/", corsMiddleware(ui.HandleWelcome))
-	mux.HandleFunc("/status", corsMiddleware(c.handleStatus))
+	mux.HandleFunc("/", corsMiddleware(c.Debug, c.Logger(), ui.HandleWelcome))
+	mux.HandleFunc("/status", corsMiddleware(c.Debug, c.Logger(), c.handleStatus))
 	// API reference page (exact path only to avoid clobbering other /api/* routes)
-	mux.HandleFunc("/api", corsMiddleware(ui.HandleAPIDocs))
-	mux.HandleFunc("/frogpond/update", corsMiddleware(c.handleFrogpondUpdate))
-	mux.HandleFunc("/frogpond/fullsync", corsMiddleware(c.handleFrogpondFullSync))
-	mux.HandleFunc("/frogpond/fullstore", corsMiddleware(c.handleFrogpondFullStore))
-	mux.HandleFunc("/api/replication-factor", corsMiddleware(c.handleReplicationFactor))
-	mux.HandleFunc("/flamegraph", corsMiddleware(c.handleFlameGraph))
-	mux.HandleFunc("/memorygraph", corsMiddleware(c.handleMemoryFlameGraph))
-	mux.HandleFunc("/allocgraph", corsMiddleware(c.handleAllocFlameGraph))
-	mux.HandleFunc("/profiling", corsMiddleware(ui.HandleProfilingPage))
-	mux.HandleFunc("/api/profiling", corsMiddleware(c.handleProfilingAPI))
+	mux.HandleFunc("/api", corsMiddleware(c.Debug, c.Logger(), ui.HandleAPIDocs))
+	mux.HandleFunc("/frogpond/update", corsMiddleware(c.Debug, c.Logger(), c.handleFrogpondUpdate))
+	mux.HandleFunc("/frogpond/fullsync", corsMiddleware(c.Debug, c.Logger(), c.handleFrogpondFullSync))
+	mux.HandleFunc("/frogpond/fullstore", corsMiddleware(c.Debug, c.Logger(), c.handleFrogpondFullStore))
+	mux.HandleFunc("/api/replication-factor", corsMiddleware(c.Debug, c.Logger(), c.handleReplicationFactor))
+	mux.HandleFunc("/flamegraph", corsMiddleware(c.Debug, c.Logger(), c.handleFlameGraph))
+	mux.HandleFunc("/memorygraph", corsMiddleware(c.Debug, c.Logger(), c.handleMemoryFlameGraph))
+	mux.HandleFunc("/allocgraph", corsMiddleware(c.Debug, c.Logger(), c.handleAllocFlameGraph))
+	mux.HandleFunc("/profiling", corsMiddleware(c.Debug, c.Logger(), ui.HandleProfilingPage))
+	mux.HandleFunc("/api/profiling", corsMiddleware(c.Debug, c.Logger(), c.handleProfilingAPI))
 	// Add pprof endpoints manually
-	mux.HandleFunc("/debug/pprof/", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/debug/pprof/", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
 		pprof.Index(w, r)
 	}))
-	mux.HandleFunc("/debug/pprof/cmdline", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/debug/pprof/cmdline", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
 		pprof.Cmdline(w, r)
 	}))
-	mux.HandleFunc("/debug/pprof/profile", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/debug/pprof/profile", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
 		pprof.Profile(w, r)
 	}))
-	mux.HandleFunc("/debug/pprof/symbol", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/debug/pprof/symbol", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
 		pprof.Symbol(w, r)
 	}))
-	mux.HandleFunc("/debug/pprof/trace", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/debug/pprof/trace", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
 		pprof.Trace(w, r)
 	}))
-	mux.HandleFunc("/debug/pprof/heap", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/debug/pprof/heap", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
 		pprof.Handler("heap").ServeHTTP(w, r)
 	}))
-	mux.HandleFunc("/debug/pprof/goroutine", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/debug/pprof/goroutine", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
 		pprof.Handler("goroutine").ServeHTTP(w, r)
 	}))
-	mux.HandleFunc("/debug/pprof/block", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/debug/pprof/block", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
 		pprof.Handler("block").ServeHTTP(w, r)
 	}))
-	mux.HandleFunc("/debug/pprof/mutex", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/debug/pprof/mutex", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
 		pprof.Handler("mutex").ServeHTTP(w, r)
 	}))
-	mux.HandleFunc("/monitor", corsMiddleware(ui.HandleMonitorDashboard))
-	mux.HandleFunc("/api/cluster-stats", corsMiddleware(c.handleClusterStats))
-	mux.HandleFunc("/cluster-visualizer.html", corsMiddleware(ui.HandleVisualizer))
+	mux.HandleFunc("/monitor", corsMiddleware(c.Debug, c.Logger(), ui.HandleMonitorDashboard))
+	mux.HandleFunc("/api/cluster-stats", corsMiddleware(c.Debug, c.Logger(), c.handleClusterStats))
+	mux.HandleFunc("/cluster-visualizer.html", corsMiddleware(c.Debug, c.Logger(), ui.HandleVisualizer))
 	// File system endpoints
-	mux.HandleFunc("/files/", corsMiddleware(ui.HandleFiles))
-	mux.HandleFunc("/loading", corsMiddleware(ui.HandleLoadingPage))
+	mux.HandleFunc("/files/", corsMiddleware(c.Debug, c.Logger(), ui.HandleFiles))
+	mux.HandleFunc("/loading", corsMiddleware(c.Debug, c.Logger(), ui.HandleLoadingPage))
 	// CRDT inspector UI + APIs
-	mux.HandleFunc("/crdt", corsMiddleware(ui.HandleCRDTInspectorPageUI))
-	mux.HandleFunc("/api/crdt/list", corsMiddleware(c.handleCRDTListAPI))
-	mux.HandleFunc("/api/crdt/get", corsMiddleware(c.handleCRDTGetAPI))
-	mux.HandleFunc("/api/crdt/search", corsMiddleware(c.handleCRDTSearchAPI))
-	mux.HandleFunc("/api/files/", corsMiddleware(c.handleFilesAPI))
+	mux.HandleFunc("/crdt", corsMiddleware(c.Debug, c.Logger(), ui.HandleCRDTInspectorPageUI))
+	mux.HandleFunc("/api/crdt/list", corsMiddleware(c.Debug, c.Logger(), c.handleCRDTListAPI))
+	mux.HandleFunc("/api/crdt/get", corsMiddleware(c.Debug, c.Logger(), c.handleCRDTGetAPI))
+	mux.HandleFunc("/api/crdt/search", corsMiddleware(c.Debug, c.Logger(), c.handleCRDTSearchAPI))
+	mux.HandleFunc("/api/files/", corsMiddleware(c.Debug, c.Logger(), c.handleFilesAPI))
 	// Partition sync endpoints
-	mux.HandleFunc("/api/partition-sync/", corsMiddleware(c.handlePartitionSyncAPI))
-	mux.HandleFunc("/api/partition-stats", corsMiddleware(c.handlePartitionStats))
+	mux.HandleFunc("/api/partition-sync/", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionSyncAPI))
+	mux.HandleFunc("/api/partition-stats", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionStats))
 	// Integrity check endpoint
-	mux.HandleFunc("/api/integrity-check", corsMiddleware(c.handleIntegrityCheck))
+	mux.HandleFunc("/api/integrity-check", corsMiddleware(c.Debug, c.Logger(), c.handleIntegrityCheck))
 	// Search API
-	mux.HandleFunc("/api/search", corsMiddleware(c.handleSearchAPI))
+	mux.HandleFunc("/api/search", corsMiddleware(c.Debug, c.Logger(), c.handleSearchAPI))
 	// Transcode API
-	mux.HandleFunc("/api/transcode/", corsMiddleware(c.handleTranscodeAPI))
-	mux.HandleFunc("/api/transcode-stats", corsMiddleware(c.handleTranscodeStats))
+	mux.HandleFunc("/api/transcode/", corsMiddleware(c.Debug, c.Logger(), c.handleTranscodeAPI))
+	mux.HandleFunc("/api/transcode-stats", corsMiddleware(c.Debug, c.Logger(), c.handleTranscodeStats))
 
 	server = &http.Server{
 		Handler: mux,
@@ -1079,9 +1089,9 @@ func (c *Cluster) performInitialSyncWithPeer(peer *types.PeerInfo) {
 	}
 
 	if peer != nil {
-		c.Logger().Printf("[INITIAL_SYNC] Triggered by discovery of %s", peer.NodeID)
+		c.debugf("[INITIAL_SYNC] Triggered by discovery of %s", peer.NodeID)
 	} else {
-		c.Logger().Printf("[INITIAL_SYNC] Triggered initial sync")
+		c.panicf("[ERROR] Triggered initial sync on nil peer")
 	}
 }
 
@@ -1157,7 +1167,7 @@ func (c *Cluster) runInitialSyncCycle(ctx context.Context) {
 		}
 
 		peer := peers[rand.Intn(len(peers))]
-		c.Logger().Printf("[SYNC_RETRY] Attempting full sync with %s", peer.NodeID)
+		c.debugf("[SYNC_RETRY] Attempting full sync with %s", peer.NodeID)
 		if c.requestFullStoreFromPeer(peer) {
 			c.Logger().Printf("[SYNC_RETRY] Successfully synced with %s", peer.NodeID)
 			break
