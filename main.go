@@ -305,16 +305,23 @@ Press Ctrl+C to stop...
 	if !noDesktop {
 		// Check if we have a display environment before attempting desktop UI
 		if hasGraphicsEnvironment() {
+			go func() {
+				<-sigChan
+				fmt.Println("\nShutting down...")
+				cluster.Stop()
+				fmt.Println("Goodbye!")
+				os.Exit(0)
+			}()
 			if runtime.GOOS == "darwin" {
 				// macOS WebView must run on main thread; protect from panic to avoid crashing.
 				func() {
 					defer func() { _ = recover() }()
-					go StartDesktopUI(cluster.HTTPDataPort, cluster) // blocks until window closes
+					StartDesktopUI(cluster.HTTPDataPort, cluster) // blocks until window closes
 				}()
 			} else {
 				go func() {
 					defer func() { _ = recover() }()
-					go StartDesktopUI(cluster.HTTPDataPort, cluster)
+					StartDesktopUI(cluster.HTTPDataPort, cluster)
 				}()
 			}
 		} else {

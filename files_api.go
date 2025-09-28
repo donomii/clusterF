@@ -78,7 +78,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
 		default:
-			c.Logger().Printf("[FILES] Failed to retrieve %s: %v", path, err)
+			c.debugf("[FILES] Failed to retrieve %s: %v", path, err)
 			http.Error(w, "Failed to retrieve file", http.StatusInternalServerError)
 			return
 		}
@@ -125,7 +125,7 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
 		default:
-			c.Logger().Printf("[FILES] Failed HEAD metadata %s: %v", path, err)
+			c.debugf("[FILES] Failed HEAD metadata %s: %v", path, err)
 			http.Error(w, "Failed to retrieve metadata", http.StatusInternalServerError)
 			return
 		}
@@ -232,7 +232,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		}
 	}
 
-	c.Logger().Printf("[FILES] Stored %s (%d bytes)", path, len(content))
+	c.debugf("[FILES] Stored %s (%d bytes)", path, len(content))
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -328,7 +328,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		return
 	}
 
-	c.Logger().Printf("[FILES] Deleted %s", path)
+	c.debugf("[FILES] Deleted %s", path)
 	w.WriteHeader(http.StatusNoContent)
 }
 

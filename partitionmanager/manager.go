@@ -178,7 +178,7 @@ func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byt
 	partitionID := HashToPartition(path)
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
-	pm.deps.Logger.Printf("[PARTITION] Storing file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
+	pm.debugf("[PARTITION] Storing file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
 
 	// Store metadata in filesKV (metadata store)
 	if err := pm.deps.MetadataKV.Put([]byte(fileKey), metadataJSON); err != nil {
