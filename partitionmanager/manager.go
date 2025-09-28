@@ -463,6 +463,11 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 		return nil, types.ErrFileNotFound
 	}
 
+	//FIXME: bolt seems to return nil data with no error for not found
+	if metadataData == nil {
+		return nil, types.ErrFileNotFound
+	}
+
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataData, &metadata); err != nil {
 		return nil, fmt.Errorf("corrupt file metadata: %v", err)
@@ -1086,7 +1091,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 	// Skip partition syncing if in no-store mode (client mode)
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: skipping partition sync")
-		return
+		<-ctx.Done() // Wait until context is done i.e. shutdown
 	}
 
 	for {
