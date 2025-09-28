@@ -38,6 +38,7 @@ func main() {
 	mountPoint := flag.String("mount", "", "[DISABLED] FUSE mounting not supported")
 	exportDir := flag.String("export-dir", "", "Mirror cluster files to this local directory (share via macOS File Sharing for SMB)")
 	clusterDir := flag.String("cluster-dir", "", "Cluster path prefix to export (must be used with --export-dir)")
+	importDir := flag.String("import-dir", "", "Import files from this local directory into the cluster (must be used with --cluster-dir)")
 	webdavDir := flag.String("webdav", "", "Serve cluster path prefix over WebDAV (e.g., '/photos')")
 	httpPort := flag.Int("http-port", 0, "HTTP port to bind (0 = dynamic near 30000)")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
@@ -59,7 +60,12 @@ func main() {
 			log.Fatal("Both --export-dir and --cluster-dir must be specified together, or neither")
 		}
 
-		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling)
+		// Validate import options
+		if *importDir != "" && *clusterDir == "" {
+			log.Fatal("--import-dir requires --cluster-dir to be specified")
+		}
+
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling)
 	}
 }
 
@@ -205,13 +211,14 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:           nodeID,
 		DataDir:      dataDir,
 		ExportDir:    exportDir,
 		ClusterDir:   clusterDir,
+		ImportDir:    importDir,
 		HTTPDataPort: httpPort,
 		NoStore:      noStore,
 	})
@@ -294,11 +301,18 @@ Press Ctrl+C to stop...
 		}(),
 
 		func() string {
-			if webdavDir != "" {
-				return fmt.Sprintf("   📂 WebDAV Server: http://localhost:8080 (serving %s)", webdavDir)
-			}
-			return ""
+		if webdavDir != "" {
+		return fmt.Sprintf("   📂 WebDAV Server: http://localhost:8080 (serving %s)", webdavDir)
+		}
+		return ""
 		}(),
+
+			func() string {
+				if importDir != "" {
+					return fmt.Sprintf("   📥 Import Dir (backup source): %s", importDir)
+				}
+				return ""
+			}(),
 		cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort, cluster.HTTPDataPort)
 
 	// Attempt to open the desktop drop window by default. If it fails, continue silently.

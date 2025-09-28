@@ -1,6 +1,6 @@
 // Package exporter provides a filesystem watcher that mirrors changes between
 // the cluster file system and a local directory for OS-level sharing.
-package exporter
+package filesync
 
 import (
 	"context"
@@ -22,9 +22,9 @@ type Logger interface {
 	Printf(format string, v ...any)
 }
 
-// Exporter mirrors files/directories from the cluster FS to a local directory
+// Syncer mirrors files/directories from the cluster FS to a local directory
 // so the OS can share them via SMB/CIFS or other means.
-type Exporter struct {
+type Syncer struct {
 	base       string
 	clusterDir string // optional cluster path prefix to filter (e.g., "/photos")
 	watcher    *fsnotify.Watcher
@@ -35,14 +35,8 @@ type Exporter struct {
 	logger *log.Logger
 }
 
-// New creates a new exporter for a given local base directory.
-// If clusterDir is provided, only files with that path prefix will be exported.
-func New(base string, logger *log.Logger, fs types.FileSystemLike) (*Exporter, error) {
-	return NewWithClusterDir(base, "", logger, fs)
-}
-
 // NewWithClusterDir creates a new exporter with an optional cluster path prefix filter.
-func NewWithClusterDir(base string, clusterDir string, logger *log.Logger, fs types.FileSystemLike) (*Exporter, error) {
+func NewFileSyncer(exportDir string, importDir string, clusterDir string, logger *log.Logger, fs types.FileSystemLike) (*Syncer, error) {
 	if base == "" {
 		return nil, fmt.Errorf("export base cannot be empty")
 	}
@@ -65,7 +59,7 @@ func NewWithClusterDir(base string, clusterDir string, logger *log.Logger, fs ty
 			clusterDir = clusterDir[:len(clusterDir)-1]
 		}
 	}
-	return &Exporter{
+	return &Syncer{
 		base:       base,
 		clusterDir: clusterDir,
 		ignore:     syncmap.NewSyncMap[string, time.Time](),
@@ -76,7 +70,7 @@ func NewWithClusterDir(base string, clusterDir string, logger *log.Logger, fs ty
 }
 
 // shouldExportPath checks if the given cluster path should be exported based on the cluster directory filter
-func (e *Exporter) shouldExportPath(clusterPath string) bool {
+func (e *Syncer) shouldExportPath(clusterPath string) bool {
 	if e.clusterDir == "" {
 		// No filter - export everything except root
 		return clusterPath != "/"
@@ -85,7 +79,7 @@ func (e *Exporter) shouldExportPath(clusterPath string) bool {
 	return clusterPath == e.clusterDir || strings.HasPrefix(clusterPath, e.clusterDir+"/")
 }
 
-func (e *Exporter) pathFor(clusterPath string) string {
+func (e *Syncer) pathFor(clusterPath string) string {
 	// clusterPath starts with '/'
 	rel := clusterPath
 	if len(rel) > 0 && rel[0] == '/' {
@@ -107,11 +101,11 @@ func (e *Exporter) pathFor(clusterPath string) string {
 	return filepath.Join(e.base, filepath.FromSlash(rel))
 }
 
-func (e *Exporter) Mkdir(clusterPath string) error {
+func (e *Syncer) Mkdir(clusterPath string) error {
 	return e.MkdirWithModTime(clusterPath, time.Now())
 }
 
-func (e *Exporter) MkdirWithModTime(clusterPath string, modTime time.Time) error {
+func (e *Syncer) MkdirWithModTime(clusterPath string, modTime time.Time) error {
 	if !e.shouldExportPath(clusterPath) {
 		return nil // Skip paths outside the cluster directory filter
 	}
@@ -124,7 +118,7 @@ func (e *Exporter) MkdirWithModTime(clusterPath string, modTime time.Time) error
 	return nil
 }
 
-func (e *Exporter) WriteFile(clusterPath string, data []byte, modTime time.Time) error {
+func (e *Syncer) WriteFile(clusterPath string, data []byte, modTime time.Time) error {
 	if !e.shouldExportPath(clusterPath) {
 		return nil // Skip paths outside the cluster directory filter
 	}
@@ -147,7 +141,7 @@ func (e *Exporter) WriteFile(clusterPath string, data []byte, modTime time.Time)
 	return nil
 }
 
-func (e *Exporter) RemoveFile(clusterPath string) error {
+func (e *Syncer) RemoveFile(clusterPath string) error {
 	if !e.shouldExportPath(clusterPath) {
 		return nil // Skip paths outside the cluster directory filter
 	}
@@ -159,7 +153,7 @@ func (e *Exporter) RemoveFile(clusterPath string) error {
 	return nil
 }
 
-func (e *Exporter) RemoveDir(clusterPath string) error {
+func (e *Syncer) RemoveDir(clusterPath string) error {
 	if !e.shouldExportPath(clusterPath) {
 		return nil // Skip paths outside the cluster directory filter
 	}
@@ -177,7 +171,7 @@ func (e *Exporter) RemoveDir(clusterPath string) error {
 
 // Run performs an initial import and watches for changes in the export dir,
 // mirroring them into the cluster in near real time.
-func (e *Exporter) Run(ctx context.Context) {
+func (e *Syncer) Run(ctx context.Context) {
 	// Initial import
 	if err := e.importAll(ctx); err != nil {
 		e.logger.Printf("[EXPORT] Initial import error: %v", err)
@@ -189,7 +183,7 @@ func (e *Exporter) Run(ctx context.Context) {
 	}
 }
 
-func (e *Exporter) startWatcher(ctx context.Context) error {
+func (e *Syncer) startWatcher(ctx context.Context) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -278,7 +272,7 @@ func (e *Exporter) startWatcher(ctx context.Context) error {
 	return nil
 }
 
-func (e *Exporter) addWatchRecursive(dir string) error {
+func (e *Syncer) addWatchRecursive(dir string) error {
 	// Avoid watching non-existent dirs
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
@@ -298,7 +292,7 @@ func (e *Exporter) addWatchRecursive(dir string) error {
 	})
 }
 
-func (e *Exporter) addWatch(path string) error {
+func (e *Syncer) addWatch(path string) error {
 	if _, loaded := e.watched.LoadOrStore(path, struct{}{}); loaded {
 		return nil
 	}
@@ -310,12 +304,12 @@ func (e *Exporter) addWatch(path string) error {
 	return nil
 }
 
-func (e *Exporter) isWatchedDir(path string) bool {
+func (e *Syncer) isWatchedDir(path string) bool {
 	_, ok := e.watched.Load(path)
 	return ok
 }
 
-func (e *Exporter) removeWatchRecursive(dir string) {
+func (e *Syncer) removeWatchRecursive(dir string) {
 	var toRemove []string
 	e.watched.Range(func(p string, _ struct{}) bool {
 		if hasPathPrefix(p, dir) {
@@ -345,7 +339,7 @@ func hasPathPrefix(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix)
 }
 
-func (e *Exporter) clusterPathFor(full string) (string, bool) {
+func (e *Syncer) clusterPathFor(full string) (string, bool) {
 	// Ensure path is under base
 	rel, err := filepath.Rel(e.base, full)
 	if err != nil || strings.HasPrefix(rel, "..") {
@@ -371,7 +365,7 @@ func (e *Exporter) clusterPathFor(full string) (string, bool) {
 	return "/" + rel, true
 }
 
-func (e *Exporter) importAll(ctx context.Context) error {
+func (e *Syncer) importAll(ctx context.Context) error {
 	return filepath.WalkDir(e.base, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -434,11 +428,11 @@ func metadataMatches(meta *types.FileMetadata, size int64, modTime time.Time) bo
 	return diff <= time.Second
 }
 
-func (e *Exporter) markIgnore(full string) {
+func (e *Syncer) markIgnore(full string) {
 	e.ignore.Store(full, time.Now().Add(2*time.Second))
 }
 
-func (e *Exporter) shouldIgnore(full string) bool {
+func (e *Syncer) shouldIgnore(full string) bool {
 	if t, ok := e.ignore.Load(full); ok {
 		if time.Now().Before(t) {
 			return true

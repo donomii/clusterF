@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/discovery"
-	"github.com/donomii/clusterF/exporter"
+	"github.com/donomii/clusterF/filesync"
 	"github.com/donomii/clusterF/filesystem"
 	"github.com/donomii/clusterF/frontend"
 	"github.com/donomii/clusterF/partitionmanager"
@@ -54,7 +54,7 @@ func (c *Cluster) ThreadManager() *threadmanager.ThreadManager {
 }
 
 func (c *Cluster) Exporter() types.ExporterLike {
-	return c.exporter
+	return c.filesync
 }
 
 func (c *Cluster) ID() types.NodeID {
@@ -125,7 +125,8 @@ type Cluster struct {
 	// Optional local export directory for OS sharing (SMB/NFS/etc.)
 	ExportDir  string
 	ClusterDir string // Optional cluster path prefix to export (e.g., "/photos")
-	exporter   types.ExporterLike
+	ImportDir  string // Optional local directory to import files from
+	filesync   types.ExporterLike
 
 	// Optional transcoder for media files
 	Transcoder *Transcoder
@@ -167,6 +168,7 @@ type ClusterOpts struct {
 	Logger        *log.Logger
 	ExportDir     string // if set, mirror files to this directory for OS sharing
 	ClusterDir    string // if set, only export files with this path prefix
+	ImportDir     string // if set, import files from this directory to the cluster
 	NoStore       bool   // if true, don't store partitions locally (client mode)
 }
 
@@ -226,6 +228,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		logger:          opts.Logger,
 		ExportDir:       opts.ExportDir,
 		ClusterDir:      opts.ClusterDir,
+		ImportDir:       opts.ImportDir,
 		noStore:         opts.NoStore,
 		initialSyncTrig: make(chan struct{}, 1),
 		peerAddrs:       syncmap.NewSyncMap[types.NodeID, *types.PeerInfo](),
@@ -364,20 +367,30 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.FileSystem = filesystem.NewClusterFileSystem(c, c.Debug)
 	c.debugf("Initialized file system\n")
 
-	// Initialize exporter if configured
+	// Initialize filesync if configured
 	if opts.ExportDir != "" {
-		if exp, err := exporter.NewWithClusterDir(opts.ExportDir, opts.ClusterDir, c.Logger(), c.FileSystem); err != nil {
-			c.Logger().Printf("[EXPORT] Failed to init exporter for %s: %v", opts.ExportDir, err)
+		if opts.ClusterDir != "" {
+			c.Logger().Printf("[EXPORT] Mirroring files with prefix %s to %s for OS sharing", opts.ClusterDir, opts.ExportDir)
 		} else {
-			c.exporter = exp
-			if opts.ClusterDir != "" {
-				c.Logger().Printf("[EXPORT] Mirroring files with prefix %s to %s for OS sharing", opts.ClusterDir, opts.ExportDir)
-			} else {
-				c.Logger().Printf("[EXPORT] Mirroring files to %s for OS sharing", opts.ExportDir)
-			}
+			fmt.Println("Cannot use --export-dir without --cluster-dir")
+			os.Exit(1)
 		}
 	}
-	c.debugf("Initialized exporter (if configured)\n")
+	if opts.ImportDir != "" {
+		if opts.ClusterDir == "" {
+			fmt.Println("Cannot use --import-dir without --cluster-dir")
+			os.Exit(1)
+		}
+		c.Logger().Printf("[IMPORT] Importing files from %s to cluster prefix %s", opts.ImportDir, opts.ClusterDir)
+	}
+	if opts.ExportDir != "" || opts.ImportDir != "" {
+		if fs, err := filesync.NewFileSyncer(opts.ExportDir, opts.ImportDir, opts.ClusterDir, c.Logger(), c.FileSystem); err != nil {
+			c.Logger().Printf("[FILESYNC] Failed to init filesync: %v", err)
+		} else {
+			c.filesync = fs
+		}
+	}
+	c.debugf("Initialized filesync (if configured)\n")
 
 	// Initialize transcoder
 	transcodeDir := filepath.Join(opts.DataDir, "transcode_cache")
@@ -546,8 +559,8 @@ func (c *Cluster) Start() {
 
 	// Start all threads using ThreadManager
 	c.threadManager.StartThread("http-server", c.startHTTPServer)
-	if c.exporter != nil {
-		c.threadManager.StartThread("export-sync", c.runExportSync)
+	if c.filesync != nil {
+		c.threadManager.StartThread("filesync", c.runFilesync)
 	}
 	c.threadManager.StartThread("periodic-peer-sync", c.periodicPeerSync)
 	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
@@ -556,21 +569,21 @@ func (c *Cluster) Start() {
 	c.debugf("Started all threads")
 }
 
-// runExportSync integrates the Exporter with the cluster lifecycle
-func (c *Cluster) runExportSync(ctx context.Context) {
-	if c.exporter == nil {
+// runFilesync integrates the FileSyncer with the cluster lifecycle
+func (c *Cluster) runFilesync(ctx context.Context) {
+	if c.filesync == nil {
 		return
 	}
-	c.Logger().Printf("[EXPORT] Starting export sync from %s", c.ExportDir)
-	c.Exporter().Run(ctx)
+	c.Logger().Printf("[FILESYNC] Starting file synchronization")
+	c.filesync.Run(ctx)
 	// FIXME: stop threadmanager constantly restarting this, set a configurable retry time
-	c.Logger().Printf("[EXPORT] Export sync stopped")
+	c.Logger().Printf("[FILESYNC] File synchronization stopped")
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(24 * time.Hour):
-			c.Logger().Printf("[EXPORT] Export sync thread exiting; restarting")
+			c.Logger().Printf("[FILESYNC] File sync thread exiting; restarting")
 		}
 	}
 }
