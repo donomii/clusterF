@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -114,3 +115,51 @@ type NodeData struct {
 }
 
 type NodeID string
+
+// types.SearchResult represents a search result entry
+type SearchResult struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Size        int64  `json:"size,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	ModifiedAt  int64  `json:"modified_at,omitempty"`
+}
+
+// collapsetypes.SearchResults collapses search results into directories and files
+func CollapseSearchResults(raw_results []SearchResult, basePath string) []SearchResult {
+	results := make([]SearchResult, 0, len(raw_results))
+	seen := make(map[string]bool)
+	for _, res := range raw_results {
+		// Clip off the prefix path
+		relPath := strings.TrimPrefix(res.Path, basePath)
+		//Take the string up to the first /
+		parts := strings.SplitN(relPath, "/", 2)
+		if len(parts) > 1 {
+			if parts[0] != "" {
+				dir := parts[0] + "/"
+				//c.debugf("[SEARCH] Processing result: %s (rel: %s) is a directory", dir, relPath)
+				if !seen[dir] {
+					seen[dir] = true
+					results = append(results, SearchResult{
+						Name: dir,
+						Path: basePath + dir,
+					})
+				}
+			}
+		} else {
+			// It's a file in the current directory
+			//c.debugf("[SEARCH] Processing result: %s (rel: %s) is a file", relPath, relPath)
+			if !seen[relPath] {
+				seen[relPath] = true //Could get multiple files with same name from different peers
+				results = append(results, SearchResult{
+					Name:        relPath,
+					Path:        res.Path,
+					Size:        res.Size,
+					ContentType: res.ContentType,
+					ModifiedAt:  res.ModifiedAt,
+				})
+			}
+		}
+	}
+	return results
+}

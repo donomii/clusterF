@@ -28,24 +28,15 @@ type SearchRequest struct {
 	Limit int    `json:"limit,omitempty"`
 }
 
-// SearchResult represents a search result entry
-type SearchResult struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Size        int64  `json:"size,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
-	ModifiedAt  int64  `json:"modified_at,omitempty"`
-}
-
 // SearchResponse represents the search API response
 type SearchResponse struct {
-	Results []SearchResult `json:"results"`
-	Count   int            `json:"count"`
+	Results []types.SearchResult `json:"results"`
+	Count   int                  `json:"count"`
 }
 
 // performLocalSearch performs a search on local files
-func (c *Cluster) performLocalSearch(req SearchRequest) []SearchResult {
-	var results []SearchResult
+func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
+	var results []types.SearchResult
 	seen := make(map[string]bool) // Prevent duplicates
 
 	c.metadataKV.MapFunc(func(k, v []byte) error {
@@ -74,10 +65,10 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []SearchResult {
 			return nil
 		}
 
-		c.logger.Printf("[SEARCH_DEBUG] Found local file: %s, %v", filePath, filepath.Base(filePath))
+		//c.logger.Printf("[SEARCH_DEBUG] Found local file: %s, %v", filePath, filepath.Base(filePath))
 		if !seen[filePath] {
 			seen[filePath] = true
-			results = append(results, SearchResult{
+			results = append(results, types.SearchResult{
 				Name:        filepath.Base(filePath),
 				Path:        filePath,
 				Size:        c.GetMetadataSize(metadata),
@@ -121,8 +112,8 @@ func (c *Cluster) GetMetadataModifiedAt(metadata map[string]interface{}) int64 {
 }
 
 // searchAllPeers performs a search across all peers and combines results
-func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
-	var allResults []SearchResult
+func (c *Cluster) searchAllPeers(req SearchRequest) []types.SearchResult {
+	var allResults []types.SearchResult
 	seen := make(map[string]bool)
 
 	// Search locally first
@@ -160,7 +151,7 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []SearchResult {
 }
 
 // searchPeer performs a search on a specific peer
-func (c *Cluster) searchPeer(peer *types.PeerInfo, req SearchRequest) []SearchResult {
+func (c *Cluster) searchPeer(peer *types.PeerInfo, req SearchRequest) []types.SearchResult {
 	endpointURL, err := urlutil.BuildHTTPURL(peer.Address, peer.HTTPPort, "/api/search")
 	if err != nil {
 		c.debugf("Failed to build search URL for peer %s: %v", peer.NodeID, err)
@@ -246,41 +237,7 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 
 	// Create directories by collapsing paths
 	c.debugf("[SEARCH] Found %d file results for %s", len(raw_results), path)
-	results := make([]SearchResult, 0, len(raw_results))
-	seen := make(map[string]bool)
-	for _, res := range raw_results {
-		// Clip off the prefix path
-		relPath := strings.TrimPrefix(res.Path, path)
-		//Take the string up to the first /
-		parts := strings.SplitN(relPath, "/", 2)
-		c.debugf("[SEARCH] Path split into parts: %v", parts)
-		if len(parts) > 1 {
-			if parts[0] != "" {
-				dir := parts[0] + "/"
-				c.debugf("[SEARCH] Processing result: %s (rel: %s) is a directory", dir, relPath)
-				if !seen[dir] {
-					seen[dir] = true
-					results = append(results, SearchResult{
-						Name: dir,
-						Path: dir,
-					})
-				}
-			}
-		} else {
-			// It's a file in the current directory
-			c.debugf("[SEARCH] Processing result: %s (rel: %s) is a file", relPath, relPath)
-			if !seen[relPath] {
-				seen[relPath] = true //Could get multiple files with same name from different peers
-				results = append(results, SearchResult{
-					Name:        relPath,
-					Path:        relPath,
-					Size:        res.Size,
-					ContentType: res.ContentType,
-					ModifiedAt:  res.ModifiedAt,
-				})
-			}
-		}
-	}
+	results := types.CollapseSearchResults(raw_results, path)
 
 	// Convert to FileMetadata format
 	var fileMetadata []*types.FileMetadata
@@ -313,13 +270,13 @@ func (c *Cluster) SearchFiles(filename string) ([]*types.FileMetadata, error) {
 	// Search all peers
 	raw_results := c.searchAllPeers(req)
 
-	results := make([]SearchResult, 0, len(raw_results))
+	results := make([]types.SearchResult, 0, len(raw_results))
 	seen := make(map[string]bool)
 	for _, res := range raw_results {
 		dir := filepath.Dir(res.Path)
 		if !seen[dir] {
 			seen[dir] = true
-			results = append(results, SearchResult{
+			results = append(results, types.SearchResult{
 				Name: filepath.Base(dir) + "/",
 				Path: dir,
 			})

@@ -267,22 +267,26 @@ func (cfs *ClusterFileSystem) ReadDir(ctx context.Context, name string, recursiv
 	for _, entry := range entries {
 		// Only include entries that should be served
 		if !cfs.shouldServePath(entry.Path) {
+			cfs.debugf("[WEBDAV] ReadDir: skipping entry %s (not allowed)", entry.Path)
 			continue
 		}
 
-		// Skip non-direct children if not recursive
-		if !recursive {
-			// Check if this entry is a direct child
-			relativePath := strings.TrimPrefix(entry.Path, clusterPath)
-			if relativePath != "" && strings.HasPrefix(relativePath, "/") {
-				relativePath = relativePath[1:] // Remove leading slash
-			}
-			if strings.Contains(relativePath, "/") {
-				continue // Skip nested entries
-			}
-		}
+		/*
+			TODO: Handle recursive listing properly?
+				// Skip non-direct children if not recursive
+				if !recursive {
+					// Check if this entry is a direct child
+					relativePath := strings.TrimPrefix(entry.Path, clusterPath)
+					relativePath = strings.TrimPrefix(relativePath, "/")
+					if strings.Contains(relativePath, "/") {
+						cfs.debugf("[WEBDAV] ReadDir: skipping nested entry %s (rel: %s)", entry.Path, relativePath)
+						continue // Skip nested entries
+					}
+				}
+		*/
 
 		webdavPath := cfs.webdavPath(entry.Path)
+		cfs.debugf("[WEBDAV] ReadDir: mapped to WebDAV path=%s", webdavPath)
 
 		modTime := entry.ModifiedAt
 		if modTime.IsZero() {
