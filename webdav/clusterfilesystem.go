@@ -190,7 +190,11 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 		modTime = time.Now()
 	}
 
+	// Use checksum as ETag if available, otherwise fallback to timestamp+size
 	etag := fmt.Sprintf("%x%x", modTime.UnixNano(), meta.Size)
+	if meta.Checksum != "" {
+		etag = fmt.Sprintf("\"%s\"", meta.Checksum)
+	}
 
 	// Determine content type
 	contentType := "application/octet-stream"
@@ -199,6 +203,10 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 		if _, fullMeta, err := cfs.fs.GetFile(clusterPath); err == nil && fullMeta != nil {
 			if fullMeta.ContentType != "" {
 				contentType = fullMeta.ContentType
+			}
+			// Also use checksum from full metadata if not available in basic meta
+			if meta.Checksum == "" && fullMeta.Checksum != "" {
+				etag = fmt.Sprintf("\"%s\"", fullMeta.Checksum)
 			}
 		}
 		// Fallback to extension-based detection
@@ -293,7 +301,11 @@ func (cfs *ClusterFileSystem) ReadDir(ctx context.Context, name string, recursiv
 			modTime = time.Now()
 		}
 
+		// Use checksum as ETag if available, otherwise fallback to timestamp+size
 		etag := fmt.Sprintf("%x%x", modTime.UnixNano(), entry.Size)
+		if entry.Checksum != "" {
+			etag = fmt.Sprintf("\"%s\"", entry.Checksum)
+		}
 
 		// Determine content type
 		contentType := entry.ContentType

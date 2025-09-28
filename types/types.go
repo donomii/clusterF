@@ -123,6 +123,7 @@ type SearchResult struct {
 	Size        int64  `json:"size,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 	ModifiedAt  int64  `json:"modified_at,omitempty"`
+	Checksum    string `json:"checksum,omitempty"`
 }
 
 // collapsetypes.SearchResults collapses search results into directories and files
@@ -150,15 +151,16 @@ func CollapseSearchResults(raw_results []SearchResult, basePath string) []Search
 			// It's a file in the current directory
 			//c.debugf("[SEARCH] Processing result: %s (rel: %s) is a file", relPath, relPath)
 			if !seen[relPath] {
-				seen[relPath] = true //Could get multiple files with same name from different peers
-				results = append(results, SearchResult{
-					Name:        relPath,
-					Path:        res.Path,
-					Size:        res.Size,
-					ContentType: res.ContentType,
-					ModifiedAt:  res.ModifiedAt,
-				})
-			}
+			seen[relPath] = true //Could get multiple files with same name from different peers
+			results = append(results, SearchResult{
+			Name:        relPath,
+			Path:        res.Path,
+			Size:        res.Size,
+			ContentType: res.ContentType,
+			ModifiedAt:  res.ModifiedAt,
+			 Checksum:    res.Checksum,
+			 })
+				}
 		}
 	}
 	return results

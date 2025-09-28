@@ -74,6 +74,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 				Size:        c.GetMetadataSize(metadata),
 				ContentType: c.GetMetadataContentType(metadata),
 				ModifiedAt:  c.GetMetadataModifiedAt(metadata),
+				Checksum:    c.GetMetadataChecksum(metadata),
 			})
 		}
 		// Apply limit if specified
@@ -109,6 +110,14 @@ func (c *Cluster) GetMetadataModifiedAt(metadata map[string]interface{}) int64 {
 		return int64(modifiedAt)
 	}
 	return 0
+}
+
+func (c *Cluster) GetMetadataChecksum(metadata map[string]interface{}) string {
+	checksum, ok := metadata["checksum"].(string)
+	if !ok {
+		c.logger.Panicf("missing checksum in metadata: %v", metadata)
+	}
+	return checksum
 }
 
 // searchAllPeers performs a search across all peers and combines results
@@ -248,6 +257,7 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 			Size:        result.Size,
 			ContentType: result.ContentType,
 			IsDirectory: strings.HasSuffix(result.Name, "/"),
+			Checksum:    result.Checksum,
 		}
 
 		if result.ModifiedAt > 0 {
@@ -293,6 +303,7 @@ func (c *Cluster) SearchFiles(filename string) ([]*types.FileMetadata, error) {
 			Size:        result.Size,
 			ContentType: result.ContentType,
 			IsDirectory: false,
+			Checksum:    result.Checksum,
 		}
 
 		if result.ModifiedAt > 0 {
