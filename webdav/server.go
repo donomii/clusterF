@@ -22,17 +22,20 @@ type Server struct {
 // NewServer creates a new WebDAV server
 func NewServer(fs types.FileSystemLike, clusterDir string, port int, logger *log.Logger) *Server {
 	clusterFS := NewClusterFileSystem(fs, clusterDir)
-	
+
 	handler := &webdav.Handler{
 		FileSystem: clusterFS,
 	}
-	
+
 	addr := fmt.Sprintf(":%d", port)
 	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: handler,
+		Addr:         addr,
+		Handler:      handler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  30 * time.Second, // important for keep-alive churn
 	}
-	
+
 	return &Server{
 		handler:    handler,
 		httpServer: httpServer,
@@ -43,24 +46,24 @@ func NewServer(fs types.FileSystemLike, clusterDir string, port int, logger *log
 // Start starts the WebDAV server
 func (s *Server) Start() error {
 	s.logger.Printf("[WEBDAV] Starting WebDAV server on %s", s.httpServer.Addr)
-	
+
 	// Start server in a goroutine
 	go func() {
 		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.logger.Printf("[WEBDAV] Server error: %v", err)
 		}
 	}()
-	
+
 	return nil
 }
 
 // Stop stops the WebDAV server
 func (s *Server) Stop() error {
 	s.logger.Printf("[WEBDAV] Stopping WebDAV server")
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -69,15 +72,15 @@ func StartWebDAVServer(fs types.FileSystemLike, clusterDir string, port int, log
 	if logger == nil {
 		logger = log.Default()
 	}
-	
+
 	server := NewServer(fs, clusterDir, port, logger)
-	
+
 	logger.Printf("[WEBDAV] WebDAV server starting on port %d", port)
 	if clusterDir != "" {
 		logger.Printf("[WEBDAV] Serving cluster path: %s", clusterDir)
 	} else {
 		logger.Printf("[WEBDAV] Serving entire cluster")
 	}
-	
+
 	return server.Start()
 }

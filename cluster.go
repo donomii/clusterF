@@ -766,7 +766,10 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/api/transcode-stats", corsMiddleware(c.Debug, c.Logger(), c.handleTranscodeStats))
 
 	server = &http.Server{
-		Handler: mux,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  15 * time.Second, // important for keep-alive churn
 	}
 
 	c.server = server
@@ -878,7 +881,7 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debug: log what we're sending
-	c.Logger().Printf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.NodeId, len(peerList), stats["replication_factor"])
+	c.debugf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.NodeId, len(peerList), stats["replication_factor"])
 
 	json.NewEncoder(w).Encode(stats)
 }

@@ -526,6 +526,7 @@ func (e *Syncer) performImport(ctx context.Context) error {
 
 // importFromDir walks importDir and uploads files to cluster
 func (e *Syncer) importFromDir(ctx context.Context) error {
+	var throttle = make(chan struct{}, 10) // limit concurrency
 	return filepath.WalkDir(e.importDir, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -550,24 +551,32 @@ func (e *Syncer) importFromDir(ctx context.Context) error {
 			return nil
 		}
 
-		// Check if file already exists with same content
-		if meta, err := e.fs.MetadataForPath(clusterPath); err == nil {
-			if metadataMatches(meta, st.Size(), st.ModTime()) {
-				return nil
-			}
-		}
+		throttle <- struct{}{}
 
-		// Read and upload file
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return nil
-		}
-
-		ct := contentTypeFromExt(p)
-		_ = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
+		uploadSyncfile(e, p, clusterPath, st, throttle)
 
 		return nil
 	})
+}
+
+func uploadSyncfile(e *Syncer, p, clusterPath string, st fs.FileInfo, throttle chan struct{}) {
+	defer func() { <-throttle }()
+
+	// Check if file already exists with same content
+	if meta, err := e.fs.MetadataForPath(clusterPath); err == nil {
+		if metadataMatches(meta, st.Size(), st.ModTime()) {
+			return
+		}
+	}
+
+	// Read and upload file
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return
+	}
+
+	ct := contentTypeFromExt(p)
+	_ = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
 }
 
 // importPathToClusterPath converts a local file path to cluster path, returns (clusterPath, true) for files or ("", false) for directories
