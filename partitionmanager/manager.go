@@ -20,7 +20,6 @@ import (
 
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
-	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
 )
 
@@ -34,8 +33,7 @@ type Dependencies struct {
 	NoStore               bool
 	Logger                *log.Logger
 	Debugf                func(string, ...interface{})
-	MetadataKV            ensemblekv.KvLike
-	ContentKV             ensemblekv.KvLike
+	FileStore             *FileStore
 	HTTPDataClient        *http.Client
 	Discovery             types.DiscoveryManagerLike
 	LoadPeer              PeerLoader
@@ -181,13 +179,8 @@ func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byt
 	pm.debugf("[PARTITION] Storing file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
 
 	// Store metadata in filesKV (metadata store)
-	if err := pm.deps.MetadataKV.Put([]byte(fileKey), metadataJSON); err != nil {
-		pm.deps.Logger.Panicf("failed to store file metadata: %v", err)
-	}
-
-	// Store content in crdtKV (data store) using same key
-	if err := pm.deps.ContentKV.Put([]byte(fileKey), fileContent); err != nil {
-		pm.deps.Logger.Panicf("failed to store file content: %v", err)
+	if err := pm.deps.FileStore.Put(fileKey, metadataJSON, fileContent); err != nil {
+		pm.deps.Logger.Panicf("failed to store file: %v", err)
 	}
 
 	// Update partition metadata in CRDT
@@ -196,9 +189,9 @@ func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byt
 	pm.logf("[PARTITION] Stored file %s  (%d bytes)", fileKey, len(fileContent))
 
 	// Debug: verify what we just stored
-	if storedMetadata, err := pm.deps.MetadataKV.Get([]byte(fileKey)); err == nil {
+	if storedData, err := pm.deps.FileStore.Get(fileKey); err == nil && storedData.Exists {
 		var parsedMeta map[string]interface{}
-		if json.Unmarshal(storedMetadata, &parsedMeta) == nil {
+		if json.Unmarshal(storedData.Metadata, &parsedMeta) == nil {
 			if _, ok := parsedMeta["checksum"]; ok {
 				//pm.logf("[CHECKSUM_DEBUG] Just stored %s with checksum: %v", path, checksum)
 			} else {
@@ -325,17 +318,22 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 	partitionID := HashToPartition(path)
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
-	// Get metadata from filesKV (metadata store)
-	metadataData, err := pm.deps.MetadataKV.Get([]byte(fileKey))
+	// Get metadata and content atomically
+	fileData, err := pm.deps.FileStore.Get(fileKey)
 	if err != nil {
-		pm.debugf("[PARTITION] File %s metadata not found locally (err: %v), trying peers", fileKey, err)
+		pm.debugf("[PARTITION] File %s not found locally (err: %v), trying peers", fileKey, err)
+		return pm.getFileFromPeers(path)
+	}
+
+	if !fileData.Exists {
+		pm.debugf("[PARTITION] File %s not found locally, trying peers", fileKey)
 		return pm.getFileFromPeers(path)
 	}
 
 	// Parse metadata
 	var metadata map[string]interface{}
-	if err := json.Unmarshal(metadataData, &metadata); err != nil {
-		return nil, nil, pm.errorf(metadataData, "corrupt file metadata")
+	if err := json.Unmarshal(fileData.Metadata, &metadata); err != nil {
+		return nil, nil, pm.errorf(fileData.Metadata, "corrupt file metadata")
 	}
 
 	// Check if file is marked as deleted
@@ -343,16 +341,9 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 		return nil, nil, types.ErrFileNotFound
 	}
 
-	// Get content from crdtKV (data store) using same key
-	content, err := pm.deps.ContentKV.Get([]byte(fileKey))
-	if err != nil {
-		pm.debugf("[PARTITION] File %s content not found locally (err: %v), trying peers", path, err)
-		return pm.getFileFromPeers(path)
-	}
-
 	// Verify checksum if available
 	if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
-		if err := pm.verifyFileChecksum(content, checksum, path, string(pm.deps.NodeID)); err != nil {
+		if err := pm.verifyFileChecksum(fileData.Content, checksum, path, string(pm.deps.NodeID)); err != nil {
 			pm.logf("[PARTITION] Local file corruption detected for %s: %v", path, err)
 			// File is corrupted locally, try to get from peers
 			return pm.getFileFromPeers(path)
@@ -364,8 +355,8 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 	}
 
 	pm.debugf("[PARTITION] Found file %s locally in partition %s", path, partitionID)
-	pm.debugf("[PARTITION] Retrieved file %s: %d bytes content", path, len(content))
-	return content, metadata, nil
+	pm.debugf("[PARTITION] Retrieved file %s: %d bytes content", path, len(fileData.Content))
+	return fileData.Content, metadata, nil
 }
 
 // getFileFromPeers attempts to retrieve a file from peer nodes
@@ -469,7 +460,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 	partitionID := HashToPartition(path)
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
-	metadataData, err := pm.deps.MetadataKV.Get([]byte(fileKey))
+	metadata, err := pm.deps.FileStore.GetMetadata(fileKey)
 	if err != nil {
 		// It's normal for a file not to be found locally
 		//pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
@@ -477,20 +468,20 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 	}
 
 	//FIXME: bolt seems to return nil data with no error for not found
-	if len(metadataData) == 0 {
+	if len(metadata) == 0 {
 		return nil, types.ErrFileNotFound
 	}
 
-	var metadata map[string]interface{}
-	if err := json.Unmarshal(metadataData, &metadata); err != nil {
-		return nil, pm.errorf(metadataData, "corrupt file metadata")
+	var parsedMetadata map[string]interface{}
+	if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
+		return nil, pm.errorf(metadata, "corrupt file metadata")
 	}
 
-	if deleted, ok := metadata["deleted"].(bool); ok && deleted {
+	if deleted, ok := parsedMetadata["deleted"].(bool); ok && deleted {
 		return nil, types.ErrFileNotFound
 	}
 
-	return metadata, nil
+	return parsedMetadata, nil
 }
 
 func (pm *PartitionManager) GetMetadataFromPeers(path string) (map[string]interface{}, error) {
@@ -577,9 +568,9 @@ func (pm *PartitionManager) DeleteFileFromPartition(path string) error {
 	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
 	// Get existing metadata
-	existingMetadata, err := pm.deps.MetadataKV.Get([]byte(fileKey))
+	existingMetadata, _ := pm.deps.FileStore.GetMetadata(fileKey)
 	var metadata map[string]interface{}
-	if err == nil {
+	if existingMetadata != nil {
 		// Parse existing metadata
 		json.Unmarshal(existingMetadata, &metadata)
 	} else {
@@ -598,12 +589,13 @@ func (pm *PartitionManager) DeleteFileFromPartition(path string) error {
 		metadata["version"] = float64(1)
 	}
 
-	// Store tombstone metadata
+	// Store tombstone metadata and delete content
 	tombstoneJSON, _ := json.Marshal(metadata)
-	pm.deps.MetadataKV.Put([]byte(fileKey), tombstoneJSON)
+	if err := pm.deps.FileStore.PutMetadata(fileKey, tombstoneJSON); err != nil {
+		return err
+	}
 
-	// Remove content from data store
-	pm.deps.ContentKV.Delete([]byte(fileKey))
+	// Note: We don't delete the entry entirely, just mark as deleted
 
 	// Update partition metadata in CRDT
 	pm.updatePartitionMetadata(partitionID)
@@ -628,20 +620,19 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	fileCount := 0
 	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
 
-	// Use MapFunc correctly - it calls the function for each key-value pair
-	pm.deps.MetadataKV.MapFunc(func(k, v []byte) error {
-		key := string(k)
+	// Use FileStore to scan files
+	pm.deps.FileStore.ScanMetadata(prefix, func(key string, metadata []byte) error {
 		if strings.HasPrefix(key, prefix) && strings.Contains(key, ":file:") {
 			// Parse the metadata to check if it's deleted
-			var metadata map[string]interface{}
-			if err := json.Unmarshal(v, &metadata); err != nil {
-				pm.errorf(v, "corrupt metadata in updatePartitionMetadata")
+			var parsedMetadata map[string]interface{}
+			if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
+				pm.errorf(metadata, "corrupt metadata in updatePartitionMetadata")
 				// Parse error - count as existing file
 				fileCount++
 				return nil
 			}
 			// Check if file is marked as deleted
-			if deleted, ok := metadata["deleted"].(bool); !ok || !deleted {
+			if deleted, ok := parsedMetadata["deleted"].(bool); !ok || !deleted {
 				// File is not deleted, count it
 				fileCount++
 			}
@@ -868,7 +859,7 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 	missingChecksums := 0
 	totalFiles := 0
 
-	pm.deps.MetadataKV.MapFunc(func(k, v []byte) error {
+	pm.deps.FileStore.Scan("", func(k string, metadata_bytes, content_bytes []byte) error {
 		key := string(k)
 		if !strings.HasPrefix(key, "partition:") || !strings.Contains(key, ":file:") {
 			return nil // Skip non-file entries
@@ -878,8 +869,8 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 
 		// Parse metadata
 		var metadata map[string]interface{}
-		if err := json.Unmarshal(v, &metadata); err != nil {
-			pm.errorf(v, "corrupt metadata in VerifyStoredFileIntegrity")
+		if err := json.Unmarshal(metadata_bytes, &metadata); err != nil {
+			pm.errorf(metadata_bytes, "corrupt metadata in VerifyStoredFileIntegrity")
 			return nil
 		}
 
@@ -896,12 +887,7 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 		}
 
 		// Get file content
-		content, err := pm.deps.ContentKV.Get(k)
-		if err != nil {
-			pm.debugf("[INTEGRITY] Content not found for %s: %v", key, err)
-			corruptedFiles = append(corruptedFiles, key)
-			return nil
-		}
+		content := content_bytes
 
 		// Verify checksum
 		if path, ok := metadata["path"].(string); ok {
@@ -926,210 +912,29 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 	}
 }
 
-// syncPartitionFromPeer synchronizes a partition from a peer node using existing KV stores
-func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerID types.NodeID) error {
-	if !pm.hasFrogpond() {
-		return fmt.Errorf("frogpond node is not configured")
-	}
-
-	// Find peer address
-	var peerAddr string
-	var peerPort int
-	peers := pm.getPeers()
-	for _, peer := range peers {
-		if types.NodeID(peer.NodeID) == peerID {
-			peerAddr = peer.Address
-			peerPort = peer.HTTPPort
-			break
-		}
-	}
-
-	if peerAddr == "" {
-		// List available peers for debugging
-		availablePeers := make([]string, 0, len(peers))
-		for _, peer := range peers {
-			availablePeers = append(availablePeers, fmt.Sprintf("%s@%s:%d", peer.NodeID, peer.Address, peer.HTTPPort))
-		}
-		return fmt.Errorf("syncPartitionFromPeer: peer '%s' not found for partition '%s'. Available peers: [%s]. Discovery may be incomplete or peer left cluster", peerID, partitionID, strings.Join(availablePeers, ", "))
-	}
-
-	pm.logf("[PARTITION] Starting sync of %s from %s", partitionID, peerID)
-
-	// Request partition data from peer (use a longer timeout for large streams)
-	syncURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
-	if err != nil {
-		return fmt.Errorf("syncPartitionFromPeer: failed to build sync URL for peer '%s' partition '%s': %v", peerID, partitionID, err)
-	}
-	longClient := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := longClient.Get(syncURL)
-	if err != nil {
-		return fmt.Errorf("syncPartitionFromPeer: failed to request partition sync from peer '%s' at '%s' for partition '%s': %v", peerID, syncURL, partitionID, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("syncPartitionFromPeer: peer '%s' at '%s' returned error %d '%s' for partition '%s'", peerID, syncURL, resp.StatusCode, resp.Status, partitionID)
-	}
-
-	// Read and apply the partition data from both stores
-	decoder := json.NewDecoder(resp.Body)
-
-	syncCount := 0
-	for {
-		var entry struct {
-			Key   string `json:"key"`
-			Value []byte `json:"value"`
-			Store string `json:"store"` // "metadata" or "content"
-		}
-
-		if err := decoder.Decode(&entry); err == io.EOF {
-			break
-		} else if err != nil {
-			return fmt.Errorf("syncPartitionFromPeer: failed to decode sync entry from peer '%s' for partition '%s': %v", peerID, partitionID, err)
-		}
-
-		// Check if we need this data using CRDT merge rules for files only
-		localValue, err := pm.deps.MetadataKV.Get([]byte(entry.Key))
-		shouldUpdate := false
-
-		if err != nil || len(localValue) == 0 { //FIXME bolt seems to return nil data with no error for not found
-			// We don't have this key, add it
-			shouldUpdate = true
-		} else {
-			// Use CRDT merge rules - only for files, ignore directories
-			if strings.Contains(entry.Key, ":file:") && entry.Store == "metadata" {
-				// Parse both local and remote metadata for comparison
-				var remoteMetadata, localMetadata map[string]interface{}
-				if json.Unmarshal(entry.Value, &remoteMetadata) != nil {
-					pm.errorf(entry.Value, "corrupt remote metadata in syncPartitionFromPeer")
-					continue
-				}
-				if json.Unmarshal(localValue, &localMetadata) != nil {
-					pm.errorf(localValue, "corrupt local metadata in syncPartitionFromPeer")
-					continue
-				}
-				// CRDT rule: use latest timestamp, break ties with version
-				// Also handle deleted_at timestamps for tombstones
-				remoteTime, _ := remoteMetadata["modified_at"].(float64)
-				localTime, _ := localMetadata["modified_at"].(float64)
-				remoteDeletedAt, _ := remoteMetadata["deleted_at"].(float64)
-				localDeletedAt, _ := localMetadata["deleted_at"].(float64)
-
-				// Use the latest of modified_at or deleted_at
-				if remoteDeletedAt > remoteTime {
-					remoteTime = remoteDeletedAt
-				}
-				if localDeletedAt > localTime {
-					localTime = localDeletedAt
-				}
-
-				remoteVersion, _ := remoteMetadata["version"].(float64)
-				localVersion, _ := localMetadata["version"].(float64)
-
-				if remoteTime > localTime || (remoteTime == localTime && remoteVersion > localVersion) {
-					shouldUpdate = true
-				}
-			} else if entry.Store == "content" && strings.Contains(entry.Key, ":file:") {
-				// For content entries, verify checksum if we have metadata
-				metadataKey := entry.Key // Same key for metadata and content
-				if metadataBytes, err := pm.deps.MetadataKV.Get([]byte(metadataKey)); err == nil {
-					var metadata map[string]interface{}
-					if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-						pm.errorf(metadataBytes, "corrupt metadata in syncPartitionFromPeer content validation")
-						continue
-					}
-					if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
-						// Verify incoming content checksum
-						if err := pm.verifyFileChecksum(entry.Value, checksum, entry.Key, string(peerID)); err != nil {
-							pm.logf("[PARTITION] Sync checksum verification failed for %s from %s: %v", entry.Key, peerID, err)
-							continue // Skip corrupted content
-						}
-						pm.debugf("[PARTITION] Sync checksum verified for %s from %s", entry.Key, peerID)
-					}
-				}
-				shouldUpdate = true
-			} else {
-				// For other entries, just accept newer data
-				shouldUpdate = true
-			}
-		}
-
-		if shouldUpdate {
-			var storeErr error
-			if entry.Store == "metadata" {
-				storeErr = pm.deps.MetadataKV.Put([]byte(entry.Key), entry.Value)
-			} else if entry.Store == "content" {
-				storeErr = pm.deps.ContentKV.Put([]byte(entry.Key), entry.Value)
-			}
-			if storeErr != nil {
-				pm.logf("[PARTITION] syncPartitionFromPeer: failed to store sync entry '%s' from peer '%s' for partition '%s': %v", entry.Key, peerID, partitionID, storeErr)
-			} else {
-				syncCount++
-			}
-		}
-	}
-
-	// Update our partition metadata
-	pm.updatePartitionMetadata(partitionID)
-
-	pm.logf("[PARTITION] Completed sync of %s from %s (%d entries updated)", partitionID, peerID, syncCount)
-
-	// Notify frontend that file list may have changed
-	pm.notifyFileListChanged()
-
-	return nil
+// PartitionSyncEntry represents a single file entry for partition sync
+type PartitionSyncEntry struct {
+	Key      string `json:"key"`
+	Metadata []byte `json:"metadata"`
+	Content  []byte `json:"content"`
+	Checksum string `json:"checksum"`
 }
 
-// handlePartitionSync serves partition data to requesting peers from both stores
-func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.Request, partitionID PartitionID) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+// PartitionSnapshot represents a consistent point-in-time view of a partition
+type PartitionSnapshot struct {
+	PartitionID PartitionID          `json:"partition_id"`
+	Timestamp   int64                `json:"timestamp"`
+	Version     int64                `json:"version"`
+	Entries     []PartitionSyncEntry `json:"entries"`
+	Checksum    string               `json:"checksum"`
+}
 
-	pm.debugf("[PARTITION] Serving sync data for %s", partitionID)
-
-	w.Header().Set("Content-Type", "application/json")
-	encoder := json.NewEncoder(w)
-
-	// Stream metadata from filesKV (metadata store)
-	// FIXME: This is completely fucked
-	prefix := fmt.Sprintf("partition:%s:", partitionID)
-	pm.deps.MetadataKV.MapFunc(func(k, v []byte) error {
-		key := string(k)
-		if strings.HasPrefix(key, prefix) {
-			entry := struct {
-				Key   string `json:"key"`
-				Value []byte `json:"value"`
-				Store string `json:"store"`
-			}{
-				Key:   key,
-				Value: v,
-				Store: "metadata",
-			}
-			return encoder.Encode(entry)
-		}
-		return nil
-	})
-
-	// Stream content from crdtKV (data store)
-	// FIXME this is completely fucked
-	pm.deps.ContentKV.MapFunc(func(k, v []byte) error {
-		key := string(k)
-		if strings.HasPrefix(key, prefix) {
-			entry := struct {
-				Key   string `json:"key"`
-				Value []byte `json:"value"`
-				Store string `json:"store"`
-			}{
-				Key:   key,
-				Value: v,
-				Store: "content",
-			}
-			return encoder.Encode(entry)
-		}
-		return nil
-	})
+// calculateEntryChecksum calculates a checksum for a single entry
+func (pm *PartitionManager) calculateEntryChecksum(metadata, content []byte) string {
+	hash := sha256.New()
+	hash.Write(metadata)
+	hash.Write(content)
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // periodicPartitionCheck continuously syncs partitions one at a time
@@ -1208,8 +1013,8 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 		// Check if we already have this partition by scanning metadata store
 		hasPartition := false
 		prefix := fmt.Sprintf("partition:%s:", partitionID)
-		pm.deps.MetadataKV.MapFunc(func(k, v []byte) error {
-			if strings.HasPrefix(string(k), prefix) {
+		pm.deps.FileStore.ScanMetadata(prefix, func(key string, meta []byte) error {
+			if strings.HasPrefix(string(key), prefix) {
 				hasPartition = true
 				return fmt.Errorf("stop") // Break the loop
 			}
@@ -1244,13 +1049,11 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 func (pm *PartitionManager) GetPartitionStats() map[string]interface{} {
 	// Count local partitions by scanning metadata store
 	localPartitions := make(map[string]bool)
-	pm.deps.MetadataKV.MapFunc(func(k, v []byte) error {
-		key := string(k)
-		if strings.HasPrefix(key, "partition:") {
-			parts := strings.Split(key, ":")
-			if len(parts) >= 2 {
-				localPartitions[parts[1]] = true
-			}
+	pm.deps.FileStore.ScanMetadata("partition:", func(key string, meta []byte) error {
+		parts := strings.Split(key, ":")
+		if len(parts) >= 2 {
+			localPartitions[parts[1]] = true
+
 		}
 		return nil
 	})

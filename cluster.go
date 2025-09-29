@@ -432,8 +432,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		NoStore:        c.noStore,
 		Logger:         c.Logger(),
 		Debugf:         c.debugf,
-		MetadataKV:     c.metadataKV,
-		ContentKV:      c.contentKV,
+		FileStore:      partitionmanager.NewFileStore(c.metadataKV, c.contentKV),
 		HTTPDataClient: c.httpDataClient,
 		Discovery:      c.discoveryManager,
 		LoadPeer: func(id types.NodeID) (*types.PeerInfo, bool) {
