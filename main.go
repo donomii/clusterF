@@ -271,6 +271,7 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
    Data Dir: %s
    %s
    %s
+   %s
 
 Try these commands:
    # Upload a file
