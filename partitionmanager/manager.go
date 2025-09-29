@@ -956,7 +956,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 				syncSuccess := false
 				for _, holderID := range holders {
 					pm.logf("[PARTITION] Syncing %s from %s", partitionID, holderID)
-					if err := pm.syncPartitionFromPeer(partitionID, holderID); err != nil {
+					if err := pm.syncPartitionFromPeer(ctx, partitionID, holderID); err != nil {
 						pm.logf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
 					} else {
 						syncSuccess = true

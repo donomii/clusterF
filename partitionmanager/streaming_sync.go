@@ -2,6 +2,7 @@
 package partitionmanager
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,7 +94,7 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 }
 
 // syncPartitionFromPeer synchronizes a partition using object-by-object streaming
-func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerID types.NodeID) error {
+func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partitionID PartitionID, peerID types.NodeID) error {
 	if !pm.hasFrogpond() {
 		return fmt.Errorf("frogpond node is not configured")
 	}
@@ -142,6 +143,12 @@ func (pm *PartitionManager) syncPartitionFromPeer(partitionID PartitionID, peerI
 	syncCount := 0
 
 	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context canceled: %v", ctx.Err())
+		default:
+		}
+
 		var entry PartitionSyncEntry
 		if err := decoder.Decode(&entry); err == io.EOF {
 			break
