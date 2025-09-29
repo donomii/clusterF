@@ -326,22 +326,6 @@ func NewCluster(opts ClusterOpts) *Cluster {
 			}
 			opts.StorageMinor = existingSettings.StorageMinor
 		}
-	} else {
-		// No settings file exists, create one with current options
-		newSettings := StorageSettings{
-			Program:      "clusterF",
-			URL:          "https://github.com/donomii/clusterF",
-			StorageMajor: opts.StorageMajor,
-			StorageMinor: opts.StorageMinor,
-			Version:      version,
-		}
-		if err := saveStorageSettings(opts.DataDir, newSettings); err != nil {
-			if opts.Logger != nil {
-				opts.Logger.Fatalf("Failed to save storage settings to %s: %v", opts.DataDir, err)
-			} else {
-				log.Fatalf("Failed to save storage settings to %s: %v", opts.DataDir, err)
-			}
-		}
 	}
 
 	// Ensure the data directory exists immediately
@@ -424,6 +408,20 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		c.Logger().Fatalf("[STORAGE] Failed to initialize CRDT KV at %s; exiting", contentKVPath)
 	}
 	c.debugf("Initialized KV stores\n")
+
+	// Save settings only after successful KV store initialization
+	if existingSettings == nil {
+		newSettings := StorageSettings{
+			Program:      "clusterF",
+			URL:          "https://github.com/donomii/clusterF",
+			StorageMajor: opts.StorageMajor,
+			StorageMinor: opts.StorageMinor,
+			Version:      version,
+		}
+		if err := saveStorageSettings(opts.DataDir, newSettings); err != nil {
+			c.Logger().Printf("[WARNING] Failed to save storage settings: %v", err)
+		}
+	}
 	// Load CRDT state from KV (if any) before applying defaults
 	c.loadCRDTFromFile()
 	c.debugf("Loaded CRDT state from KV\n")
