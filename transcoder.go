@@ -12,13 +12,15 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/donomii/clusterF/syncmap"
 )
 
 type Transcoder struct {
 	cacheDir     string
 	maxCacheSize int64 // bytes
 	logger       *log.Logger
-	cacheEntries map[string]*CacheEntry
+	cacheEntries *syncmap.SyncMap[string, *CacheEntry]
 }
 
 type CacheEntry struct {
@@ -43,7 +45,7 @@ func NewTranscoder(cacheDir string, maxCacheSize int64, logger *log.Logger) *Tra
 		cacheDir:     cacheDir,
 		maxCacheSize: maxCacheSize,
 		logger:       logger,
-		cacheEntries: make(map[string]*CacheEntry),
+		cacheEntries: syncmap.NewSyncMap[string, *CacheEntry](),
 	}
 
 	// Load existing cache entries
@@ -117,17 +119,18 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 	outputPath := t.getCachedPath(cacheKey, outputExt)
 
 	// Check if already cached
-	entry, exists := t.cacheEntries[cacheKey]
+	entry, exists := t.cacheEntries.Load(cacheKey)
 	if exists && !entry.InProgress {
 		// Update access time
 		entry.AccessTime = time.Now()
+		t.cacheEntries.Store(cacheKey, entry)
 		// Verify file still exists
 		if _, err := os.Stat(outputPath); err == nil {
 			t.logger.Printf("[TRANSCODE] Cache hit for %s", cacheKey)
 			return outputPath, nil
 		} else {
 			// File missing, remove from cache map
-			delete(t.cacheEntries, cacheKey)
+			t.cacheEntries.Delete(cacheKey)
 		}
 	}
 
@@ -136,13 +139,12 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 		AccessTime: time.Now(),
 		InProgress: true,
 	}
-	t.cacheEntries[cacheKey] = entry
+	t.cacheEntries.Store(cacheKey, entry)
 
 	// Ensure we clean up on failure
 	defer func() {
-
 		entry.InProgress = false
-
+		t.cacheEntries.Store(cacheKey, entry)
 	}()
 
 	t.logger.Printf("[TRANSCODE] Starting transcode to %s", outputPath)
@@ -213,8 +215,8 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 
 	// Get file size
 	if stat, err := os.Stat(outputPath); err == nil {
-
 		entry.Size = stat.Size()
+		t.cacheEntries.Store(cacheKey, entry)
 
 		t.logger.Printf("[TRANSCODE] Completed %s in %v (size: %d bytes)",
 			cacheKey, duration, stat.Size())
@@ -235,6 +237,7 @@ func (t *Transcoder) scanCacheDir() {
 		return
 	}
 
+	count := 0
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -252,28 +255,38 @@ func (t *Transcoder) scanCacheDir() {
 
 		fullPath := filepath.Join(t.cacheDir, name)
 		if stat, err := os.Stat(fullPath); err == nil {
-			t.cacheEntries[cacheKey] = &CacheEntry{
+			t.cacheEntries.Store(cacheKey, &CacheEntry{
 				Path:       fullPath,
 				Size:       stat.Size(),
 				AccessTime: stat.ModTime(),
 				InProgress: false,
-			}
+			})
+			count++
 		}
 	}
 
-	t.logger.Printf("[TRANSCODE] Loaded %d cache entries", len(t.cacheEntries))
+	t.logger.Printf("[TRANSCODE] Loaded %d cache entries", count)
 }
 
 // cleanupCache removes old entries if cache size exceeds limit
 func (t *Transcoder) cleanupCache() {
-
 	// Calculate total cache size
 	var totalSize int64
-	for _, entry := range t.cacheEntries {
-
-		totalSize += entry.Size
-
+	var entries []struct {
+		key   string
+		entry *CacheEntry
 	}
+
+	t.cacheEntries.Range(func(key string, entry *CacheEntry) bool {
+		totalSize += entry.Size
+		if !entry.InProgress {
+			entries = append(entries, struct {
+				key   string
+				entry *CacheEntry
+			}{key, entry})
+		}
+		return true
+	})
 
 	if totalSize <= t.maxCacheSize {
 		return
@@ -281,27 +294,12 @@ func (t *Transcoder) cleanupCache() {
 
 	t.logger.Printf("[TRANSCODE] Cache cleanup: %d bytes (limit: %d bytes)", totalSize, t.maxCacheSize)
 
-	// Sort entries by access time (oldest first)
-	type entryWithKey struct {
-		key   string
-		entry *CacheEntry
-	}
-
-	var entries []entryWithKey
-	for key, entry := range t.cacheEntries {
-		if !entry.InProgress {
-			entries = append(entries, entryWithKey{key, entry})
-		}
-	}
-
 	// Sort by access time
 	for i := 0; i < len(entries)-1; i++ {
 		for j := i + 1; j < len(entries); j++ {
-
 			if entries[i].entry.AccessTime.After(entries[j].entry.AccessTime) {
 				entries[i], entries[j] = entries[j], entries[i]
 			}
-
 		}
 	}
 
@@ -313,14 +311,13 @@ func (t *Transcoder) cleanupCache() {
 		}
 
 		entry := entryWithKey.entry
-
 		size := entry.Size
 		path := entry.Path
 
 		if err := os.Remove(path); err != nil {
 			t.logger.Printf("[TRANSCODE] Failed to remove cache file %s: %v", path, err)
 		} else {
-			delete(t.cacheEntries, entryWithKey.key)
+			t.cacheEntries.Delete(entryWithKey.key)
 			totalSize -= size
 			removed++
 		}
@@ -333,21 +330,21 @@ func (t *Transcoder) cleanupCache() {
 
 // GetCacheStats returns cache statistics
 func (t *Transcoder) GetCacheStats() map[string]interface{} {
-
 	var totalSize int64
 	var inProgress int
+	var totalEntries int
 
-	for _, entry := range t.cacheEntries {
-
+	t.cacheEntries.Range(func(key string, entry *CacheEntry) bool {
 		totalSize += entry.Size
 		if entry.InProgress {
 			inProgress++
 		}
-
-	}
+		totalEntries++
+		return true
+	})
 
 	return map[string]interface{}{
-		"total_entries": len(t.cacheEntries),
+		"total_entries": totalEntries,
 		"total_size":    totalSize,
 		"max_size":      t.maxCacheSize,
 		"in_progress":   inProgress,
