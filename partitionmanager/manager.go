@@ -697,9 +697,6 @@ func (pm *PartitionManager) removePartitionHolder(partitionID PartitionID) {
 
 	// Remove ourselves as a holder by setting a tombstone
 	updates := pm.deps.Frogpond.DeleteDataPoint(holderKey)
-	if pm.deps.ContentKV != nil {
-		pm.deps.ContentKV.Delete([]byte(holderKey))
-	}
 	pm.sendUpdates(updates)
 
 	pm.debugf("[PARTITION] Removed %s as holder for %s", pm.deps.NodeID, partitionID)
