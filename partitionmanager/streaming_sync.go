@@ -40,7 +40,7 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 
 	// Stream entries one by one using FileStore
 	entriesStreamed := 0
-	err := pm.deps.FileStore.ScanMetadata(prefix, func(key string, metadata []byte) error {
+	err := pm.deps.FileStore.Scan(prefix, func(key string, metadata, content []byte) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("client disconnected")
@@ -52,7 +52,6 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 		}
 
 		// Get content for this key
-		content, _ := pm.deps.FileStore.GetContent(key)
 		if content == nil {
 			content = []byte{}
 		}
