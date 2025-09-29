@@ -44,6 +44,8 @@ func main() {
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	noStore := flag.Bool("no-store", false, "Client mode: participate in CRDT but don't store partitions locally")
 	profiling := flag.Bool("profiling", false, "Enable profiling immediately at startup")
+	storageMajor := flag.String("storage-major", "ensemble", "Storage format major (ensemble or bolt)")
+	storageMinor := flag.String("storage-minor", "bolt", "Storage format minor (ensemble or bolt)")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
 
@@ -65,7 +67,7 @@ func main() {
 			log.Fatal("--import-dir requires --cluster-dir to be specified")
 		}
 
-		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling)
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor)
 	}
 }
 
@@ -211,7 +213,7 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool, storageMajor string, storageMinor string) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:           nodeID,
@@ -221,6 +223,8 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 		ImportDir:    importDir,
 		HTTPDataPort: httpPort,
 		NoStore:      noStore,
+		StorageMajor: storageMajor,
+		StorageMinor: storageMinor,
 	})
 
 	// Enable debug logging if requested

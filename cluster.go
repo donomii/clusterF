@@ -157,6 +157,44 @@ func (c *Cluster) PartitionManager() types.PartitionManagerLike {
 	return c.partitionManager
 }
 
+type StorageSettings struct {
+	Program      string `json:"program"`
+	URL          string `json:"url"`
+	StorageMajor string `json:"storage_major"`
+	StorageMinor string `json:"storage_minor"`
+	Version      string `json:"version"`
+}
+
+// loadStorageSettings loads storage settings from settings.json in the data directory
+func loadStorageSettings(dataDir string) (*StorageSettings, error) {
+	settingsPath := filepath.Join(dataDir, "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var settings StorageSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, err
+	}
+	return &settings, nil
+}
+
+// saveStorageSettings saves storage settings to settings.json in the data directory
+func saveStorageSettings(dataDir string, settings StorageSettings) error {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(dataDir, "settings.json")
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, data, 0o644)
+}
+
 type ClusterOpts struct {
 	ID            string
 	DataDir       string
@@ -170,6 +208,8 @@ type ClusterOpts struct {
 	ClusterDir    string // if set, only export files with this path prefix
 	ImportDir     string // if set, import files from this directory to the cluster
 	NoStore       bool   // if true, don't store partitions locally (client mode)
+	StorageMajor  string // storage format major (ensemble or bolt)
+	StorageMinor  string // storage format minor (ensemble or bolt)
 }
 
 func NewCluster(opts ClusterOpts) *Cluster {
@@ -249,6 +289,61 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		opts.DataDir = filepath.Join(base, id)
 	}
 
+	// Set default storage options if not specified
+	if opts.StorageMajor == "" {
+		opts.StorageMajor = "ensemble"
+	}
+	if opts.StorageMinor == "" {
+		opts.StorageMinor = "bolt"
+	}
+
+	// Load existing settings if present
+	existingSettings, err := loadStorageSettings(opts.DataDir)
+	if err != nil {
+		if opts.Logger != nil {
+			opts.Logger.Fatalf("Failed to load storage settings from %s: %v", opts.DataDir, err)
+		} else {
+			log.Fatalf("Failed to load storage settings from %s: %v", opts.DataDir, err)
+		}
+	}
+
+	// Validate settings or create new ones
+	if existingSettings != nil {
+		// Settings file exists, validate that command line options match
+		if opts.StorageMajor != existingSettings.StorageMajor {
+			if opts.Logger != nil {
+				opts.Logger.Printf("[WARNING] Ignoring --storage-major=%s, using existing setting: %s", opts.StorageMajor, existingSettings.StorageMajor)
+			} else {
+				log.Printf("[WARNING] Ignoring --storage-major=%s, using existing setting: %s", opts.StorageMajor, existingSettings.StorageMajor)
+			}
+			opts.StorageMajor = existingSettings.StorageMajor
+		}
+		if opts.StorageMinor != existingSettings.StorageMinor {
+			if opts.Logger != nil {
+				opts.Logger.Printf("[WARNING] Ignoring --storage-minor=%s, using existing setting: %s", opts.StorageMinor, existingSettings.StorageMinor)
+			} else {
+				log.Printf("[WARNING] Ignoring --storage-minor=%s, using existing setting: %s", opts.StorageMinor, existingSettings.StorageMinor)
+			}
+			opts.StorageMinor = existingSettings.StorageMinor
+		}
+	} else {
+		// No settings file exists, create one with current options
+		newSettings := StorageSettings{
+			Program:      "clusterF",
+			URL:          "https://github.com/donomii/clusterF",
+			StorageMajor: opts.StorageMajor,
+			StorageMinor: opts.StorageMinor,
+			Version:      version,
+		}
+		if err := saveStorageSettings(opts.DataDir, newSettings); err != nil {
+			if opts.Logger != nil {
+				opts.Logger.Fatalf("Failed to save storage settings to %s: %v", opts.DataDir, err)
+			} else {
+				log.Fatalf("Failed to save storage settings to %s: %v", opts.DataDir, err)
+			}
+		}
+	}
+
 	// Ensure the data directory exists immediately
 	if err := os.MkdirAll(opts.DataDir, 0o755); err != nil {
 		if opts.Logger != nil {
@@ -317,17 +412,16 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Initialized frogpond node\n")
 
 	// Initialize KV stores
-	filesKVPath := filepath.Join(opts.DataDir, "kv_metadata")
-	crdtKVPath := filepath.Join(opts.DataDir, "kv_content")
-	// Use ensemble over bolt for stability
-	c.metadataKV = ensemblekv.SimpleEnsembleCreator("ensemble", "bolt", filesKVPath, 8*1024*1024, 32, 256*1024*1024)
-	c.contentKV = ensemblekv.SimpleEnsembleCreator("ensemble", "bolt", crdtKVPath, 2*1024*1024, 16, 64*1024*1024)
+	metadataKVPath := filepath.Join(opts.DataDir, "datafiles", "kv_metadata")
+	contentKVPath := filepath.Join(opts.DataDir, "datafiles", "kv_content")
+	c.metadataKV = ensemblekv.SimpleEnsembleCreator(opts.StorageMajor, opts.StorageMinor, metadataKVPath, 20*1024*1024, 50, 256*1024*1024)
+	c.contentKV = ensemblekv.SimpleEnsembleCreator(opts.StorageMajor, opts.StorageMinor, contentKVPath, 20*1024*1024, 50, 64*1024*1024)
 	// Enforce hard-fail if storage cannot be opened to avoid split-brain directories
 	if c.metadataKV == nil {
-		c.Logger().Fatalf("[STORAGE] Failed to initialize files KV at %s; exiting", filesKVPath)
+		c.Logger().Fatalf("[STORAGE] Failed to initialize files KV at %s; exiting", metadataKVPath)
 	}
 	if c.contentKV == nil {
-		c.Logger().Fatalf("[STORAGE] Failed to initialize CRDT KV at %s; exiting", crdtKVPath)
+		c.Logger().Fatalf("[STORAGE] Failed to initialize CRDT KV at %s; exiting", contentKVPath)
 	}
 	c.debugf("Initialized KV stores\n")
 	// Load CRDT state from KV (if any) before applying defaults
