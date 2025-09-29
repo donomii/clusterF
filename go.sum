@@ -5,8 +5,8 @@ github.com/aws/aws-sdk-go v1.55.7/go.mod h1:eRwEWoyTWFMVYVQzKMNHWP5/RV4xIUGMQfXQ
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/donomii/ensemblekv v0.0.0-20250427181959-74bb6dcf7c35 h1:Dug9eY+bnklZ/lSm7/fH/mM2kWm7OlM8yg8f+GGpVrY=
-github.com/donomii/ensemblekv v0.0.0-20250427181959-74bb6dcf7c35/go.mod h1:eoJvISBeK8Pe+5aHlaeOJ0WuuZwHiYtuE/xXT65CYoY=
+github.com/donomii/ensemblekv v0.0.0-20250929133130-25833309181d h1:k/SEMI9MPsSvXsSZbCuXAJH51cJkpt1GPo/MWQ7h8lY=
+github.com/donomii/ensemblekv v0.0.0-20250929133130-25833309181d/go.mod h1:eoJvISBeK8Pe+5aHlaeOJ0WuuZwHiYtuE/xXT65CYoY=
 github.com/donomii/frogpond v0.0.0-20250913173135-4515c9c7f901 h1:9QlzyvRM3v2SE8uJEARHAd5WhyMYX2q+7VZdPAfBdzM=
 github.com/donomii/frogpond v0.0.0-20250913173135-4515c9c7f901/go.mod h1:oBeVu0d/IKMY2PemElAIg1HxilcjKlooW1bJo92nfAs=
 github.com/donomii/go-webdav v0.0.0-20240304173232-8e8f80405603 h1:HRiyOGzVcZXTPYoVvgQXvGkihQm6EkoySvn1kwDjm9w=
