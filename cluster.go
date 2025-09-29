@@ -1103,9 +1103,6 @@ func (c *Cluster) initializeClusterSettings() {
 	if data.Deleted || len(data.Value) == 0 {
 		rfJSON, _ := json.Marshal(DefaultRF)
 		updates := c.frogpond.SetDataPoint("cluster/replication_factor", rfJSON)
-		if c.contentKV != nil {
-			_ = c.contentKV.Put([]byte("cluster/replication_factor"), rfJSON)
-		}
 		c.sendUpdatesToPeers(updates)
 		c.Logger().Printf("[INIT] Set default replication factor to %d", DefaultRF)
 	}

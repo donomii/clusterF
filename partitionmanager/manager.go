@@ -675,11 +675,6 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	updates1 := pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)
 	updates2 := pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)
 
-	if pm.deps.ContentKV != nil {
-		pm.deps.ContentKV.Put([]byte(holderKey), holderJSON)
-		pm.deps.ContentKV.Put([]byte(metadataKey), fileCountJSON)
-	}
-
 	// Send updates to peers
 	pm.sendUpdates(updates1)
 	pm.sendUpdates(updates2)
@@ -757,9 +752,6 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 			pm.debugf("[PARTITION] Holder %s for partition %s not in active nodes, removing from holders list", holder, partitionID)
 			// Remove this holder from CRDT
 			updates := pm.deps.Frogpond.DeleteDataPoint(string(dp.Key))
-			if pm.deps.ContentKV != nil {
-				pm.deps.ContentKV.Delete([]byte(dp.Key))
-			}
 			pm.sendUpdates(updates)
 			continue
 		}
