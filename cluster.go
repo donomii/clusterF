@@ -320,8 +320,8 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	filesKVPath := filepath.Join(opts.DataDir, "kv_metadata")
 	crdtKVPath := filepath.Join(opts.DataDir, "kv_content")
 	// Use ensemble over bolt for stability
-	c.metadataKV = ensemblekv.SimpleEnsembleCreator("bolt", "", filesKVPath, 8*1024*1024, 32, 256*1024*1024)
-	c.contentKV = ensemblekv.SimpleEnsembleCreator("bolt", "", crdtKVPath, 2*1024*1024, 16, 64*1024*1024)
+	c.metadataKV = ensemblekv.SimpleEnsembleCreator("ensemble", "bolt", filesKVPath, 8*1024*1024, 32, 256*1024*1024)
+	c.contentKV = ensemblekv.SimpleEnsembleCreator("ensemble", "bolt", crdtKVPath, 2*1024*1024, 16, 64*1024*1024)
 	// Enforce hard-fail if storage cannot be opened to avoid split-brain directories
 	if c.metadataKV == nil {
 		c.Logger().Fatalf("[STORAGE] Failed to initialize files KV at %s; exiting", filesKVPath)
