@@ -701,13 +701,30 @@ func (pm *PartitionManager) removePartitionHolder(partitionID PartitionID) {
 	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
 
 	// Remove ourselves as a holder by setting a tombstone
-	updates := pm.deps.Frogpond.SetDataPoint(holderKey, nil) // nil = delete
+	updates := pm.deps.Frogpond.DeleteDataPoint(holderKey)
 	if pm.deps.ContentKV != nil {
 		pm.deps.ContentKV.Delete([]byte(holderKey))
 	}
 	pm.sendUpdates(updates)
 
 	pm.debugf("[PARTITION] Removed %s as holder for %s", pm.deps.NodeID, partitionID)
+}
+
+// isNodeActive checks if a node is active in the CRDT nodes/ section
+func (pm *PartitionManager) isNodeActive(nodeID types.NodeID) bool {
+	if !pm.hasFrogpond() {
+		return false
+	}
+
+	nodeKey := fmt.Sprintf("nodes/%s", nodeID)
+	dp := pm.deps.Frogpond.GetDataPoint(nodeKey)
+
+	// If node is deleted or doesn't exist, it's not active
+	if dp.Deleted || len(dp.Value) == 0 {
+		return false
+	}
+
+	return true
 }
 
 // getPartitionInfo retrieves partition info from CRDT using individual holder keys
@@ -733,7 +750,21 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 
 		// Extract node ID from key
 		nodeID := strings.TrimPrefix(string(dp.Key), holderPrefix)
-		holders = append(holders, types.NodeID(nodeID))
+		holder := types.NodeID(nodeID)
+
+		// Check if the node is active in nodes/ section
+		if !pm.isNodeActive(holder) {
+			pm.debugf("[PARTITION] Holder %s for partition %s not in active nodes, removing from holders list", holder, partitionID)
+			// Remove this holder from CRDT
+			updates := pm.deps.Frogpond.DeleteDataPoint(string(dp.Key))
+			if pm.deps.ContentKV != nil {
+				pm.deps.ContentKV.Delete([]byte(dp.Key))
+			}
+			pm.sendUpdates(updates)
+			continue
+		}
+
+		holders = append(holders, holder)
 
 		// Parse holder data
 		var holderData map[string]interface{}
