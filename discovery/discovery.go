@@ -8,9 +8,9 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
 	"github.com/donomii/clusterF/types"
 )
@@ -38,8 +38,7 @@ type DiscoveryManager struct {
 	debug         bool
 
 	// Peer tracking
-	peers    map[string]*types.PeerInfo
-	peersMux sync.RWMutex
+	peers *syncmap.SyncMap[string, *types.PeerInfo]
 
 	// Network components
 	broadcastConn *net.UDPConn
@@ -63,7 +62,7 @@ func NewDiscoveryManager(nodeID string, httpPort int, discoveryPort int, tm *thr
 		httpPort:          httpPort,
 		broadcastPort:     discoveryPort,
 		logger:            logger,
-		peers:             make(map[string]*types.PeerInfo),
+		peers:             syncmap.NewSyncMap[string, *types.PeerInfo](),
 		broadcastInterval: 5 * time.Second,
 		peerTimeout:       15 * time.Second,
 		threadManager:     tm,
@@ -162,30 +161,25 @@ func (dm *DiscoveryManager) Stop() {
 
 // GetPeers returns a list of currently known peers
 func (dm *DiscoveryManager) GetPeers() []*types.PeerInfo {
-	dm.peersMux.RLock()
-	defer dm.peersMux.RUnlock()
-
-	peers := make([]*types.PeerInfo, 0, len(dm.peers))
-	for _, peer := range dm.peers {
+	var peers []*types.PeerInfo
+	dm.peers.Range(func(nodeID string, peer *types.PeerInfo) bool {
 		if peer.NodeID != dm.nodeID { // Exclude ourselves
 			peers = append(peers, peer)
 		}
-	}
-
+		return true
+	})
 	return peers
 }
 
 // GetPeerCount returns the number of active peers (excluding ourselves)
 func (dm *DiscoveryManager) GetPeerCount() int {
-	dm.peersMux.RLock()
-	defer dm.peersMux.RUnlock()
-
 	count := 0
-	for _, peer := range dm.peers {
+	dm.peers.Range(func(nodeID string, peer *types.PeerInfo) bool {
 		if peer.NodeID != dm.nodeID {
 			count++
 		}
-	}
+		return true
+	})
 	return count
 }
 
@@ -291,7 +285,6 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 	}
 
 	// Update peer information
-	dm.peersMux.Lock()
 	peer := &types.PeerInfo{
 		NodeID:   nodeID,
 		HTTPPort: httpPort,
@@ -299,9 +292,11 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 		LastSeen: time.Now(),
 	}
 
-	isNew := dm.peers[nodeID] == nil
-	dm.peers[nodeID] = peer
-	dm.peersMux.Unlock()
+	_, isNew := dm.peers.LoadOrStore(nodeID, peer)
+	if !isNew {
+		dm.peers.Store(nodeID, peer)
+	}
+	isNew = !isNew
 
 	if isNew {
 		dm.Debugf("Discovered new peer: %s at %s:%d (seen by %s)", nodeID, peer.Address, httpPort, dm.nodeID)
@@ -328,15 +323,13 @@ func (dm *DiscoveryManager) cleanupLoop(ctx context.Context) {
 func (dm *DiscoveryManager) cleanupStalePeers() {
 	now := time.Now()
 
-	dm.peersMux.Lock()
-	defer dm.peersMux.Unlock()
-
-	for nodeID, peer := range dm.peers {
+	dm.peers.Range(func(nodeID string, peer *types.PeerInfo) bool {
 		if now.Sub(peer.LastSeen) > dm.peerTimeout && nodeID != dm.nodeID {
 			//dm.logger.Printf("Peer %s timed out, removing", nodeID)
-			delete(dm.peers, nodeID)
+			dm.peers.Delete(nodeID)
 		}
-	}
+		return true
+	})
 }
 
 // SetBroadcastInterval configures how often to broadcast our presence
@@ -353,11 +346,8 @@ func (dm *DiscoveryManager) SetPeerTimeout(timeout time.Duration) {
 
 // GetDiscoveryStatus returns current discovery statistics
 func (dm *DiscoveryManager) GetDiscoveryStatus() map[string]interface{} {
-	dm.peersMux.RLock()
-	defer dm.peersMux.RUnlock()
-
-	peerList := make([]map[string]interface{}, 0, len(dm.peers))
-	for _, peer := range dm.peers {
+	var peerList []map[string]interface{}
+	dm.peers.Range(func(nodeID string, peer *types.PeerInfo) bool {
 		if peer.NodeID != dm.nodeID {
 			peerList = append(peerList, map[string]interface{}{
 				"node_id":   peer.NodeID,
@@ -366,7 +356,8 @@ func (dm *DiscoveryManager) GetDiscoveryStatus() map[string]interface{} {
 				"last_seen": peer.LastSeen.Unix(),
 			})
 		}
-	}
+		return true
+	})
 
 	return map[string]interface{}{
 		"node_id":               dm.nodeID,
