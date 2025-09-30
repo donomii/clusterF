@@ -1,3 +1,4 @@
+// A typed, thread-safe map built on top of sync.Map, using generics.
 package syncmap
 
 import "sync"

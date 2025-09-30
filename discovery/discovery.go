@@ -210,7 +210,6 @@ func (dm *DiscoveryManager) broadcastLoop(ctx context.Context) {
 }
 
 // broadcast sends our node information via UDP broadcast
-
 func (dm *DiscoveryManager) broadcast() {
 	if dm.broadcastConn == nil {
 		dm.Debugf("Broadcast skipped: connection not available")
@@ -305,7 +304,6 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 	dm.peersMux.Unlock()
 
 	if isNew {
-		// Include discovering node ID to clarify which node observed the peer
 		dm.Debugf("Discovered new peer: %s at %s:%d (seen by %s)", nodeID, peer.Address, httpPort, dm.nodeID)
 	}
 }
