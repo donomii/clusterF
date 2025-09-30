@@ -526,7 +526,7 @@ func (e *Syncer) performImport(ctx context.Context) error {
 
 // importFromDir walks importDir and uploads files to cluster
 func (e *Syncer) importFromDir(ctx context.Context) error {
-	var throttle = make(chan struct{}, 10) // limit concurrency
+	var throttle = make(chan struct{}, 20) // limit concurrency
 	return filepath.WalkDir(e.importDir, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -551,16 +551,21 @@ func (e *Syncer) importFromDir(ctx context.Context) error {
 			return nil
 		}
 
+		fmt.Printf("[IMPORT] Channel length: %d\n", len(throttle))
 		throttle <- struct{}{}
 
-		uploadSyncfile(e, p, clusterPath, st, throttle)
+		fmt.Printf("[IMPORT] Uploading %s\n", p)
+		go uploadSyncfile(e, p, clusterPath, st, throttle)
 
 		return nil
 	})
 }
 
 func uploadSyncfile(e *Syncer, p, clusterPath string, st fs.FileInfo, throttle chan struct{}) {
-	defer func() { <-throttle }()
+	defer func() {
+		fmt.Printf("[IMPORT] Finished uploading %s\n", p)
+		<-throttle
+	}()
 
 	// Check if file already exists with same content
 	if meta, err := e.fs.MetadataForPath(clusterPath); err == nil {
