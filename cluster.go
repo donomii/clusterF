@@ -144,6 +144,9 @@ type Cluster struct {
 
 	// Peer addresses
 	peerAddrs *syncmap.SyncMap[types.NodeID, *types.PeerInfo]
+
+	// Current file being processed (for monitoring)
+	currentFile atomic.Value // stores string
 }
 
 func (c *Cluster) Logger() *log.Logger {
@@ -478,6 +481,9 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		if fs, err := filesync.NewFileSyncer(opts.ExportDir, opts.ImportDir, opts.ClusterDir, c.Logger(), c.FileSystem); err != nil {
 			c.Logger().Printf("[FILESYNC] Failed to init filesync: %v", err)
 		} else {
+			fs.SetCurrentFileCallback(func(path string) {
+				c.currentFile.Store(path)
+			})
 			c.filesync = fs
 		}
 	}
@@ -917,12 +923,18 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read basic fields without mutex - they're set once at startup
+	var currentFile string
+	if cf := c.currentFile.Load(); cf != nil {
+		currentFile = cf.(string)
+	}
+
 	status := map[string]interface{}{
 		"node_id":            c.NodeId,
 		"data_dir":           c.DataDir,
 		"http_port":          c.HTTPDataPort,
 		"replication_factor": rf,
 		"partition_stats":    partitionStats,
+		"current_file":       currentFile,
 	}
 
 	// Debug: log what we're sending

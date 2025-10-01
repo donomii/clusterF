@@ -110,6 +110,63 @@ func (c *Cluster) setReplicationFactor(rf int) {
 
 }
 
+// GetAllNodes returns all nodes from CRDT
+func (c *Cluster) GetAllNodes() map[types.NodeID]*types.NodeData {
+	nodes := c.frogpond.GetAllMatchingPrefix("nodes/")
+	allNodes := make(map[types.NodeID]*types.NodeData)
+
+	for _, data := range nodes {
+		if data.Deleted {
+			continue
+		}
+
+		var nodeData types.NodeData
+		if err := json.Unmarshal(data.Value, &nodeData); err != nil {
+			continue
+		}
+
+		allNodes[types.NodeID(nodeData.NodeID)] = &nodeData
+	}
+
+	return allNodes
+}
+
+// GetNodesForPartition returns nodes that hold a specific partition
+func (c *Cluster) GetNodesForPartition(partitionName string) []types.NodeID {
+	holderPrefix := fmt.Sprintf("partitions/%s/holders/", partitionName)
+	dataPoints := c.frogpond.GetAllMatchingPrefix(holderPrefix)
+
+	var holders []types.NodeID
+	for _, dp := range dataPoints {
+		if dp.Deleted || len(dp.Value) == 0 {
+			continue
+		}
+
+		// Extract node ID from key
+		nodeID := strings.TrimPrefix(string(dp.Key), holderPrefix)
+		holders = append(holders, types.NodeID(nodeID))
+	}
+
+	return holders
+}
+
+// GetNodeInfo returns information about a specific node
+func (c *Cluster) GetNodeInfo(nodeID types.NodeID) *types.NodeData {
+	nodeKey := fmt.Sprintf("nodes/%s", nodeID)
+	dp := c.frogpond.GetDataPoint(nodeKey)
+
+	if dp.Deleted || len(dp.Value) == 0 {
+		return nil
+	}
+
+	var nodeData types.NodeData
+	if err := json.Unmarshal(dp.Value, &nodeData); err != nil {
+		return nil
+	}
+
+	return &nodeData
+}
+
 // getAvailableNodes returns list of available nodes from frogpond
 func (c *Cluster) getAvailableNodes() []types.NodeID {
 	nodes := c.frogpond.GetAllMatchingPrefix("nodes/")

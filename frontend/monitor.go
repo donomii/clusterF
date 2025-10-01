@@ -46,6 +46,10 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
             <div class="stat-value" id="peers">-</div>
             <div class="stat-label">Connected Peers</div>
         </div>
+        <div class="stat-card" style="grid-column: span 2;">
+            <div class="stat-value" id="current_file_name" style="font-size: 1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-</div>
+            <div class="stat-label">Current File</div>
+        </div>
         <div class="stat-card">
             <div class="stat-value" id="replication_factor">-</div>
             <div class="stat-label">Replication Factor</div>
@@ -102,6 +106,7 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
         <div>Bytes Stored: <span id="node_bytes_stored">-</span></div>
         <div>Disk Usage: <span id="node_disk_usage">-</span></div>
         <div>Disk Free: <span id="node_disk_free">-</span></div>
+        <div>Current File Path: <span id="current_file_path">-</span></div>
         <div id="debug-info" style="margin-top: 10px; color: #facc15; font-size: 12px;">API Status: Checking...</div>
         <div>Endpoints:</div>
         <div style="margin-left: 20px;">
@@ -178,6 +183,19 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
                 // Update display with available data
                 const peerCount = clusterStats.peer_list ? clusterStats.peer_list.length : 0;
                 document.getElementById('peers').textContent = peerCount;
+                
+                // Update current file
+                const currentFile = status.current_file || '';
+                console.log('[MONITOR] Current file from status:', currentFile);
+                
+                // Extract filename from path
+                let fileName = '-';
+                if (currentFile) {
+                    const parts = currentFile.split('/');
+                    fileName = parts[parts.length - 1] || '-';
+                }
+                document.getElementById('current_file_name').textContent = fileName;
+                document.getElementById('current_file_path').textContent = currentFile || '-';
                 
                 const rf = status.replication_factor || 3;
                 document.getElementById('replication_factor').textContent = rf;
@@ -313,6 +331,8 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
                 
                 // Show error state instead of leaving dashes
                 document.getElementById('peers').textContent = 'ERR';
+                document.getElementById('current_file_name').textContent = 'ERR';
+                document.getElementById('current_file_path').textContent = 'ERR';
                 document.getElementById('replication_factor').textContent = 'ERR';
                 document.getElementById('tombstones').textContent = 'ERR';
                 document.getElementById('under_replicated').textContent = 'ERR';
@@ -386,13 +406,13 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
             window.open('/cluster-visualizer.html', '_blank');
         }
         
-        // Auto-refresh every 3 seconds
+        // Auto-refresh every 1 second
         refreshStats();
         setInterval(() => {
             refreshStats().catch(error => {
                 console.error('Auto-refresh failed:', error);
             });
-        }, 30000);
+        }, 1000);
     </script>
 </body>
 </html>`

@@ -37,6 +37,13 @@ type Syncer struct {
 	importDir      string
 	lastImport     time.Time
 	importInterval time.Duration
+
+	setCurrentFile func(string) // callback to set current file for monitoring
+}
+
+// SetCurrentFileCallback sets the callback to update current file for monitoring
+func (e *Syncer) SetCurrentFileCallback(fn func(string)) {
+	e.setCurrentFile = fn
 }
 
 // NewFileSyncer creates a new syncer with export and import directories.
@@ -551,10 +558,8 @@ func (e *Syncer) importFromDir(ctx context.Context) error {
 			return nil
 		}
 
-		fmt.Printf("[IMPORT] Channel length: %d\n", len(throttle))
 		throttle <- struct{}{}
 
-		fmt.Printf("[IMPORT] Uploading %s\n", p)
 		go uploadSyncfile(e, p, clusterPath, st, throttle)
 
 		return nil
@@ -563,9 +568,15 @@ func (e *Syncer) importFromDir(ctx context.Context) error {
 
 func uploadSyncfile(e *Syncer, p, clusterPath string, st fs.FileInfo, throttle chan struct{}) {
 	defer func() {
-		fmt.Printf("[IMPORT] Finished uploading %s\n", p)
+		if e.setCurrentFile != nil {
+			e.setCurrentFile("")
+		}
 		<-throttle
 	}()
+
+	if e.setCurrentFile != nil {
+		e.setCurrentFile(clusterPath)
+	}
 
 	// Check if file already exists with same content
 	if meta, err := e.fs.MetadataForPath(clusterPath); err == nil {
@@ -582,6 +593,7 @@ func uploadSyncfile(e *Syncer, p, clusterPath string, st fs.FileInfo, throttle c
 
 	ct := contentTypeFromExt(p)
 	_ = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
+	e.logger.Printf("[IMPORT] Uploaded %s to cluster path %s", p, clusterPath)
 }
 
 // importPathToClusterPath converts a local file path to cluster path, returns (clusterPath, true) for files or ("", false) for directories

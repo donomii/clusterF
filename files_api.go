@@ -155,6 +155,10 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 }
 
 func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path string) {
+	// Update current file for monitoring
+	c.currentFile.Store(path)
+	defer c.currentFile.Store("")
+
 	content, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)

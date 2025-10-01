@@ -25,6 +25,9 @@ type ClusterLike interface {
 	ListDirectoryUsingSearch(path string) ([]*FileMetadata, error)
 	DataClient() *http.Client
 	ID() NodeID
+	GetAllNodes() map[NodeID]*NodeData
+	GetNodesForPartition(partitionName string) []NodeID
+	GetNodeInfo(nodeID NodeID) *NodeData
 }
 
 type PartitionManagerLike interface {
@@ -32,6 +35,7 @@ type PartitionManagerLike interface {
 	GetFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error)
 	DeleteFileFromPartition(path string) error
 	GetMetadataFromPartition(path string) (map[string]interface{}, error)
+	CalculatePartitionName(path string) string
 }
 
 type DiscoveryManagerLike interface {

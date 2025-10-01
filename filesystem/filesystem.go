@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"path/filepath"
 	"runtime"
@@ -209,26 +210,64 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 
 // forwardUploadToStorageNode forwards file uploads from no-store clients to storage nodes
 func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSON []byte, content []byte, contentType string) error {
-	// Find storage nodes that can hold this file
-	peers := fs.cluster.DiscoveryManager().GetPeers()
-	var storageNodes []*types.PeerInfo
+	// Calculate partition name for this file
+	partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
 
-	// Only forward to peers that are not no-store clients
-	// We can't easily detect if a peer is no-store, so try all peers
-	storageNodes = append(storageNodes, peers...)
+	// Get all nodes from CRDT
+	allNodes := fs.cluster.GetAllNodes()
 
-	if len(storageNodes) == 0 {
+	// Get nodes that hold this partition
+	nodesForPartition := fs.cluster.GetNodesForPartition(partitionName)
+
+	// If partition exists on nodes, use those
+	var targetNodes []string
+	if len(nodesForPartition) > 0 {
+		targetNodes = make([]string, len(nodesForPartition))
+		for i, nodeID := range nodesForPartition {
+			targetNodes[i] = string(nodeID)
+		}
+	} else {
+		// No nodes hold this partition yet - filter out no-store nodes and randomize
+		for nodeID, nodeInfo := range allNodes {
+			if nodeInfo != nil && nodeInfo.IsStorage {
+				targetNodes = append(targetNodes, string(nodeID))
+			}
+		}
+
+		// Randomize the list
+		if len(targetNodes) > 1 {
+			for i := len(targetNodes) - 1; i > 0; i-- {
+				j := rand.Intn(i + 1)
+				targetNodes[i], targetNodes[j] = targetNodes[j], targetNodes[i]
+			}
+		}
+	}
+
+	if len(targetNodes) == 0 {
 		return fmt.Errorf("no storage nodes available to forward upload")
 	}
 
-	// Try forwarding to storage nodes until one succeeds
+	// Get discovery peers to match nodeIDs to addresses
+	peers := fs.cluster.DiscoveryManager().GetPeers()
+	peerMap := make(map[string]*types.PeerInfo)
+	for _, peer := range peers {
+		peerMap[peer.NodeID] = peer
+	}
+
+	// Try forwarding to target nodes until one succeeds
 	var lastErr error
 	forwarded := false
 	skippedPeers := 0
 
 	modTime, size, metaErr := decodeForwardedMetadata(metadataJSON)
 
-	for _, peer := range storageNodes {
+	for _, nodeID := range targetNodes {
+		peer, ok := peerMap[nodeID]
+		if !ok {
+			fs.debugf("[FILES] Node %s not found in discovery peers", nodeID)
+			continue
+		}
+
 		if metaErr == nil {
 			upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size)
 			if err == nil && upToDate {
@@ -273,7 +312,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		lastErr = fmt.Errorf("peer %s returned %d", peer.NodeID, resp.StatusCode)
 	}
 
-	if forwarded || skippedPeers == len(storageNodes) {
+	if forwarded || skippedPeers == len(targetNodes) {
 		return nil
 	}
 

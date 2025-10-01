@@ -165,6 +165,11 @@ func HashToPartition(filename string) PartitionID {
 	return PartitionID(fmt.Sprintf("p%05d", partitionNum))
 }
 
+// CalculatePartitionName implements the interface method
+func (pm *PartitionManager) CalculatePartitionName(path string) string {
+	return string(HashToPartition(path))
+}
+
 // storeFileInPartition stores a file with metadata and content in separate stores
 func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error {
 	// If in no-store mode, don't store locally
