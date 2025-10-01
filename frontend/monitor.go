@@ -320,8 +320,11 @@ func (f *Frontend) HandleMonitorDashboard(w http.ResponseWriter, r *http.Request
                     }
                 }
                 
-                // Update input fields with current values
-                document.getElementById('rfInput').value = rf;
+                // Update input fields with current values ONLY if they're empty
+                const rfInput = document.getElementById('rfInput');
+                if (!rfInput.value) {
+                    rfInput.value = rf;
+                }
                 
                 debugDiv.textContent = 'API OK - Last update: ' + new Date().toLocaleTimeString();
                 

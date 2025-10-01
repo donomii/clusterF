@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/donomii/frogpond"
 )
 
 // handleCRDTListAPI lists immediate children (dirs and keys) under a prefix, with pagination.
@@ -20,13 +22,22 @@ func (c *Cluster) handleCRDTListAPI(w http.ResponseWriter, r *http.Request) {
 	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
 
 	dps := c.frogpond.GetAllMatchingPrefix(prefix)
-	log.Printf("CRDT ListAPI: found %d entries under prefix %q", len(dps), prefix)
+
+	// Filter out deleted keys
+	var activeDPs []frogpond.DataPoint
+	for _, dp := range dps {
+		if !dp.Deleted && len(dp.Value) > 0 {
+			activeDPs = append(activeDPs, dp)
+		}
+	}
+
+	log.Printf("CRDT ListAPI: found %d entries under prefix %q", len(activeDPs), prefix)
 	prefix_len := len(prefix)
 
 	ke := make(map[string]bool)
-	if len(dps) > 100 {
+	if len(activeDPs) > 100 {
 
-		for _, dp := range dps {
+		for _, dp := range activeDPs {
 			k := string(dp.Key)
 			var newk string
 			if len(k) > prefix_len {
@@ -37,7 +48,7 @@ func (c *Cluster) handleCRDTListAPI(w http.ResponseWriter, r *http.Request) {
 			ke[newk] = true
 		}
 	} else {
-		for _, dp := range dps {
+		for _, dp := range activeDPs {
 			k := string(dp.Key)
 			ke[k] = true
 
@@ -62,7 +73,13 @@ func (c *Cluster) handleCRDTListAPI(w http.ResponseWriter, r *http.Request) {
 	for k := range ke {
 		name := strings.TrimPrefix(k, prefix)
 		dps := c.frogpond.GetAllMatchingPrefix(k)
-		count := len(dps)
+		// Count only non-deleted keys
+		count := 0
+		for _, dp := range dps {
+			if !dp.Deleted && len(dp.Value) > 0 {
+				count++
+			}
+		}
 		out = append(out, map[string]string{"name": name, "key": k, "count": strconv.Itoa(count)})
 	}
 
@@ -157,6 +174,9 @@ func (c *Cluster) handleCRDTSearchAPI(w http.ResponseWriter, r *http.Request) {
 	dps := c.frogpond.GetAllMatchingPrefix("")
 	keys := make([]string, 0, len(dps))
 	for _, dp := range dps {
+		if dp.Deleted || len(dp.Value) == 0 {
+			continue
+		}
 		k := string(dp.Key)
 		if strings.Contains(k, q) {
 			keys = append(keys, k)

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +18,20 @@ type FileStore struct {
 	metadataKV ensemblekv.KvLike
 	contentKV  ensemblekv.KvLike
 	mutex      sync.RWMutex
+}
+
+// checkForRecursiveScan panics if we detect a recursive scan call
+func checkForRecursiveScan() {
+	buf := make([]byte, 4096)
+	n := runtime.Stack(buf, false)
+	stack := string(buf[:n])
+	
+	// Count how many times Scan or ScanMetadata appears in the stack
+	scanCount := strings.Count(stack, ".Scan(") + strings.Count(stack, ".ScanMetadata(") + strings.Count(stack, ".CalculatePartitionChecksum(")
+	
+	if scanCount > 1 {
+		panic(fmt.Sprintf("RECURSIVE SCAN DETECTED - FileStore scan methods called recursively!\n\nStack trace:\n%s", stack))
+	}
 }
 
 // FileData represents a complete file entry
@@ -121,6 +136,7 @@ func (fs *FileStore) Delete(key string) error {
 
 // Scan calls fn for each file with the given prefix
 func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content []byte) error) error {
+	checkForRecursiveScan()
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
 
@@ -157,6 +173,7 @@ func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content [
 
 // ScanMetadata calls fn for each metadata entry with the given prefix
 func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []byte) error) error {
+	checkForRecursiveScan()
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
 
@@ -172,6 +189,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 // GetSnapshot creates a consistent snapshot of all files matching prefix
 func (fs *FileStore) GetSnapshot(prefix string) ([]*FileData, error) {
+	checkForRecursiveScan()
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
 
@@ -192,6 +210,7 @@ func (fs *FileStore) GetSnapshot(prefix string) ([]*FileData, error) {
 
 // CalculatePartitionChecksum computes a consistent checksum for all files in a partition
 func (fs *FileStore) CalculatePartitionChecksum(prefix string) (string, error) {
+	checkForRecursiveScan()
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
 	

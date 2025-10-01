@@ -177,9 +177,8 @@ func TestDiscovery_CleanupRemovesStalePeers(t *testing.T) {
 	dm.SetTimings(100*time.Millisecond, 200*time.Millisecond)
 
 	// Manually add a stale peer
-	dm.peersMux.Lock()
-	dm.peers["node-b"] = &types.PeerInfo{NodeID: "node-b", HTTPPort: 31502, Address: "127.0.0.1", LastSeen: time.Now().Add(-1 * time.Hour)}
-	dm.peersMux.Unlock()
+
+	dm.peers.Store("node-b", &types.PeerInfo{NodeID: "node-b", HTTPPort: 31502, Address: "127.0.0.1", LastSeen: time.Now().Add(-1 * time.Hour)})
 
 	// Run cleanup once
 	dm.cleanupStalePeers()

@@ -120,10 +120,11 @@
             const res = await fetch('/api/crdt/get?' + params.toString());
             if (!res.ok) { alert('Failed to load key'); return; }
             const data = await res.json();
+            if (data.deleted) return;
             const v = document.getElementById('value');
             const pretty = data.value_json ? JSON.stringify(data.value_json, null, 2) : (data.value_text || '[binary]');
             v.textContent = pretty;
-            document.getElementById('keytitle').textContent = key + (data.deleted ? ' (deleted)' : '');
+            document.getElementById('keytitle').textContent = key;
         }
 
         function go() { setPrefix(document.getElementById('prefix').value.trim()); }
