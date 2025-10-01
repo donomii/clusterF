@@ -25,10 +25,10 @@ func checkForRecursiveScan() {
 	buf := make([]byte, 4096)
 	n := runtime.Stack(buf, false)
 	stack := string(buf[:n])
-	
+
 	// Count how many times Scan or ScanMetadata appears in the stack
-	scanCount := strings.Count(stack, ".Scan(") + strings.Count(stack, ".ScanMetadata(") + strings.Count(stack, ".CalculatePartitionChecksum(")
-	
+	scanCount := strings.Count(stack, "(*FileStore).Scan(") + strings.Count(stack, "(*FileStore).ScanMetadata(") + strings.Count(stack, "(*FileStore).CalculatePartitionChecksum(")
+
 	if scanCount > 1 {
 		panic(fmt.Sprintf("RECURSIVE SCAN DETECTED - FileStore scan methods called recursively!\n\nStack trace:\n%s", stack))
 	}
@@ -78,16 +78,12 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 
 // GetMetadata retrieves only metadata
 func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
-	fs.mutex.RLock()
-	defer fs.mutex.RUnlock()
 
 	return fs.metadataKV.Get([]byte(key))
 }
 
 // GetContent retrieves only content
 func (fs *FileStore) GetContent(key string) ([]byte, error) {
-	fs.mutex.RLock()
-	defer fs.mutex.RUnlock()
 
 	return fs.contentKV.Get([]byte(key))
 }
@@ -114,14 +110,12 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 
 // PutMetadata stores only metadata
 func (fs *FileStore) PutMetadata(key string, metadata []byte) error {
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
-
 	return fs.metadataKV.Put([]byte(key), metadata)
 }
 
 // Delete removes both metadata and content atomically
 func (fs *FileStore) Delete(key string) error {
+	checkForRecursiveScan()
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 
@@ -189,9 +183,6 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 // GetSnapshot creates a consistent snapshot of all files matching prefix
 func (fs *FileStore) GetSnapshot(prefix string) ([]*FileData, error) {
-	checkForRecursiveScan()
-	fs.mutex.RLock()
-	defer fs.mutex.RUnlock()
 
 	var files []*FileData
 
@@ -210,10 +201,7 @@ func (fs *FileStore) GetSnapshot(prefix string) ([]*FileData, error) {
 
 // CalculatePartitionChecksum computes a consistent checksum for all files in a partition
 func (fs *FileStore) CalculatePartitionChecksum(prefix string) (string, error) {
-	checkForRecursiveScan()
-	fs.mutex.RLock()
-	defer fs.mutex.RUnlock()
-	
+
 	// Collect all non-deleted entries atomically
 	type entry struct {
 		key      string
@@ -221,12 +209,12 @@ func (fs *FileStore) CalculatePartitionChecksum(prefix string) (string, error) {
 		content  []byte
 	}
 	var entries []entry
-	
+
 	err := fs.Scan(prefix, func(key string, metadata, content []byte) error {
 		if !strings.HasPrefix(key, prefix) || !strings.Contains(key, ":file:") {
 			return nil
 		}
-		
+
 		var parsedMetadata map[string]interface{}
 		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
 			if deleted, ok := parsedMetadata["deleted"].(bool); !ok || !deleted {
@@ -239,16 +227,18 @@ func (fs *FileStore) CalculatePartitionChecksum(prefix string) (string, error) {
 		}
 		return nil
 	})
-	
+
+	fs.mutex.RLock()
+	defer fs.mutex.RUnlock()
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Sort entries by key for deterministic ordering
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].key < entries[j].key
 	})
-	
+
 	// Hash in sorted order
 	hash := sha256.New()
 	for _, e := range entries {
@@ -256,6 +246,6 @@ func (fs *FileStore) CalculatePartitionChecksum(prefix string) (string, error) {
 		hash.Write(e.metadata)
 		hash.Write(e.content)
 	}
-	
+
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
