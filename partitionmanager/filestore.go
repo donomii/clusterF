@@ -1,7 +1,12 @@
 package partitionmanager
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 
 	ensemblekv "github.com/donomii/ensemblekv"
@@ -183,4 +188,55 @@ func (fs *FileStore) GetSnapshot(prefix string) ([]*FileData, error) {
 	})
 
 	return files, err
+}
+
+// CalculatePartitionChecksum computes a consistent checksum for all files in a partition
+func (fs *FileStore) CalculatePartitionChecksum(prefix string) (string, error) {
+	fs.mutex.RLock()
+	defer fs.mutex.RUnlock()
+	
+	// Collect all non-deleted entries atomically
+	type entry struct {
+		key      string
+		metadata []byte
+		content  []byte
+	}
+	var entries []entry
+	
+	err := fs.Scan(prefix, func(key string, metadata, content []byte) error {
+		if !strings.HasPrefix(key, prefix) || !strings.Contains(key, ":file:") {
+			return nil
+		}
+		
+		var parsedMetadata map[string]interface{}
+		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
+			if deleted, ok := parsedMetadata["deleted"].(bool); !ok || !deleted {
+				entries = append(entries, entry{
+					key:      key,
+					metadata: metadata,
+					content:  content,
+				})
+			}
+		}
+		return nil
+	})
+	
+	if err != nil {
+		return "", err
+	}
+	
+	// Sort entries by key for deterministic ordering
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].key < entries[j].key
+	})
+	
+	// Hash in sorted order
+	hash := sha256.New()
+	for _, e := range entries {
+		hash.Write([]byte(e.key))
+		hash.Write(e.metadata)
+		hash.Write(e.content)
+	}
+	
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

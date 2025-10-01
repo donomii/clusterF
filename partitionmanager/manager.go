@@ -51,11 +51,12 @@ type PartitionID string
 type PartitionVersion int64
 
 type PartitionInfo struct {
-	ID           PartitionID      `json:"id"`
-	Version      PartitionVersion `json:"version"`
-	LastModified int64            `json:"last_modified"`
-	FileCount    int              `json:"file_count"`
-	Holders      []types.NodeID   `json:"holders"`
+	ID           PartitionID             `json:"id"`
+	Version      PartitionVersion        `json:"version"`
+	LastModified int64                   `json:"last_modified"`
+	FileCount    int                     `json:"file_count"`
+	Holders      []types.NodeID          `json:"holders"`
+	Checksums    map[types.NodeID]string `json:"checksums"`
 }
 
 type PeerLoader func(types.NodeID) (*types.PeerInfo, bool)
@@ -655,11 +656,15 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	// This prevents overwriting other nodes' holder entries
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 
+	// Calculate partition checksum
+	partitionChecksum := pm.calculatePartitionChecksum(partitionID)
+
 	// Add ourselves as a holder
 	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
 	holderData := map[string]interface{}{
 		"joined_at":  time.Now().Unix(),
 		"file_count": fileCount,
+		"checksum":   partitionChecksum,
 	}
 	holderJSON, _ := json.Marshal(holderData)
 
@@ -730,6 +735,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 	var holders []types.NodeID
 	var totalFiles int
 	maxTimestamp := int64(0)
+	checksums := make(map[types.NodeID]string)
 
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
@@ -765,6 +771,9 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 		if fileCount, ok := holderData["file_count"].(float64); ok {
 			totalFiles = int(fileCount) // Use the latest file count
 		}
+		if checksum, ok := holderData["checksum"].(string); ok {
+			checksums[holder] = checksum
+		}
 	}
 
 	if len(holders) == 0 {
@@ -777,6 +786,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 		LastModified: maxTimestamp,
 		FileCount:    totalFiles,
 		Holders:      holders,
+		Checksums:    checksums,
 	}
 }
 
@@ -822,6 +832,7 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 		var holders []types.NodeID
 		var totalFiles int
 		maxTimestamp := int64(0)
+		checksums := make(map[types.NodeID]string)
 
 		for nodeID, data := range nodeData {
 			holders = append(holders, types.NodeID(nodeID))
@@ -835,6 +846,9 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 				if fileCount, ok := holderData["file_count"].(float64); ok {
 					totalFiles = int(fileCount)
 				}
+				if checksum, ok := holderData["checksum"].(string); ok {
+					checksums[types.NodeID(nodeID)] = checksum
+				}
 			}
 		}
 
@@ -844,6 +858,7 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 			LastModified: maxTimestamp,
 			FileCount:    totalFiles,
 			Holders:      holders,
+			Checksums:    checksums,
 		}
 	}
 
@@ -942,6 +957,17 @@ func (pm *PartitionManager) calculateEntryChecksum(metadata, content []byte) str
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+// calculatePartitionChecksum computes a checksum for all files in a partition
+func (pm *PartitionManager) calculatePartitionChecksum(partitionID PartitionID) string {
+	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
+	checksum, err := pm.deps.FileStore.CalculatePartitionChecksum(prefix)
+	if err != nil {
+		pm.debugf("[PARTITION] Failed to calculate checksum for %s: %v", partitionID, err)
+		return ""
+	}
+	return checksum
+}
+
 // periodicPartitionCheck continuously syncs partitions one at a time
 func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 	// Skip partition syncing if in no-store mode (client mode)
@@ -1007,11 +1033,52 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 		availablePeerIDs[peer.NodeID] = true
 	}
 
-	// Find partitions that are under-replicated
+	// Find partitions that are under-replicated or need syncing
 	for partitionID, info := range allPartitions {
 
 		if len(info.Holders) >= currentRF {
-			continue // Already properly replicated
+			// Check if we have this partition and if our checksum matches other holders
+			hasPartition := false
+			var ourChecksum string
+			prefix := fmt.Sprintf("partition:%s:", partitionID)
+			pm.deps.FileStore.ScanMetadata(prefix, func(key string, meta []byte) error {
+				if strings.HasPrefix(string(key), prefix) {
+					hasPartition = true
+					return fmt.Errorf("stop")
+				}
+				return nil
+			})
+
+			if hasPartition {
+				// Calculate our checksum
+				ourChecksum = pm.calculatePartitionChecksum(partitionID)
+
+				// Compare with other holders' checksums
+				needSync := false
+				for holderID, holderChecksum := range info.Checksums {
+					if holderID != pm.deps.NodeID && holderChecksum != "" && holderChecksum != ourChecksum {
+						pm.debugf("[PARTITION] Checksum mismatch for %s: ours=%s, %s=%s",
+							partitionID, ourChecksum, holderID, holderChecksum)
+						needSync = true
+						break
+					}
+				}
+
+				if needSync {
+					// Find available holders to sync from
+					var availableHolders []types.NodeID
+					for _, holderID := range info.Holders {
+						if holderID != pm.deps.NodeID && availablePeerIDs[string(holderID)] {
+							availableHolders = append(availableHolders, holderID)
+						}
+					}
+					if len(availableHolders) > 0 {
+						return partitionID, availableHolders
+					}
+				}
+			}
+
+			continue // Already properly replicated and in sync
 		}
 		//pm.debugf("[PARTITION] Partition %s has %d holders (need %d): %v", partitionID, len(info.Holders), currentRF, info.Holders)
 
