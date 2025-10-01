@@ -27,7 +27,7 @@ func checkForRecursiveScan() {
 	stack := string(buf[:n])
 
 	// Count how many times Scan or ScanMetadata appears in the stack
-	scanCount := strings.Count(stack, "(*FileStore).Scan(") + strings.Count(stack, "(*FileStore).ScanMetadata(") + strings.Count(stack, "(*FileStore).CalculatePartitionChecksum(")
+	scanCount := strings.Count(stack, "(*FileStore).Scan(") + strings.Count(stack, "(*FileStore).ScanMetadata(")
 
 	if scanCount > 1 {
 		panic(fmt.Sprintf("RECURSIVE SCAN DETECTED - FileStore scan methods called recursively!\n\nStack trace:\n%s", stack))
