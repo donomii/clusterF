@@ -116,7 +116,11 @@ func extractPartitionID(key string) string {
 	// Key format: partition:p12345:file:/path/to/file
 	parts := strings.Split(key, ":")
 	if len(parts) >= 2 && parts[0] == "partition" {
-		return parts[1]
+		if len(parts[1]) >= 3 {
+			fmt.Printf("extracting partition ID from key: %s\n", key)
+			partId := parts[1][0:3] // Extract partition ID (first 3 characters)
+			return partId
+		}
 	}
 	return ""
 }
