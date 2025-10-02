@@ -118,6 +118,7 @@ func (c *Cluster) searchAllPeers(req SearchRequest) []types.SearchResult {
 	// Search all peers
 	peers := c.DiscoveryManager().GetPeers()
 	for _, peer := range peers {
+		fmt.Printf("[SEARCH] Searching peer %s (%s)\n", peer.NodeID, peer.Address)
 		peerResults := c.searchPeer(peer, req)
 		for _, result := range peerResults {
 			if !seen[result.Path] {

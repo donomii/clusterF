@@ -369,7 +369,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		DisableKeepAlives:   false,
 	}
 	c.httpClient = &http.Client{
-		Timeout:   10 * time.Second,
+		Timeout:   30 * time.Second,
 		Transport: transport,
 	}
 	dataTransport := &http.Transport{
@@ -720,7 +720,7 @@ func (c *Cluster) Stop() {
 func corsMiddleware(debug bool, logger *log.Logger, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if debug {
-			logger.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+			//logger.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 		}
 		// Panic recovery
 		defer func() {
@@ -1058,7 +1058,7 @@ func (c *Cluster) periodicPeerSync(ctx context.Context) {
 				for _, peer := range peers {
 					peerNames = append(peerNames, fmt.Sprintf("%s@%s:%d", peer.NodeID, peer.Address, peer.HTTPPort))
 				}
-				c.debugf("[DISCOVERY] Known peers (%d): %v", len(peers), peerNames)
+				//c.debugf("[DISCOVERY] Known peers (%d): %v", len(peers), peerNames)
 			}
 		}
 	}
