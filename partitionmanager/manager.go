@@ -1032,11 +1032,14 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 	for _, peer := range peers {
 		availablePeerIDs[peer.NodeID] = true
 	}
+	pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs)
 	
 	// Also add all active nodes from CRDT
 	if pm.hasFrogpond() {
 		nodeDataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("nodes/")
+		pm.debugf("[PARTITION] Found %d node entries in CRDT", len(nodeDataPoints))
 		for _, dp := range nodeDataPoints {
+			pm.debugf("[PARTITION] CRDT node key=%s deleted=%v valuelen=%d", string(dp.Key), dp.Deleted, len(dp.Value))
 			if dp.Deleted || len(dp.Value) == 0 {
 				continue
 			}
@@ -1044,9 +1047,11 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 			parts := strings.Split(string(dp.Key), "/")
 			if len(parts) >= 2 {
 				availablePeerIDs[parts[1]] = true
+				pm.debugf("[PARTITION] Added CRDT node: %s", parts[1])
 			}
 		}
 	}
+	pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
 	// Find partitions that are under-replicated or need syncing
 	for partitionID, info := range allPartitions {
