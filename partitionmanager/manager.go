@@ -980,6 +980,10 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 		return
 	}
 
+	throttle := make(chan struct{}, 10)
+	defer close(throttle)
+
+	// Loop forever, checking for partitions to sync
 	for {
 		select {
 		case <-ctx.Done():
@@ -987,25 +991,21 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 		default:
 			// Find next partition that needs syncing
 			if partitionID, holders := pm.findNextPartitionToSyncWithHolders(); partitionID != "" {
-				// Try all available holders for this partition
-				syncSuccess := false
-				for _, holderID := range holders {
-					pm.logf("[PARTITION] Syncing %s from %s", partitionID, holderID)
-					if err := pm.syncPartitionFromPeer(ctx, partitionID, holderID); err != nil {
-						pm.logf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
-					} else {
-						syncSuccess = true
-						break // Successfully synced, move to next partition
+
+				<-throttle // Throttle concurrent syncs
+				go func(ctx context.Context, partitionID PartitionID) {
+					defer func() { throttle <- struct{}{} }()
+					// Try all available holders for this partition
+					for _, holderID := range holders {
+						pm.logf("[PARTITION] Syncing %s from %s", partitionID, holderID)
+
+						err := pm.syncPartitionFromPeer(ctx, partitionID, holderID)
+						if err != nil {
+							pm.logf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
+						}
 					}
-				}
-				if !syncSuccess {
-					// Brief pause after failing all holders to avoid tight error loops
-					select {
-					case <-ctx.Done():
-						return
-					case <-time.After(5 * time.Second):
-					}
-				}
+				}(ctx, partitionID)
+
 			} else {
 				// Nothing to sync, wait a bit before checking again
 				select {
