@@ -60,6 +60,7 @@ func (c *Cluster) getPeerList() []types.PeerInfo {
 		
 		peer := types.PeerInfo{
 			NodeID:      nodeData.NodeID,
+			Address:     nodeData.Address,
 			HTTPPort:    nodeData.HTTPPort,
 			LastSeen:    time.Unix(nodeData.LastSeen, 0),
 			Available:   nodeData.Available,
@@ -253,8 +254,19 @@ func (c *Cluster) updateNodeMetadata() {
 	bytesStored := c.calculateDataDirSize()
 	diskSize, diskFree := c.getDiskUsage()
 	
+	// Get our external address from discovery
+	address := ""
+	peers := c.DiscoveryManager().GetPeers()
+	for _, peer := range peers {
+		if peer.NodeID == string(c.NodeId) {
+			address = peer.Address
+			break
+		}
+	}
+	
 	nodeData := types.NodeData{
 		NodeID:      string(c.NodeId),
+		Address:     address,
 		HTTPPort:    c.HTTPDataPort,
 		LastSeen:    time.Now().Unix(),
 		Available:   true,

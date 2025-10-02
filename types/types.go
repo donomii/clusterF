@@ -109,6 +109,7 @@ type FileMetadata struct {
 
 type NodeData struct {
 	NodeID      string `json:"node_id"`
+	Address     string `json:"address"`
 	HTTPPort    int    `json:"http_port"`
 	LastSeen    int64  `json:"last_seen"`
 	Available   bool   `json:"available"`

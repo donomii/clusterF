@@ -1026,11 +1026,26 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 
 	pm.debugf("[PARTITION] Checking %d partitions for sync (RF=%d)", len(allPartitions), currentRF)
 
-	// Get available peers once
+	// Get available peers once - check BOTH discovery AND CRDT nodes
 	peers := pm.getPeers()
 	availablePeerIDs := make(map[string]bool)
 	for _, peer := range peers {
 		availablePeerIDs[peer.NodeID] = true
+	}
+	
+	// Also add all active nodes from CRDT
+	if pm.hasFrogpond() {
+		nodeDataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("nodes/")
+		for _, dp := range nodeDataPoints {
+			if dp.Deleted || len(dp.Value) == 0 {
+				continue
+			}
+			// Extract node ID from key: nodes/node-id
+			parts := strings.Split(string(dp.Key), "/")
+			if len(parts) >= 2 {
+				availablePeerIDs[parts[1]] = true
+			}
+		}
 	}
 
 	// Find partitions that are under-replicated or need syncing

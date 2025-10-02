@@ -439,15 +439,25 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		HTTPDataClient: c.httpDataClient,
 		Discovery:      c.discoveryManager,
 		LoadPeer: func(id types.NodeID) (*types.PeerInfo, bool) {
+			// First try peerAddrs (from Discovery)
 			peer, ok := c.peerAddrs.Load(types.NodeID(id))
-			if !ok || peer == nil {
-				return nil, false
+			if ok && peer != nil {
+				return &types.PeerInfo{
+					NodeID:   peer.NodeID,
+					Address:  peer.Address,
+					HTTPPort: peer.HTTPPort,
+				}, true
 			}
-			return &types.PeerInfo{
-				NodeID:   peer.NodeID,
-				Address:  peer.Address,
-				HTTPPort: peer.HTTPPort,
-			}, true
+			// Fallback: try CRDT nodes/ table
+			nodeData := c.GetNodeInfo(id)
+			if nodeData != nil && nodeData.Address != "" {
+				return &types.PeerInfo{
+					NodeID:   nodeData.NodeID,
+					Address:  nodeData.Address,
+					HTTPPort: nodeData.HTTPPort,
+				}, true
+			}
+			return nil, false
 		},
 		Frogpond:              c.frogpond,
 		SendUpdatesToPeers:    c.sendUpdatesToPeers,
@@ -1051,7 +1061,7 @@ func (c *Cluster) handleIntegrityCheck(w http.ResponseWriter, r *http.Request) {
 
 // periodicPeerSync syncs peer information from discovery manager
 func (c *Cluster) periodicPeerSync(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -1060,6 +1070,15 @@ func (c *Cluster) periodicPeerSync(ctx context.Context) {
 			return
 		case <-ticker.C:
 			c.syncPeersFromDiscovery()
+			// Debug: log known peers
+			if c.Debug {
+				peers := c.DiscoveryManager().GetPeers()
+				peerNames := make([]string, 0, len(peers))
+				for _, peer := range peers {
+					peerNames = append(peerNames, fmt.Sprintf("%s@%s:%d", peer.NodeID, peer.Address, peer.HTTPPort))
+				}
+				c.debugf("[DISCOVERY] Known peers (%d): %v", len(peers), peerNames)
+			}
 		}
 	}
 }
