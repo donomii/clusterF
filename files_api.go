@@ -159,6 +159,11 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	c.currentFile.Store(path)
 	defer c.currentFile.Store("")
 
+	// Debug: log all file uploads with no-store status
+	if c.noStore {
+		c.Logger().Printf("[FILES] NO-STORE node received PUT for %s (forwarded=%v)", path, r.Header.Get("X-Forwarded-From") != "")
+	}
+
 	content, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)

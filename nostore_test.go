@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/testenv"
 )
 
@@ -112,10 +111,8 @@ func TestCluster_NoStoreMode(t *testing.T) {
 
 	// Test 3: Check that no-store client does NOT have file locally
 	t.Logf("📋 Test 3: Verifying no-store client has no local storage")
-	// Check actual local storage, not file system interface
-	partitionID := partitionmanager.HashToPartition(testFileName)
-	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, testFileName)
-	_, err = nodes[2].metadataKV.Get([]byte(fileKey))
+	// Check actual local storage via partition manager
+	_, err = nodes[2].partitionManager.FileStore().GetMetadata(testFileName)
 	clientHasFile := (err == nil)
 
 	t.Logf("No-store client has file in local KV: %v", clientHasFile)
@@ -185,10 +182,8 @@ func TestCluster_NoStoreMode(t *testing.T) {
 
 	// Test 6: Verify file uploaded via no-store client is NOT stored locally on client
 	t.Logf("📋 Test 6: Verifying file uploaded via no-store client is not stored locally")
-	// Check actual local storage, not file system interface
-	clientStorePartitionID := partitionmanager.HashToPartition(clientStoreFileName)
-	clientStoreFileKey := fmt.Sprintf("partition:%s:file:%s", clientStorePartitionID, clientStoreFileName)
-	_, err = nodes[2].metadataKV.Get([]byte(clientStoreFileKey))
+	// Check actual local storage via partition manager
+	_, err = nodes[2].partitionManager.FileStore().GetMetadata(clientStoreFileName)
 	clientHasUploadedFile := (err == nil)
 
 	if clientHasUploadedFile {

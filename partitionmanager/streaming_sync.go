@@ -95,6 +95,12 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 
 // syncPartitionFromPeer synchronizes a partition using object-by-object streaming
 func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partitionID PartitionID, peerID types.NodeID) error {
+	// No-store nodes should never sync partitions
+	if pm.deps.NoStore {
+		pm.debugf("[PARTITION] No-store mode: refusing to sync partition %s", partitionID)
+		return fmt.Errorf("no-store mode: cannot sync partitions")
+	}
+
 	if !pm.hasFrogpond() {
 		return fmt.Errorf("frogpond node is not configured")
 	}

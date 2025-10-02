@@ -30,7 +30,6 @@ import (
 	"github.com/donomii/clusterF/threadmanager"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
-	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
 )
 
@@ -130,10 +129,6 @@ type Cluster struct {
 
 	// Optional transcoder for media files
 	Transcoder *Transcoder
-
-	// KV stores
-	metadataKV ensemblekv.KvLike
-	contentKV  ensemblekv.KvLike
 
 	// initial full-sync flag
 	initialSyncDone   atomic.Bool
@@ -397,20 +392,6 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	// Initialize frogpond CRDT node
 	c.frogpond = frogpond.NewNode()
 	c.debugf("Initialized frogpond node\n")
-
-	// Initialize KV stores
-	metadataKVPath := filepath.Join(opts.DataDir, "datafiles", "kv_metadata")
-	contentKVPath := filepath.Join(opts.DataDir, "datafiles", "kv_content")
-	c.metadataKV = ensemblekv.SimpleEnsembleCreator(opts.StorageMajor, opts.StorageMinor, metadataKVPath, 20*1024*1024, 50, 256*1024*1024)
-	c.contentKV = ensemblekv.SimpleEnsembleCreator(opts.StorageMajor, opts.StorageMinor, contentKVPath, 20*1024*1024, 50, 64*1024*1024)
-	// Enforce hard-fail if storage cannot be opened to avoid split-brain directories
-	if c.metadataKV == nil {
-		c.Logger().Fatalf("[STORAGE] Failed to initialize files KV at %s; exiting", metadataKVPath)
-	}
-	if c.contentKV == nil {
-		c.Logger().Fatalf("[STORAGE] Failed to initialize CRDT KV at %s; exiting", contentKVPath)
-	}
-	c.debugf("Initialized KV stores\n")
 
 	// Save settings only after successful KV store initialization
 	if existingSettings == nil {

@@ -47,17 +47,17 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 func (c *Cluster) getPeerList() []types.PeerInfo {
 	nodes := c.frogpond.GetAllMatchingPrefix("nodes/")
 	var peerList []types.PeerInfo
-	
+
 	for _, nodeDataPoint := range nodes {
 		if nodeDataPoint.Deleted {
 			continue
 		}
-		
+
 		var nodeData types.NodeData
 		if err := json.Unmarshal(nodeDataPoint.Value, &nodeData); err != nil {
 			continue
 		}
-		
+
 		peer := types.PeerInfo{
 			NodeID:      nodeData.NodeID,
 			Address:     nodeData.Address,
@@ -69,10 +69,10 @@ func (c *Cluster) getPeerList() []types.PeerInfo {
 			DiskFree:    nodeData.DiskFree,
 			IsStorage:   nodeData.IsStorage,
 		}
-		
+
 		peerList = append(peerList, peer)
 	}
-	
+
 	return peerList
 }
 
@@ -102,9 +102,6 @@ func (c *Cluster) setReplicationFactor(rf int) {
 
 	rfJSON, _ := json.Marshal(rf)
 	updates := c.frogpond.SetDataPoint("cluster/replication_factor", rfJSON)
-	if c.contentKV != nil {
-		_ = c.contentKV.Put([]byte("cluster/replication_factor"), rfJSON)
-	}
 	c.sendUpdatesToPeers(updates)
 
 	c.Logger().Printf("[RF] Set replication factor to %d", rf)
@@ -238,22 +235,22 @@ func (c *Cluster) getDiskUsage() (diskSize int64, diskFree int64) {
 		c.debugf("[DISK_USAGE] Error getting disk stats for %s: %v", c.DataDir, err)
 		return 0, 0
 	}
-	
+
 	// Calculate total size and free space in bytes
 	diskSize = int64(stat.Blocks) * int64(stat.Bsize)
 	diskFree = int64(stat.Bavail) * int64(stat.Bsize)
-	
+
 	return diskSize, diskFree
 }
 
 // updateNodeMetadata stores this node's metadata in frogpond
 func (c *Cluster) updateNodeMetadata() {
 	nodeKey := fmt.Sprintf("nodes/%s", c.NodeId)
-	
+
 	// Calculate disk usage information
 	bytesStored := c.calculateDataDirSize()
 	diskSize, diskFree := c.getDiskUsage()
-	
+
 	// Get our external address from discovery
 	address := ""
 	peers := c.DiscoveryManager().GetPeers()
@@ -263,7 +260,7 @@ func (c *Cluster) updateNodeMetadata() {
 			break
 		}
 	}
-	
+
 	nodeData := types.NodeData{
 		NodeID:      string(c.NodeId),
 		Address:     address,
@@ -377,20 +374,20 @@ func (c *Cluster) periodicNodePruning(ctx context.Context) {
 // but nodes that have been gone for >30 minutes will be removed
 func (c *Cluster) pruneOldNodes() {
 	c.Logger().Printf("[NODE_PRUNING] Starting periodic node pruning")
-	
+
 	// Get all node keys
 	nodeKeys := c.frogpond.GetAllMatchingPrefix("nodes/")
-	
+
 	// Create backdated tombstones for all node entries
 	backdateTime := time.Now().Add(-30 * time.Minute)
 	tombstones := []frogpond.DataPoint{}
-	
+
 	for _, nodeData := range nodeKeys {
 		// Skip if already deleted
 		if nodeData.Deleted {
 			continue
 		}
-		
+
 		// Create a backdated tombstone
 		tombstone := frogpond.DataPoint{
 			Key:     nodeData.Key,
@@ -399,19 +396,19 @@ func (c *Cluster) pruneOldNodes() {
 			Updated: backdateTime,
 			Deleted: true,
 		}
-		
+
 		tombstones = append(tombstones, tombstone)
 	}
-	
+
 	if len(tombstones) > 0 {
 		c.Logger().Printf("[NODE_PRUNING] Created %d backdated tombstones for node entries", len(tombstones))
-		
+
 		// Apply the tombstones to our own CRDT and get resulting updates
 		resultingUpdates := c.frogpond.AppendDataPoints(tombstones)
-		
+
 		// Send the tombstones to all peers
 		c.sendUpdatesToPeers(tombstones)
-		
+
 		// Also send any resulting updates (in case some nodes were actually pruned)
 		if len(resultingUpdates) > 0 {
 			c.sendUpdatesToPeers(resultingUpdates)

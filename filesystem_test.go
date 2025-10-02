@@ -125,7 +125,12 @@ func TestFileSystem_Directories(t *testing.T) {
 	}
 
 	if len(entries) != 1 {
-		t.Fatalf("Expected 1 entry in root directory after adding file, got %d", len(entries))
+		// Print what we actually got
+		entryNames := make([]string, len(entries))
+		for i, e := range entries {
+			entryNames[i] = fmt.Sprintf("%s (isDir=%v)", e.Name, e.IsDirectory)
+		}
+		t.Fatalf("Expected 1 entry in root directory after adding file, got %d: %v", len(entries), entryNames)
 	}
 
 	if entries[0].Name != "documents" || !entries[0].IsDirectory {
@@ -139,7 +144,11 @@ func TestFileSystem_Directories(t *testing.T) {
 	}
 
 	if len(entries) != 1 {
-		t.Fatalf("Expected 1 entry in documents directory, got %d", len(entries))
+		entryNames := make([]string, len(entries))
+		for i, e := range entries {
+			entryNames[i] = fmt.Sprintf("%s (isDir=%v)", e.Name, e.IsDirectory)
+		}
+		t.Fatalf("Expected 1 entry in documents directory, got %d: %v", len(entries), entryNames)
 	}
 
 	if entries[0].Name != "projects" || !entries[0].IsDirectory {
@@ -153,7 +162,11 @@ func TestFileSystem_Directories(t *testing.T) {
 	}
 
 	if len(entries) != 1 {
-		t.Fatalf("Expected 1 file in projects directory, got %d", len(entries))
+		entryNames := make([]string, len(entries))
+		for i, e := range entries {
+			entryNames[i] = fmt.Sprintf("%s (isDir=%v)", e.Name, e.IsDirectory)
+		}
+		t.Fatalf("Expected 1 file in projects directory, got %d: %v", len(entries), entryNames)
 	}
 
 	if entries[0].Name != "readme.txt" || entries[0].IsDirectory {
@@ -196,7 +209,7 @@ func TestFileSystem_LargeFiles(t *testing.T) {
 	}
 
 	if !bytes.Equal(content, largeContent) {
-		t.Fatalf("Large file content mismatch")
+		t.Fatalf("Large file content mismatch: expected %d bytes, got %d bytes", len(largeContent), len(content))
 	}
 
 	// Just verify the file was stored correctly

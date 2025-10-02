@@ -31,11 +31,13 @@ type ClusterLike interface {
 }
 
 type PartitionManagerLike interface {
-	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error
-	GetFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error)
-	DeleteFileFromPartition(path string) error
-	GetMetadataFromPartition(path string) (map[string]interface{}, error)
-	CalculatePartitionName(path string) string
+	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
+	GetFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error) // Get file and metadata from partition, including from other nodes
+	DeleteFileFromPartition(path string) error                                       // Delete file from partition, does not send to network
+	GetMetadataFromPartition(path string) (map[string]interface{}, error)            // Get file metadata from partition, including from other nodes
+	CalculatePartitionName(path string) string 								// Calculate partition name for a given path
+	ScanAllFiles(fn func(filePath string, metadata map[string]interface{}) error) error // Scan all files in all partitions, calling fn for each file
+	
 }
 
 type DiscoveryManagerLike interface {
@@ -156,16 +158,16 @@ func CollapseSearchResults(raw_results []SearchResult, basePath string) []Search
 			// It's a file in the current directory
 			//c.debugf("[SEARCH] Processing result: %s (rel: %s) is a file", relPath, relPath)
 			if !seen[relPath] {
-			seen[relPath] = true //Could get multiple files with same name from different peers
-			results = append(results, SearchResult{
-			Name:        relPath,
-			Path:        res.Path,
-			Size:        res.Size,
-			ContentType: res.ContentType,
-			ModifiedAt:  res.ModifiedAt,
-			 Checksum:    res.Checksum,
-			 })
-				}
+				seen[relPath] = true //Could get multiple files with same name from different peers
+				results = append(results, SearchResult{
+					Name:        relPath,
+					Path:        res.Path,
+					Size:        res.Size,
+					ContentType: res.ContentType,
+					ModifiedAt:  res.ModifiedAt,
+					Checksum:    res.Checksum,
+				})
+			}
 		}
 	}
 	return results

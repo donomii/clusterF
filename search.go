@@ -39,27 +39,8 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 	var results []types.SearchResult
 	seen := make(map[string]bool) // Prevent duplicates
 
-	c.metadataKV.MapFunc(func(k, v []byte) error {
-		key := string(k)
-
-		// Only process file entries, but skip root directory metadata
-		if !strings.Contains(key, ":file:") {
-			return nil
-		}
-
-		// Extract file path from partition key
-		parts := strings.Split(key, ":file:")
-		if len(parts) != 2 {
-			c.logger.Panicf("invalid metadata key format for %v", key)
-		}
-		filePath := parts[1]
-
-		// Parse the metadata
-		var metadata map[string]interface{}
-		if err := json.Unmarshal(v, &metadata); err != nil {
-			c.logger.Panicf("failed to unmarshal metadata for %v: %v", key, err)
-		}
-
+	// Scan all local partition stores for files matching the query
+	c.partitionManager.ScanAllFiles(func(filePath string, metadata map[string]interface{}) error {
 		// Skip deleted files
 		if deleted, ok := metadata["deleted"].(bool); ok && deleted {
 			return nil

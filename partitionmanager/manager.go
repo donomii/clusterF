@@ -175,6 +175,7 @@ func (pm *PartitionManager) CalculatePartitionName(path string) string {
 func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error {
 	// If in no-store mode, don't store locally
 	if pm.deps.NoStore {
+		//FIXME panic here
 		pm.debugf("[PARTITION] No-store mode: not storing file %s locally", path)
 		return nil
 	}
@@ -566,6 +567,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (map[string]interf
 func (pm *PartitionManager) DeleteFileFromPartition(path string) error {
 	// If in no-store mode, don't delete locally (we don't have it anyway)
 	if pm.deps.NoStore {
+		//FIXME panic here
 		pm.debugf("[PARTITION] No-store mode: not deleting file %s locally", path)
 		return nil
 	}
@@ -618,6 +620,7 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 
 	// In no-store mode, don't claim to hold partitions
 	if pm.deps.NoStore {
+		//FIXME panic here
 		pm.debugf("[PARTITION] No-store mode: not updating partition metadata for %s", partitionID)
 		return
 	}
@@ -974,6 +977,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: skipping partition sync")
 		<-ctx.Done() // Wait until context is done i.e. shutdown
+		return
 	}
 
 	for {
@@ -1033,7 +1037,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 		availablePeerIDs[peer.NodeID] = true
 	}
 	pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs)
-	
+
 	// Also add all active nodes from CRDT
 	if pm.hasFrogpond() {
 		nodeDataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("nodes/")
@@ -1138,6 +1142,31 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 }
 
 // getPartitionStats returns statistics about partitions
+// ScanAllFiles scans all local partition stores and calls fn for each file
+func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata map[string]interface{}) error) error {
+	return pm.deps.FileStore.ScanMetadata("", func(key string, metadataBytes []byte) error {
+		// Extract file path from key (format: partition:pXXXXX:file:/path)
+		parts := strings.Split(key, ":file:")
+		if len(parts) != 2 {
+			return nil // Skip non-file entries
+		}
+		filePath := parts[1]
+
+		// Parse metadata
+		var metadata map[string]interface{}
+		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+			return nil // Skip corrupt metadata
+		}
+
+		return fn(filePath, metadata)
+	})
+}
+
+// FileStore returns the underlying FileStore for direct access (used by tests)
+func (pm *PartitionManager) FileStore() *FileStore {
+	return pm.deps.FileStore
+}
+
 func (pm *PartitionManager) GetPartitionStats() map[string]interface{} {
 	// Count local partitions by scanning metadata store
 	localPartitions := make(map[string]bool)
