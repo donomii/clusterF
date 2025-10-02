@@ -989,14 +989,19 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
+			fmt.Printf("starting partition sync check...\n")
 			// Find next partition that needs syncing
 			if partitionID, holders := pm.findNextPartitionToSyncWithHolders(); partitionID != "" {
 
-				<-throttle // Throttle concurrent syncs
+				throttle <- struct{}{}
+				// Throttle concurrent syncs
 				go func(ctx context.Context, partitionID PartitionID) {
-					defer func() { throttle <- struct{}{} }()
+					defer func() { <-throttle }()
 					// Try all available holders for this partition
 					for _, holderID := range holders {
+						if ctx.Err() != nil {
+							return
+						}
 						pm.logf("[PARTITION] Syncing %s from %s", partitionID, holderID)
 
 						err := pm.syncPartitionFromPeer(ctx, partitionID, holderID)
@@ -1011,7 +1016,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(3 * time.Minute):
+				case <-time.After(30 * time.Second):
 				}
 			}
 		}
@@ -1187,6 +1192,17 @@ func (pm *PartitionManager) GetPartitionStats() map[string]interface{} {
 	currentRF := pm.replicationFactor()
 
 	for _, info := range allPartitions {
+
+		// Check that all holders are active nodes
+
+		for _, holder := range info.Holders {
+			if !pm.isNodeActive(holder) {
+				// Remove inactive holder from CRDT
+				pm.debugf("[PARTITION] Removing inactive holder %s from partition %s", holder, info.ID)
+				updates := pm.deps.Frogpond.DeleteDataPoint(fmt.Sprintf("partitions/%s/holders/%s", info.ID, holder))
+				pm.sendUpdates(updates)
+			}
+		}
 		if len(info.Holders) < currentRF {
 			underReplicated++
 

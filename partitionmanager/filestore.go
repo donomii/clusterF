@@ -47,10 +47,10 @@ type FileData struct {
 }
 
 // NewFileStore creates a new FileStore with per-partition storage
-func NewFileStore(baseDir string) *FileStore {
+func NewFileStore(baseDir string, debug bool) *FileStore {
 	return &FileStore{
 		baseDir:  baseDir,
-		debugLog: true, // Enable debug logging
+		debugLog: debug,
 	}
 }
 

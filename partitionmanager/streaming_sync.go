@@ -110,6 +110,9 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 	var peerPort int
 	peers := pm.getPeers()
 	for _, peer := range peers {
+		if ctx.Err() != nil {
+			return fmt.Errorf("context canceled: %v", ctx.Err())
+		}
 		if types.NodeID(peer.NodeID) == peerID {
 			peerAddr = peer.Address
 			peerPort = peer.HTTPPort
@@ -149,10 +152,8 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 	syncCount := 0
 
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return fmt.Errorf("context canceled: %v", ctx.Err())
-		default:
 		}
 
 		var entry PartitionSyncEntry

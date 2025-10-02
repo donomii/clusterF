@@ -416,7 +416,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		NoStore:        c.noStore,
 		Logger:         c.Logger(),
 		Debugf:         c.debugf,
-		FileStore:      partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions")),
+		FileStore:      partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug),
 		HTTPDataClient: c.httpDataClient,
 		Discovery:      c.discoveryManager,
 		LoadPeer: func(id types.NodeID) (*types.PeerInfo, bool) {
