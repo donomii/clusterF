@@ -87,8 +87,8 @@ func (fs *FileStore) openPartitionStores(partitionID string) (ensemblekv.KvLike,
 	}
 
 	//FIXME make storage type configurable
-	metadataKV := ensemblekv.SimpleEnsembleCreator("bolt", "", metadataPath, 20*1024*1024, 50, 256*1024*1024)
-	contentKV := ensemblekv.SimpleEnsembleCreator("bolt", "", contentPath, 20*1024*1024, 50, 64*1024*1024)
+	metadataKV := ensemblekv.SimpleEnsembleCreator("extent", "", metadataPath, 20*1024*1024, 50, 256*1024*1024)
+	contentKV := ensemblekv.SimpleEnsembleCreator("extent", "", contentPath, 20*1024*1024, 50, 64*1024*1024)
 
 	if metadataKV == nil {
 		return nil, nil, fmt.Errorf("failed to create metadata store")
