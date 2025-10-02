@@ -294,10 +294,10 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 	// Set default storage options if not specified
 	if opts.StorageMajor == "" {
-		opts.StorageMajor = "ensemble"
+		opts.StorageMajor = "bolt"
 	}
 	if opts.StorageMinor == "" {
-		opts.StorageMinor = "bolt"
+		opts.StorageMinor = ""
 	}
 
 	// Load existing settings if present
@@ -435,7 +435,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		NoStore:        c.noStore,
 		Logger:         c.Logger(),
 		Debugf:         c.debugf,
-		FileStore:      partitionmanager.NewFileStore(c.metadataKV, c.contentKV),
+		FileStore:      partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions")),
 		HTTPDataClient: c.httpDataClient,
 		Discovery:      c.discoveryManager,
 		LoadPeer: func(id types.NodeID) (*types.PeerInfo, bool) {
