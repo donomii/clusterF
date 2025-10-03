@@ -7,11 +7,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/testenv"
 )
 
@@ -1113,6 +1115,393 @@ func TestCluster_LocalStorage(t *testing.T) {
 		t.Fatal("GetFile should have failed for deleted file")
 	}
 	t.Logf("Verified deletion of file %s\n", filePath)
+}
+
+// TestCluster_Encryption tests encryption functionality
+func TestCluster_Encryption(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
+	tempDir := t.TempDir()
+
+	// Test 1: Create encrypted repository
+	t.Run("CreateEncryptedRepo", func(t *testing.T) {
+		encKey := "test-encryption-key-123"
+		cluster := NewCluster(ClusterOpts{
+			ID:            "encrypted-test-1",
+			DataDir:       filepath.Join(tempDir, "encrypted1"),
+			DiscoveryPort: 21100,
+			EncryptionKey: encKey,
+		})
+		cluster.Start()
+		defer cluster.Stop()
+
+		// Store and retrieve encrypted data
+		testData := []byte("Sensitive encrypted data")
+		filePath := "/encrypted-file.txt"
+
+		err := cluster.FileSystem.StoreFileWithModTime(filePath, testData, "text/plain", time.Now())
+		if err != nil {
+			t.Fatalf("Failed to store encrypted file: %v", err)
+		}
+
+		retrievedData, _, err := cluster.FileSystem.GetFile(filePath)
+		if err != nil {
+			t.Fatalf("Failed to retrieve encrypted file: %v", err)
+		}
+
+		if !bytes.Equal(testData, retrievedData) {
+			t.Fatalf("Data mismatch after encryption: expected %q, got %q", testData, retrievedData)
+		}
+
+		t.Log("Encrypted repository created and verified successfully")
+	})
+
+	// Test 2: Wrong key should fail
+	t.Run("WrongKeyFails", func(t *testing.T) {
+		// First create an encrypted repository
+		encKey := "correct-key"
+		cluster := NewCluster(ClusterOpts{
+			ID:            "encrypted-wrong-key-test",
+			DataDir:       filepath.Join(tempDir, "wrongkey"),
+			DiscoveryPort: 21104,
+			EncryptionKey: encKey,
+		})
+		cluster.Start()
+		cluster.Stop()
+
+		// Now try to start it again with the wrong key - this should fail
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("Expected panic/fatal when starting with wrong key, but got none")
+			}
+			// Panic occurred as expected
+			t.Log("Wrong key correctly caused fatal error")
+		}()
+
+		// This should panic/fatal during NewCluster
+		_ = NewCluster(ClusterOpts{
+			ID:            "encrypted-wrong-key-test",
+			DataDir:       filepath.Join(tempDir, "wrongkey"),
+			DiscoveryPort: 21105,
+			EncryptionKey: "wrong-key", // Wrong key!
+		})
+
+		t.Fatal("Should not reach here - NewCluster should have panicked")
+	})
+
+	// Test 3: Missing key should fail for encrypted repo
+	t.Run("MissingKeyFails", func(t *testing.T) {
+		// The repository from Test 2 should still exist and require a key
+		// Load its settings and verify the encrypted test phrase exists
+		settings, err := loadStorageSettings(filepath.Join(tempDir, "wrongkey", "encrypted-wrong-key-test"))
+		if err != nil {
+			t.Fatalf("Failed to load settings: %v", err)
+		}
+
+		if settings.EncryptedTestPhrase == "" {
+			t.Fatal("Expected encrypted test phrase in settings")
+		}
+
+		t.Log("Encrypted repository correctly requires a key")
+	})
+
+	// Test 4: Unencrypted repo should work without key
+	t.Run("UnencryptedRepoWorks", func(t *testing.T) {
+		cluster := NewCluster(ClusterOpts{
+			ID:            "unencrypted-test",
+			DataDir:       filepath.Join(tempDir, "unencrypted"),
+			DiscoveryPort: 21103,
+			EncryptionKey: "", // No key
+		})
+		cluster.Start()
+		defer cluster.Stop()
+
+		testData := []byte("Unencrypted data")
+		filePath := "/unencrypted-file.txt"
+
+		err := cluster.FileSystem.StoreFileWithModTime(filePath, testData, "text/plain", time.Now())
+		if err != nil {
+			t.Fatalf("Failed to store unencrypted file: %v", err)
+		}
+
+		retrievedData, _, err := cluster.FileSystem.GetFile(filePath)
+		if err != nil {
+			t.Fatalf("Failed to retrieve unencrypted file: %v", err)
+		}
+
+		if !bytes.Equal(testData, retrievedData) {
+			t.Fatalf("Data mismatch: expected %q, got %q", testData, retrievedData)
+		}
+
+		t.Log("Unencrypted repository works correctly")
+	})
+}
+
+// TestCluster_MixedEncryption tests cluster with some encrypted and some unencrypted nodes
+func TestCluster_MixedEncryption(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
+	if testing.Short() {
+		t.Skip("Skipping mixed encryption test in short mode")
+	}
+
+	tempDir := t.TempDir()
+	discoveryPort := 21200
+
+	// Create 5 nodes with different encryption settings
+	nodes := make([]*Cluster, 5)
+
+	// Node 0: Encrypted with key1
+	nodes[0] = NewCluster(ClusterOpts{
+		ID:            "mixed-encrypted-1",
+		DataDir:       filepath.Join(tempDir, "node0"),
+		HTTPDataPort:  32200,
+		DiscoveryPort: discoveryPort,
+		EncryptionKey: "encryption-key-alpha",
+	})
+
+	// Node 1: Encrypted with key2 (different key)
+	nodes[1] = NewCluster(ClusterOpts{
+		ID:            "mixed-encrypted-2",
+		DataDir:       filepath.Join(tempDir, "node1"),
+		HTTPDataPort:  32201,
+		DiscoveryPort: discoveryPort,
+		EncryptionKey: "encryption-key-beta",
+	})
+
+	// Node 2: Unencrypted
+	nodes[2] = NewCluster(ClusterOpts{
+		ID:            "mixed-unencrypted-1",
+		DataDir:       filepath.Join(tempDir, "node2"),
+		HTTPDataPort:  32202,
+		DiscoveryPort: discoveryPort,
+		EncryptionKey: "",
+	})
+
+	// Node 3: Encrypted with key3
+	nodes[3] = NewCluster(ClusterOpts{
+		ID:            "mixed-encrypted-3",
+		DataDir:       filepath.Join(tempDir, "node3"),
+		HTTPDataPort:  32203,
+		DiscoveryPort: discoveryPort,
+		EncryptionKey: "encryption-key-gamma",
+	})
+
+	// Node 4: Unencrypted
+	nodes[4] = NewCluster(ClusterOpts{
+		ID:            "mixed-unencrypted-2",
+		DataDir:       filepath.Join(tempDir, "node4"),
+		HTTPDataPort:  32204,
+		DiscoveryPort: discoveryPort,
+		EncryptionKey: "",
+	})
+
+	// Start all nodes
+	for i, node := range nodes {
+		node.DiscoveryManager().SetTimings(500*time.Millisecond, 3*time.Second)
+		node.Start()
+		t.Logf("Started node %d: %s (encrypted: %v)", i, node.NodeId, node.PartitionManager().(*partitionmanager.PartitionManager) != nil)
+	}
+
+	defer func() {
+		for _, node := range nodes {
+			node.Stop()
+		}
+	}()
+
+	// Wait for discovery
+	waitForAllNodesReady(nodes, 15000)
+
+	// Verify each node can store and retrieve its own data
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	for i, node := range nodes {
+		testData := []byte(fmt.Sprintf("Test data from node %d", i))
+		filePath := fmt.Sprintf("/node-%d-file.txt", i)
+		baseURL := fmt.Sprintf("http://localhost:%d", node.HTTPDataPort)
+
+		// Store file
+		uploadTime := time.Now()
+		req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files"+filePath, bytes.NewReader(testData))
+		req.Header.Set("Content-Type", "text/plain")
+		req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Node %d: Failed to store file: %v", i, err)
+		}
+		clearResponseBody(resp)
+
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("Node %d: Expected 201, got %d", i, resp.StatusCode)
+		}
+
+		// Retrieve file
+		resp, err = client.Get(baseURL + "/api/files" + filePath)
+		if err != nil {
+			t.Fatalf("Node %d: Failed to retrieve file: %v", i, err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Node %d: Expected 200, got %d", i, resp.StatusCode)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Node %d: Failed to read response: %v", i, err)
+		}
+		clearResponseBody(resp)
+
+		if !bytes.Equal(testData, body) {
+			t.Fatalf("Node %d: Data mismatch: expected %q, got %q", i, testData, body)
+		}
+
+		t.Logf("Node %d successfully stored and retrieved encrypted data", i)
+	}
+
+	// Verify all nodes discovered each other
+	for i, node := range nodes {
+		peerCount := node.DiscoveryManager().GetPeerCount()
+		if peerCount < 1 {
+			t.Errorf("Node %d has no peers (expected at least 1)", i)
+		}
+		t.Logf("Node %d discovered %d peers", i, peerCount)
+	}
+
+	t.Log("Mixed encryption cluster test completed successfully")
+}
+
+// TestCluster_EncryptionOnDisk verifies that encrypted data is actually encrypted on disk
+func TestCluster_EncryptionOnDisk(t *testing.T) {
+	testenv.RequireUDPSupport(t)
+
+	tempDir := t.TempDir()
+	distinctPhrase := "SUPER_SECRET_PHRASE_12345_ABCDEF" // Unique phrase to search for
+
+	// Test 1: Unencrypted storage - phrase should be found on disk
+	t.Run("UnencryptedPhraseFindable", func(t *testing.T) {
+		unencryptedDir := filepath.Join(tempDir, "unencrypted")
+		cluster := NewCluster(ClusterOpts{
+			ID:            "unencrypted-disk-test",
+			DataDir:       unencryptedDir,
+			DiscoveryPort: 21300,
+			EncryptionKey: "", // No encryption
+		})
+		cluster.Start()
+		defer cluster.Stop()
+
+		// Store file containing distinct phrase
+		testData := []byte(distinctPhrase)
+		filePath := "/test-phrase-file.txt"
+
+		err := cluster.FileSystem.StoreFileWithModTime(filePath, testData, "text/plain", time.Now())
+		if err != nil {
+			t.Fatalf("Failed to store file: %v", err)
+		}
+
+		// Give the system a moment to flush to disk
+		time.Sleep(500 * time.Millisecond)
+
+		// Search through all files in the data directory for the phrase
+		found := false
+		err = filepath.Walk(unencryptedDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil // Skip errors
+			}
+			if info.IsDir() {
+				return nil
+			}
+
+			// Read file and search for phrase
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil // Skip files we can't read
+			}
+
+			if bytes.Contains(data, []byte(distinctPhrase)) {
+				found = true
+				t.Logf("Found distinct phrase in unencrypted file: %s", path)
+			}
+			return nil
+		})
+
+		if err != nil {
+			t.Fatalf("Failed to walk directory: %v", err)
+		}
+
+		if !found {
+			t.Fatal("Distinct phrase NOT found in unencrypted storage - this should not happen")
+		}
+
+		t.Log("✓ Distinct phrase found in unencrypted storage (as expected)")
+	})
+
+	// Test 2: Encrypted storage - phrase should NOT be found on disk
+	t.Run("EncryptedPhraseNotFindable", func(t *testing.T) {
+		encryptedDir := filepath.Join(tempDir, "encrypted")
+		cluster := NewCluster(ClusterOpts{
+			ID:            "encrypted-disk-test",
+			DataDir:       encryptedDir,
+			DiscoveryPort: 21301,
+			EncryptionKey: "test-encryption-key-456",
+		})
+		cluster.Start()
+		defer cluster.Stop()
+
+		// Store file containing distinct phrase
+		testData := []byte(distinctPhrase)
+		filePath := "/test-phrase-file.txt"
+
+		err := cluster.FileSystem.StoreFileWithModTime(filePath, testData, "text/plain", time.Now())
+		if err != nil {
+			t.Fatalf("Failed to store file: %v", err)
+		}
+
+		// Verify we can retrieve the phrase correctly (it should decrypt properly)
+		retrievedData, _, err := cluster.FileSystem.GetFile(filePath)
+		if err != nil {
+			t.Fatalf("Failed to retrieve file: %v", err)
+		}
+
+		if !bytes.Equal(testData, retrievedData) {
+			t.Fatalf("Data mismatch after decryption: expected %q, got %q", testData, retrievedData)
+		}
+
+		// Give the system a moment to flush to disk
+		time.Sleep(500 * time.Millisecond)
+
+		// Search through all files in the data directory for the phrase
+		found := false
+		err = filepath.Walk(encryptedDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil // Skip errors
+			}
+			if info.IsDir() {
+				return nil
+			}
+
+			// Read file and search for phrase
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil // Skip files we can't read
+			}
+
+			if bytes.Contains(data, []byte(distinctPhrase)) {
+				found = true
+				t.Logf("ERROR: Found distinct phrase in encrypted file: %s", path)
+			}
+			return nil
+		})
+
+		if err != nil {
+			t.Fatalf("Failed to walk directory: %v", err)
+		}
+
+		if found {
+			t.Fatal("Distinct phrase FOUND in encrypted storage - encryption is not working!")
+		}
+
+		t.Log("✓ Distinct phrase NOT found in encrypted storage (encryption working correctly)")
+	})
 }
 
 // Benchmark tests

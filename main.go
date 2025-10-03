@@ -47,6 +47,7 @@ func main() {
 	profiling := flag.Bool("profiling", false, "Enable profiling immediately at startup")
 	storageMajor := flag.String("storage-major", "ensemble", "Storage format major (ensemble or bolt)")
 	storageMinor := flag.String("storage-minor", "bolt", "Storage format minor (ensemble or bolt)")
+	encryptionKey := flag.String("encryption-key", "", "Encryption key for at-rest encryption (required at init, then at every start)")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
 
@@ -68,7 +69,7 @@ func main() {
 			log.Fatal("--import-dir requires --cluster-dir to be specified")
 		}
 
-		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *excludeDirs, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor)
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *excludeDirs, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor, *encryptionKey)
 	}
 }
 
@@ -214,19 +215,20 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, excludeDirs string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool, storageMajor string, storageMinor string) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, excludeDirs string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool, storageMajor string, storageMinor string, encryptionKey string) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
-		ID:           nodeID,
-		DataDir:      dataDir,
-		ExportDir:    exportDir,
-		ClusterDir:   clusterDir,
-		ImportDir:    importDir,
-		ExcludeDirs:  excludeDirs,
-		HTTPDataPort: httpPort,
-		NoStore:      noStore,
-		StorageMajor: storageMajor,
-		StorageMinor: storageMinor,
+		ID:            nodeID,
+		DataDir:       dataDir,
+		ExportDir:     exportDir,
+		ClusterDir:    clusterDir,
+		ImportDir:     importDir,
+		ExcludeDirs:   excludeDirs,
+		HTTPDataPort:  httpPort,
+		NoStore:       noStore,
+		StorageMajor:  storageMajor,
+		StorageMinor:  storageMinor,
+		EncryptionKey: encryptionKey,
 	})
 
 	// Enable debug logging if requested

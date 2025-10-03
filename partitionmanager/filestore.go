@@ -22,6 +22,7 @@ type FileStore struct {
 	baseDir        string
 	partitionLocks sync.Map // map[string]*sync.RWMutex - per-partition locks
 	debugLog       bool
+	encryptionKey  []byte   // XOR encryption key (nil = no encryption)
 }
 
 // checkForRecursiveScan panics if we detect a recursive scan call
@@ -52,6 +53,39 @@ func NewFileStore(baseDir string, debug bool) *FileStore {
 		baseDir:  baseDir,
 		debugLog: debug,
 	}
+}
+
+// SetEncryptionKey sets the encryption key for this FileStore
+func (fs *FileStore) SetEncryptionKey(key []byte) {
+	fs.encryptionKey = key
+}
+
+// xorEncrypt performs XOR encryption/decryption on data
+func (fs *FileStore) xorEncrypt(data []byte) []byte {
+	if len(fs.encryptionKey) == 0 || len(data) == 0 {
+		return data
+	}
+	result := make([]byte, len(data))
+	for i := range data {
+		result[i] = data[i] ^ fs.encryptionKey[i%len(fs.encryptionKey)]
+	}
+	return result
+}
+
+// encrypt encrypts both metadata and content
+func (fs *FileStore) encrypt(metadata, content []byte) ([]byte, []byte) {
+	if len(fs.encryptionKey) == 0 {
+		return metadata, content
+	}
+	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
+}
+
+// decrypt decrypts both metadata and content
+func (fs *FileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
+	if len(fs.encryptionKey) == 0 {
+		return metadata, content
+	}
+	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
 }
 
 func (fs *FileStore) debugf(format string, args ...interface{}) {
@@ -160,6 +194,9 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 		}, nil
 	}
 
+	// Decrypt data
+	metadata, content = fs.decrypt(metadata, content)
+
 	return &FileData{
 		Key:      key,
 		Metadata: metadata,
@@ -191,7 +228,17 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
-	return metadataKV.Get([]byte(key))
+	metadata, err := metadataKV.Get([]byte(key))
+	if err != nil {
+		return nil, err
+	}
+
+	// Decrypt metadata
+	if len(fs.encryptionKey) > 0 {
+		metadata = fs.xorEncrypt(metadata)
+	}
+
+	return metadata, nil
 }
 
 // GetContent retrieves only content
@@ -211,7 +258,17 @@ func (fs *FileStore) GetContent(key string) ([]byte, error) {
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
-	return contentKV.Get([]byte(key))
+	content, err := contentKV.Get([]byte(key))
+	if err != nil {
+		return nil, err
+	}
+
+	// Decrypt content
+	if len(fs.encryptionKey) > 0 {
+		content = fs.xorEncrypt(content)
+	}
+
+	return content, nil
 }
 
 // Put stores both metadata and content atomically
@@ -239,11 +296,14 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 
 	keyBytes := []byte(key)
 
-	if err := metadataKV.Put(keyBytes, metadata); err != nil {
+	// Encrypt data before storing
+	encMetadata, encContent := fs.encrypt(metadata, content)
+
+	if err := metadataKV.Put(keyBytes, encMetadata); err != nil {
 		return fmt.Errorf("failed to store metadata: %v", err)
 	}
 
-	if err := contentKV.Put(keyBytes, content); err != nil {
+	if err := contentKV.Put(keyBytes, encContent); err != nil {
 		// Try to rollback metadata
 		metadataKV.Delete(keyBytes)
 		return fmt.Errorf("failed to store content: %v", err)
@@ -274,6 +334,11 @@ func (fs *FileStore) PutMetadata(key string, metadata []byte) error {
 		return err
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
+
+	// Encrypt metadata
+	if len(fs.encryptionKey) > 0 {
+		metadata = fs.xorEncrypt(metadata)
+	}
 
 	return metadataKV.Put([]byte(key), metadata)
 }
@@ -362,7 +427,10 @@ func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content [
 		for i, key := range keys {
 			content, _ := contentKV.Get([]byte(key))
 
-			if err := fn(key, metadataValues[i], content); err != nil {
+			// Decrypt data before passing to callback
+			decMetadata, decContent := fs.decrypt(metadataValues[i], content)
+
+			if err := fn(key, decMetadata, decContent); err != nil {
 				fs.closePartitionStores(metadataKV, contentKV)
 				lock.RUnlock()
 				return err
@@ -405,7 +473,12 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 		_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
 			keyStr := string(k)
 			if prefix == "" || strings.HasPrefix(keyStr, prefix) {
-				return fn(keyStr, v)
+				// Decrypt metadata before passing to callback
+				decMetadata := v
+				if len(fs.encryptionKey) > 0 {
+					decMetadata = fs.xorEncrypt(v)
+				}
+				return fn(keyStr, decMetadata)
 			}
 			return nil
 		})

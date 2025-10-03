@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -156,11 +157,12 @@ func (c *Cluster) PartitionManager() types.PartitionManagerLike {
 }
 
 type StorageSettings struct {
-	Program      string `json:"program"`
-	URL          string `json:"url"`
-	StorageMajor string `json:"storage_major"`
-	StorageMinor string `json:"storage_minor"`
-	Version      string `json:"version"`
+	Program            string `json:"program"`
+	URL                string `json:"url"`
+	StorageMajor       string `json:"storage_major"`
+	StorageMinor       string `json:"storage_minor"`
+	Version            string `json:"version"`
+	EncryptedTestPhrase string `json:"encrypted_test_phrase,omitempty"`
 }
 
 // loadStorageSettings loads storage settings from settings.json in the data directory
@@ -209,6 +211,7 @@ type ClusterOpts struct {
 	NoStore       bool   // if true, don't store partitions locally (client mode)
 	StorageMajor  string // storage format major (ensemble or bolt)
 	StorageMinor  string // storage format minor (ensemble or bolt)
+	EncryptionKey string // encryption key for at-rest encryption
 }
 
 func NewCluster(opts ClusterOpts) *Cluster {
@@ -411,13 +414,48 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.loadCRDTFromFile()
 	c.debugf("Loaded CRDT state from KV\n")
 
+	// Initialize file store
+	fileStore := partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug)
+
+	// Handle encryption if key provided
+	if opts.EncryptionKey != "" {
+		encKey := []byte(opts.EncryptionKey)
+		fileStore.SetEncryptionKey(encKey)
+
+		// Check if this is a new repository
+		if existingSettings == nil || existingSettings.EncryptedTestPhrase == "" {
+			// New repository - encrypt and store test phrase
+			testPhrase := "clusterF-encryption-test"
+			encryptedTest := xorEncryptString(testPhrase, encKey)
+			newSettings := StorageSettings{
+				Program:             "clusterF",
+				URL:                 "https://github.com/donomii/clusterF",
+				StorageMajor:        opts.StorageMajor,
+				StorageMinor:        opts.StorageMinor,
+				Version:             version,
+				EncryptedTestPhrase: encryptedTest,
+			}
+			if err := saveStorageSettings(opts.DataDir, newSettings); err != nil {
+				c.Logger().Fatalf("Failed to save encryption settings: %v", err)
+			}
+		} else {
+			// Existing repository - verify key
+			if err := verifyEncryptionKey(existingSettings.EncryptedTestPhrase, encKey); err != nil {
+				panic(fmt.Sprintf("Encryption key verification failed: %v", err))
+			}
+		}
+	} else if existingSettings != nil && existingSettings.EncryptedTestPhrase != "" {
+		// Repository was created with encryption but no key provided
+		panic("This repository requires an encryption key (use --encryption-key)")
+	}
+
 	// Initialize partition manager
 	deps := partitionmanager.Dependencies{
 		NodeID:         types.NodeID(c.NodeId),
 		NoStore:        c.noStore,
 		Logger:         c.Logger(),
 		Debugf:         c.debugf,
-		FileStore:      partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug),
+		FileStore:      fileStore,
 		HTTPDataClient: c.httpDataClient,
 		Discovery:      c.discoveryManager,
 		LoadPeer: func(id types.NodeID) (*types.PeerInfo, bool) {
@@ -601,6 +639,42 @@ func broadcastPortFromEnv() int {
 		}
 	}
 	return DefaultBroadcastPort
+}
+
+// xorEncryptString performs XOR encryption on a string and returns hex-encoded result
+// If input looks like hex, it decodes it first (for decryption)
+func xorEncryptString(data string, key []byte) string {
+	if len(key) == 0 || len(data) == 0 {
+		return data
+	}
+	
+	// Check if input is hex-encoded (all hex chars and even length)
+	dataBytes := []byte(data)
+	if decoded, err := hex.DecodeString(data); err == nil {
+		// Input was hex, use decoded bytes
+		dataBytes = decoded
+	}
+	
+	result := make([]byte, len(dataBytes))
+	for i := range dataBytes {
+		result[i] = dataBytes[i] ^ key[i%len(key)]
+	}
+	
+	// If original input was hex, return string; otherwise return hex
+	if _, err := hex.DecodeString(data); err == nil {
+		return string(result)
+	}
+	return hex.EncodeToString(result)
+}
+
+// verifyEncryptionKey verifies that the provided key can decrypt the test phrase
+func verifyEncryptionKey(encryptedTestPhrase string, key []byte) error {
+	testPhrase := "clusterF-encryption-test"
+	decryptedTest := xorEncryptString(encryptedTestPhrase, key)
+	if decryptedTest != testPhrase {
+		return fmt.Errorf("Encryption key verification failed - wrong key or corrupted settings")
+	}
+	return nil
 }
 
 // loadNodeIDFromDataDir checks for existing node IDs in the data directory and errors if multiple found

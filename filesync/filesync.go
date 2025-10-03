@@ -551,7 +551,7 @@ func (e *Syncer) performImport(ctx context.Context) error {
 
 // importFromDir walks importDir and uploads files to cluster
 func (e *Syncer) importFromDir(ctx context.Context) error {
-	var throttle = make(chan struct{}, 20) // limit concurrency
+	var throttle = make(chan struct{}, 30) // limit concurrency
 	return filepath.WalkDir(e.importDir, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
