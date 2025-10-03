@@ -128,7 +128,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 		return fmt.Errorf("peer '%s' not found for partition '%s'. Available peers: [%s]", peerID, partitionID, strings.Join(availablePeers, ", "))
 	}
 
-	pm.logf("[PARTITION] Starting streaming sync of %s from %s", partitionID, peerID)
+	pm.debugf("[PARTITION] Starting streaming sync of %s from %s", partitionID, peerID)
 
 	// Request partition data stream from peer
 	syncURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
@@ -167,6 +167,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 		expectedChecksum := pm.calculateEntryChecksum(entry.Metadata, entry.Content)
 		if entry.Checksum != expectedChecksum {
 			pm.logf("[PARTITION] Checksum mismatch for %s from %s: expected %s, got %s", entry.Key, peerID, expectedChecksum, entry.Checksum)
+			//FIXME do something about it
 			continue // Skip corrupted entry
 		}
 
@@ -187,7 +188,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 	// Update our partition metadata
 	pm.updatePartitionMetadata(partitionID)
 
-	pm.logf("[PARTITION] Completed sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
+	pm.debugf("[PARTITION] Completed sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
 
 	// Notify frontend that file list may have changed
 	pm.notifyFileListChanged()
