@@ -205,6 +205,7 @@ type ClusterOpts struct {
 	ExportDir     string // if set, mirror files to this directory for OS sharing
 	ClusterDir    string // if set, only export files with this path prefix
 	ImportDir     string // if set, import files from this directory to the cluster
+	ExcludeDirs   string // comma-separated list of directory names to exclude during import
 	NoStore       bool   // if true, don't store partitions locally (client mode)
 	StorageMajor  string // storage format major (ensemble or bolt)
 	StorageMinor  string // storage format minor (ensemble or bolt)
@@ -469,7 +470,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		c.Logger().Printf("[IMPORT] Importing files from %s to cluster prefix %s", opts.ImportDir, opts.ClusterDir)
 	}
 	if opts.ExportDir != "" || opts.ImportDir != "" {
-		if fs, err := filesync.NewFileSyncer(opts.ExportDir, opts.ImportDir, opts.ClusterDir, c.Logger(), c.FileSystem); err != nil {
+		if fs, err := filesync.NewFileSyncer(opts.ExportDir, opts.ImportDir, opts.ClusterDir, opts.ExcludeDirs, c.Logger(), c.FileSystem); err != nil {
 			c.Logger().Printf("[FILESYNC] Failed to init filesync: %v", err)
 		} else {
 			fs.SetCurrentFileCallback(func(path string) {

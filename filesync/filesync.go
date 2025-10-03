@@ -35,6 +35,7 @@ type Syncer struct {
 	logger *log.Logger
 
 	importDir      string
+	excludeDirs    map[string]bool // directories to exclude during import
 	lastImport     time.Time
 	importInterval time.Duration
 
@@ -47,7 +48,7 @@ func (e *Syncer) SetCurrentFileCallback(fn func(string)) {
 }
 
 // NewFileSyncer creates a new syncer with export and import directories.
-func NewFileSyncer(exportDir string, importDir string, clusterDir string, logger *log.Logger, fs types.FileSystemLike) (*Syncer, error) {
+func NewFileSyncer(exportDir string, importDir string, clusterDir string, excludeDirs string, logger *log.Logger, fs types.FileSystemLike) (*Syncer, error) {
 	if exportDir == "" && importDir == "" {
 		return nil, fmt.Errorf("either export or import directory must be specified")
 	}
@@ -72,10 +73,27 @@ func NewFileSyncer(exportDir string, importDir string, clusterDir string, logger
 			clusterDir = clusterDir[:len(clusterDir)-1]
 		}
 	}
+	// Parse exclude directories as full paths
+	excludeDirMap := make(map[string]bool)
+	if excludeDirs != "" {
+		for _, dir := range strings.Split(excludeDirs, ",") {
+			dir = strings.TrimSpace(dir)
+			if dir != "" {
+				// Convert to absolute path
+				absDir, err := filepath.Abs(dir)
+				if err != nil {
+					logger.Printf("[IMPORT] Warning: could not resolve path %s: %v", dir, err)
+					continue
+				}
+				excludeDirMap[absDir] = true
+			}
+		}
+	}
 	return &Syncer{
 		exportDir:      exportDir,
 		clusterDir:     clusterDir,
 		importDir:      importDir,
+		excludeDirs:    excludeDirMap,
 		ignore:         syncmap.NewSyncMap[string, time.Time](),
 		watched:        syncmap.NewSyncMap[string, struct{}](),
 		fs:             fs,
@@ -542,6 +560,15 @@ func (e *Syncer) importFromDir(ctx context.Context) error {
 			return nil
 		}
 
+		// Check if this path should be excluded
+		if d.IsDir() {
+			absPath, err := filepath.Abs(p)
+			if err == nil && e.excludeDirs[absPath] {
+				e.logger.Printf("[IMPORT] Skipping excluded directory: %s", p)
+				return filepath.SkipDir
+			}
+		}
+
 		// Convert local path to cluster path
 		clusterPath, ok := e.importPathToClusterPath(p)
 		if !ok {
@@ -593,7 +620,7 @@ func uploadSyncfile(e *Syncer, p, clusterPath string, st fs.FileInfo, throttle c
 
 	ct := contentTypeFromExt(p)
 	_ = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
-	e.logger.Printf("[IMPORT] Uploaded %s to cluster path %s", p, clusterPath)
+	e.logger.Printf("[IMPORT] Uploaded %s", clusterPath)
 }
 
 // importPathToClusterPath converts a local file path to cluster path, returns (clusterPath, true) for files or ("", false) for directories

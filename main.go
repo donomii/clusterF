@@ -39,6 +39,7 @@ func main() {
 	exportDir := flag.String("export-dir", "", "Mirror cluster files to this local directory (share via macOS File Sharing for SMB)")
 	clusterDir := flag.String("cluster-dir", "", "Cluster path prefix to export (must be used with --export-dir)")
 	importDir := flag.String("import-dir", "", "Import files from this local directory into the cluster (must be used with --cluster-dir)")
+	excludeDirs := flag.String("exclude-dirs", "", "Comma-separated list of directory names to exclude during import")
 	webdavDir := flag.String("webdav", "", "Serve cluster path prefix over WebDAV (e.g., '/photos')")
 	httpPort := flag.Int("http-port", 0, "HTTP port to bind (0 = dynamic near 30000)")
 	debug := flag.Bool("debug", false, "Enable verbose debug logging")
@@ -67,7 +68,7 @@ func main() {
 			log.Fatal("--import-dir requires --cluster-dir to be specified")
 		}
 
-		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor)
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *excludeDirs, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor)
 	}
 }
 
@@ -213,7 +214,7 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool, storageMajor string, storageMinor string) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, excludeDirs string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool, storageMajor string, storageMinor string) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:           nodeID,
@@ -221,6 +222,7 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 		ExportDir:    exportDir,
 		ClusterDir:   clusterDir,
 		ImportDir:    importDir,
+		ExcludeDirs:  excludeDirs,
 		HTTPDataPort: httpPort,
 		NoStore:      noStore,
 		StorageMajor: storageMajor,

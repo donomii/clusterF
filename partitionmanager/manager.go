@@ -10,6 +10,7 @@ import (
 	"hash/crc32"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"path"
@@ -1027,6 +1028,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, []types.NodeID) {
 	// If in no-store mode, don't sync any partitions
 	if pm.deps.NoStore {
+		//FIXME panic here
 		return "", nil
 	}
 
@@ -1062,9 +1064,18 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 	}
 	pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
-	// Find partitions that are under-replicated or need syncing
-	for partitionID, info := range allPartitions {
+	partitionKeys := make([]PartitionID, 0, len(allPartitions))
+	for partitionID := range allPartitions {
+		partitionKeys = append(partitionKeys, partitionID)
+	}
+	//Randomize the order to avoid always picking the same partition first
+	rand.Shuffle(len(partitionKeys), func(i, j int) {
+		partitionKeys[i], partitionKeys[j] = partitionKeys[j], partitionKeys[i]
+	})
 
+	// Find partitions that are under-replicated or need syncing
+	for _, partitionID := range partitionKeys {
+		info := allPartitions[partitionID]
 		if len(info.Holders) >= currentRF {
 			// Check if we have this partition and if our checksum matches other holders
 			hasPartition := false
