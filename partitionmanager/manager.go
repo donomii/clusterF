@@ -1089,14 +1089,11 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 			// Check if we have this partition and if our checksum matches other holders
 			hasPartition := false
 			var ourChecksum string
-			prefix := fmt.Sprintf("partition:%s:", partitionID)
-			pm.deps.FileStore.ScanMetadata(prefix, func(key string, meta []byte) error {
-				if strings.HasPrefix(string(key), prefix) {
-					hasPartition = true
-					return fmt.Errorf("stop")
-				}
-				return nil
-			})
+			holderPrefix := fmt.Sprintf("partitions/%s/holders/%s", partitionID, pm.deps.NodeID)
+			holders := pm.deps.Frogpond.GetAllMatchingPrefix(holderPrefix)
+			if len(holders) > 0 && !holders[0].Deleted {
+				hasPartition = true
+			}
 
 			if hasPartition {
 				// Calculate our checksum
