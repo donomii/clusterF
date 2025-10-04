@@ -12,6 +12,7 @@ import (
 
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
+	"github.com/donomii/frogpond"
 )
 
 // handlePartitionSync serves partition data with object-by-object streaming
@@ -121,6 +122,9 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 	}
 
 	if peerAddr == "" {
+		// Remove the requested peer as a holder for this partition.  Backdate the entry by 1 hr
+		pm.removePeerHolder(partitionID, peerID, time.Now().Add(-1*time.Hour))
+
 		availablePeers := make([]string, 0, len(peers))
 		for _, peer := range peers {
 			availablePeers = append(availablePeers, fmt.Sprintf("%s@%s:%d", peer.NodeID, peer.Address, peer.HTTPPort))
@@ -194,6 +198,32 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 	pm.notifyFileListChanged()
 
 	return nil
+}
+
+func (pm *PartitionManager) removePeerHolder(partitionID PartitionID, peerID types.NodeID, backdate time.Time) {
+	if !pm.hasFrogpond() {
+		return
+	}
+
+	if pm.deps.NoStore {
+		return // No-store nodes don't claim to hold partitions
+	}
+
+	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
+	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, peerID)
+
+	// Create a backdated tombstone
+	tombstone := frogpond.DataPoint{
+		Key:     []byte(holderKey),
+		Value:   nil,
+		Name:    holderKey,
+		Updated: backdate,
+		Deleted: true,
+	}
+
+	pm.sendUpdates([]frogpond.DataPoint{tombstone})
+
+	pm.debugf("[PARTITION] Removed %s as holder for %s", peerID, partitionID)
 }
 
 // shouldUpdateEntry determines if we should update our local copy with the remote entry

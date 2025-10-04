@@ -907,6 +907,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 		pprof.Handler("mutex").ServeHTTP(w, r)
 	}))
 	mux.HandleFunc("/monitor", corsMiddleware(c.Debug, c.Logger(), ui.HandleMonitorDashboard))
+	mux.HandleFunc("/monitor.js", corsMiddleware(c.Debug, c.Logger(), ui.HandleMonitorJS))
 	mux.HandleFunc("/api/cluster-stats", corsMiddleware(c.Debug, c.Logger(), c.handleClusterStats))
 	mux.HandleFunc("/cluster-visualizer.html", corsMiddleware(c.Debug, c.Logger(), ui.HandleVisualizer))
 	// File system endpoints

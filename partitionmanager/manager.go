@@ -37,6 +37,7 @@ type Dependencies struct {
 	FileStore             *FileStore
 	HTTPDataClient        *http.Client
 	Discovery             types.DiscoveryManagerLike
+	Cluster               types.ClusterLike
 	LoadPeer              PeerLoader
 	Frogpond              *frogpond.Node
 	SendUpdatesToPeers    func([]frogpond.DataPoint)
@@ -1005,6 +1006,11 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 						}
 						pm.logf("[PARTITION] Syncing %s from %s", partitionID, holderID)
 
+						// Find the peer in the nodes crdt
+						nodeData := pm.deps.Cluster.GetNodeInfo(holderID)
+						if nodeData == nil {
+							pm.removePeerHolder(partitionID, holderID, time.Now().Add(-30*time.Minute))
+						}
 						err := pm.syncPartitionFromPeer(ctx, partitionID, holderID)
 						if err != nil {
 							pm.logf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)

@@ -24,12 +24,20 @@ var embeddedProfiling []byte
 //go:embed profiling.js
 var embeddedProfilingJS []byte
 
+//go:embed monitor.html
+var embeddedMonitor []byte
+
+//go:embed monitor.js
+var embeddedMonitorJS []byte
+
 var embeddedAssets = map[string][]byte{
 	"file-browser.html":       embeddedFileBrowser,
 	"cluster-visualizer.html": embeddedClusterVisualizer,
 	"crdt-inspector.html":     embeddedCRDTInspector,
 	"profiling.html":          embeddedProfiling,
 	"profiling.js":            embeddedProfilingJS,
+	"monitor.html":            embeddedMonitor,
+	"monitor.js":              embeddedMonitorJS,
 }
 
 func loadAsset(name string) ([]byte, error) {
