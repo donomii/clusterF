@@ -87,6 +87,14 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Stream an empty object to signify end of stream
+	// This is needed because JSON decoder expects a valid JSON value
+	endMarker := struct{}{}
+	if err := encoder.Encode(endMarker); err != nil {
+		pm.logf("[PARTITION] Failed to send end marker for partition %s: %v", partitionID, err)
+		return
+	}
+
 	if canFlush {
 		flusher.Flush()
 	}
