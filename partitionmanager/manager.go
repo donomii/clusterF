@@ -1009,6 +1009,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 						// Find the peer in the nodes crdt
 						nodeData := pm.deps.Cluster.GetNodeInfo(holderID)
 						if nodeData == nil {
+							//If we can't, then remove the peer as a holder, from the crdt
 							pm.removePeerHolder(partitionID, holderID, time.Now().Add(-30*time.Minute))
 						}
 						err := pm.syncPartitionFromPeer(ctx, partitionID, holderID)
