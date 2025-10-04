@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>🔍 Profiling</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐸</text></svg>">
+    <style>
+        body { font-family: Arial, sans-serif; background: #1a1a2e; color: white; margin: 0; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .header h1 { background: linear-gradient(45deg, #3b82f6, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .controls { text-align: center; margin-bottom: 30px; }
+        .btn { background: linear-gradient(45deg, #3b82f6, #8b5cf6); color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; margin: 0 10px; }
+        .btn:hover { transform: translateY(-2px); }
+        .btn.danger { background: linear-gradient(45deg, #ef4444, #dc2626); }
+        .status { background: rgba(15, 15, 30, 0.9); border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .profiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
+        .profile-card { background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 20px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔍 Performance Profiling</h1>
+        <p>Node: <span id="nodeId"></span> | <a href="/" style="color: #06b6d4;">← Back to Home</a></p>
+    </div>
+    
+    <div class="status">
+        <h3>Profiling Status</h3>
+        <div>Status: <span id="profilingStatus">Loading...</span></div>
+        <div style="margin-top: 20px;">
+            <button class="btn" onclick="startProfiling()" id="startBtn">🚀 Start Profiling</button>
+            <button class="btn danger" onclick="stopProfiling()" id="stopBtn">🛑 Stop Profiling</button>
+        </div>
+    </div>
+    
+    <div class="profiles">
+        <div class="profile-card">
+            <h3>CPU Flame Graph</h3>
+            <p>Shows CPU usage patterns over time</p>
+            <a href="/flamegraph" class="btn">🔥 CPU Flame Graph</a>
+        </div>
+        <div class="profile-card">
+            <h3>Memory Flame Graph</h3>
+            <p>Shows current memory allocation patterns</p>
+            <a href="/memorygraph" class="btn">🧠 Memory Flame Graph</a>
+        </div>
+        <div class="profile-card">
+            <h3>Allocation Flame Graph</h3>
+            <p>Shows memory allocation call sites</p>
+            <a href="/allocgraph" class="btn">📊 Allocation Flame Graph</a>
+        </div>
+    </div>
+    
+    <div class="status">
+        <h3>Usage Instructions</h3>
+        <ul style="text-align: left; max-width: 600px; margin: 0 auto;">
+            <li>Click "Start Profiling" to enable detailed profiling</li>
+            <li>Use your application normally to generate load</li>
+            <li>Click "CPU Flame Graph" to view CPU usage patterns (30s sample)</li>
+            <li>Click "Memory Flame Graph" to view current heap allocation patterns</li>
+            <li>Click "Allocation Flame Graph" to view memory allocation call sites</li>
+            <li>Click "Stop Profiling" to disable when done</li>
+        </ul>
+    </div>
+    
+    <script src="/profiling.js"></script>
+</body>
+</html>

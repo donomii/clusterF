@@ -876,6 +876,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/memorygraph", corsMiddleware(c.Debug, c.Logger(), c.handleMemoryFlameGraph))
 	mux.HandleFunc("/allocgraph", corsMiddleware(c.Debug, c.Logger(), c.handleAllocFlameGraph))
 	mux.HandleFunc("/profiling", corsMiddleware(c.Debug, c.Logger(), ui.HandleProfilingPage))
+	mux.HandleFunc("/profiling.js", corsMiddleware(c.Debug, c.Logger(), ui.HandleProfilingJS))
 	mux.HandleFunc("/api/profiling", corsMiddleware(c.Debug, c.Logger(), c.handleProfilingAPI))
 	// Add pprof endpoints manually
 	mux.HandleFunc("/debug/pprof/", corsMiddleware(c.Debug, c.Logger(), func(w http.ResponseWriter, r *http.Request) {
