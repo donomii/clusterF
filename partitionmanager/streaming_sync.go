@@ -174,7 +174,10 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 		if err := decoder.Decode(&entry); err == io.EOF {
 			break
 		} else if err != nil {
-			return fmt.Errorf("failed to decode sync entry: %v", err)
+			// Read a sample of what we received to help debug
+			sample := make([]byte, 200)
+			n, _ := resp.Body.Read(sample)
+			return fmt.Errorf("failed to decode sync entry from %s (partition %s): %v. Sample of received data (%d bytes): %q", peerID, partitionID, err, n, string(sample[:n]))
 		}
 
 		if entry.Key == "" {
