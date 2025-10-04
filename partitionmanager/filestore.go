@@ -26,8 +26,8 @@ type FileStore struct {
 	storageMajor   string // storage format major (ensemble or bolt)
 	storageMinor   string // storage format minor (ensemble or bolt)
 	// Handle caches
-	metadataHandles sync.Map // map[string]ensemblekv.KvLike - cached metadata handles
-	contentHandles  sync.Map // map[string]ensemblekv.KvLike - cached content handles
+	metadataHandles sync.Map   // map[string]ensemblekv.KvLike - cached metadata handles
+	contentHandles  sync.Map   // map[string]ensemblekv.KvLike - cached content handles
 	handleMutex     sync.Mutex // protects handle opening/closing
 }
 
@@ -71,6 +71,7 @@ func (fs *FileStore) Close() {
 	fs.handleMutex.Lock()
 	defer fs.handleMutex.Unlock()
 
+	fs.debugf("Closing all cached metadata handles")
 	fs.metadataHandles.Range(func(key, value interface{}) bool {
 		if kv, ok := value.(ensemblekv.KvLike); ok {
 			kv.Close()
@@ -79,6 +80,7 @@ func (fs *FileStore) Close() {
 		return true
 	})
 
+	fs.debugf("Closing all cached content handles")
 	fs.contentHandles.Range(func(key, value interface{}) bool {
 		if kv, ok := value.(ensemblekv.KvLike); ok {
 			kv.Close()

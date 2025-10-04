@@ -711,26 +711,30 @@ func (c *Cluster) DataClient() *http.Client {
 
 func (c *Cluster) Start() {
 	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
-	c.debugf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
-
-	// Start discovery manager
-	if err := c.DiscoveryManager().Start(); err != nil {
-		c.Logger().Fatalf("Failed to start discovery manager: %v", err)
-	}
-	c.debugf("Started discovery manager")
-
-	c.debugf("Reconciled CRDT and local storage")
 
 	// Start all threads using ThreadManager
-	c.threadManager.StartThread("http-server", c.startHTTPServer)
-	if c.filesync != nil {
-		c.threadManager.StartThread("filesync", c.runFilesync)
-	}
+	c.threadManager.StartThread("filesync", c.runFilesync)
 	c.threadManager.StartThread("periodic-peer-sync", c.periodicPeerSync)
 	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
 	c.threadManager.StartThread("partition-check", c.partitionManager.PeriodicPartitionCheck)
 	c.threadManager.StartThread("node-pruning", c.periodicNodePruning)
+	c.threadManager.StartThread("discovery-manager", c.runDiscoveryManager)
+	c.threadManager.StartThread("http-server", c.startHTTPServer)
 	c.debugf("Started all threads")
+}
+
+func (c *Cluster) runDiscoveryManager(ctx context.Context) {
+	if c.discoveryManager == nil {
+		return
+	}
+	c.Logger().Printf("Starting discovery manager")
+	if err := c.discoveryManager.Start(); err != nil {
+		c.Logger().Printf("Discovery manager failed to start: %v", err)
+		return
+	}
+	<-ctx.Done()
+	c.Logger().Printf("Stopping discovery manager")
+	c.discoveryManager.Stop()
 }
 
 // runFilesync integrates the FileSyncer with the cluster lifecycle
@@ -754,35 +758,11 @@ func (c *Cluster) runFilesync(ctx context.Context) {
 
 func (c *Cluster) Stop() {
 	c.Logger().Printf("Stopping node %s", c.NodeId)
-	c.debugf("Stopping node %s", c.NodeId)
 
 	// Close FileStore handles BEFORE cancelling context
 	if c.partitionManager != nil {
+		c.debugf("Closing partition file store")
 		c.partitionManager.FileStore().Close()
-	}
-
-	c.cancel()
-
-	// Stop discovery manager
-	c.DiscoveryManager().Stop()
-
-	// Shutdown HTTP server
-	if c.server != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		c.server.Shutdown(ctx)
-		cancel()
-	}
-
-	// Close HTTP client transports to clean up connections
-	if c.httpClient != nil && c.httpClient.Transport != nil {
-		if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
-			transport.CloseIdleConnections()
-		}
-	}
-	if c.httpDataClient != nil && c.httpDataClient.Transport != nil {
-		if transport, ok := c.httpDataClient.Transport.(*http.Transport); ok {
-			transport.CloseIdleConnections()
-		}
 	}
 
 	// Shutdown all threads via ThreadManager
@@ -792,8 +772,25 @@ func (c *Cluster) Stop() {
 		c.debugf("Some threads failed to shutdown: %v", failedThreads)
 	}
 
+	// Cancel context to signal all goroutines to stop
+	c.debugf("Cancelling context to stop all goroutines")
+	c.cancel()
+
+	// Close HTTP client transports to clean up connections
+	if c.httpClient != nil && c.httpClient.Transport != nil {
+		c.debugf("Closing HTTP client transport")
+		if transport, ok := c.httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+	}
+	if c.httpDataClient != nil && c.httpDataClient.Transport != nil {
+		c.debugf("Closing HTTP data client transport")
+		if transport, ok := c.httpDataClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+	}
+
 	c.Logger().Printf("Node %s stopped", c.NodeId)
-	c.debugf("Node %s stopped", c.NodeId)
 }
 
 // ---------- Repair ----------
