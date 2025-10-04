@@ -175,6 +175,10 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 			return fmt.Errorf("failed to decode sync entry: %v", err)
 		}
 
+		if entry.Key == "" {
+			continue
+		}
+
 		// Verify entry checksum
 		expectedChecksum := pm.calculateEntryChecksum(entry.Metadata, entry.Content)
 		if entry.Checksum != expectedChecksum {
