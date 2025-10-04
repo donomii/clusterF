@@ -458,6 +458,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		FileStore:      fileStore,
 		HTTPDataClient: c.httpDataClient,
 		Discovery:      c.discoveryManager,
+		Cluster:        c,
 		LoadPeer: func(id types.NodeID) (*types.PeerInfo, bool) {
 			// First try peerAddrs (from Discovery)
 			peer, ok := c.peerAddrs.Load(types.NodeID(id))
