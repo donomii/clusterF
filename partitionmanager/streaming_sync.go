@@ -99,6 +99,8 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 		flusher.Flush()
 	}
 
+	pm.updatePartitionMetadata(partitionID)
+
 	pm.debugf("[PARTITION] Completed streaming %d entries for partition %s", entriesStreamed, partitionID)
 }
 
