@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -67,6 +68,22 @@ func main() {
 		// Validate import options
 		if *importDir != "" && *clusterDir == "" {
 			log.Fatal("--import-dir requires --cluster-dir to be specified")
+		}
+
+		// Validate exclude directories exist
+		if *excludeDirs != "" {
+			for _, dir := range strings.Split(*excludeDirs, ",") {
+				dir = strings.TrimSpace(dir)
+				if dir != "" {
+					absDir, err := filepath.Abs(dir)
+					if err != nil {
+						log.Fatalf("Could not resolve exclude path %s: %v", dir, err)
+					}
+					if _, err := os.Stat(absDir); err != nil {
+						log.Fatalf("Exclude directory does not exist: %s", absDir)
+					}
+				}
+			}
 		}
 
 		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *excludeDirs, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor, *encryptionKey)
@@ -266,6 +283,7 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// Print startup information
 	fmt.Printf(`
 🚀 Cluster node started!
    Node ID: %s
@@ -335,23 +353,18 @@ Press Ctrl+C to stop...
 				fmt.Println("Goodbye!")
 				os.Exit(0)
 			}()
-			if runtime.GOOS == "darwin" {
-				// macOS WebView must run on main thread; protect from panic to avoid crashing.
-				func() {
-					defer func() { _ = recover() }()
-					StartDesktopUI(cluster.HTTPDataPort, cluster) // blocks until window closes
-				}()
-			} else {
-				go func() {
-					defer func() { _ = recover() }()
-					StartDesktopUI(cluster.HTTPDataPort, cluster)
-				}()
-			}
+			// macOS WebView must run on main thread; protect from panic to avoid crashing.
+			func() {
+				defer func() { _ = recover() }()
+				StartDesktopUI(cluster.HTTPDataPort, cluster) // blocks until window closes
+			}()
+
 		} else {
 			cluster.Logger().Printf("[UI] No graphics environment detected, skipping desktop UI")
 		}
 	}
 
+	// Wait for signal if desktop UI not running
 	<-sigChan
 	fmt.Println("\nShutting down...")
 	cluster.Stop()

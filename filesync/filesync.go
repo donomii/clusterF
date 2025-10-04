@@ -82,8 +82,7 @@ func NewFileSyncer(exportDir string, importDir string, clusterDir string, exclud
 				// Convert to absolute path
 				absDir, err := filepath.Abs(dir)
 				if err != nil {
-					logger.Printf("[IMPORT] Warning: could not resolve path %s: %v", dir, err)
-					continue
+					return nil, fmt.Errorf("could not resolve exclude path %s: %v", dir, err)
 				}
 				excludeDirMap[absDir] = true
 			}

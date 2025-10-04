@@ -157,11 +157,11 @@ func (c *Cluster) PartitionManager() types.PartitionManagerLike {
 }
 
 type StorageSettings struct {
-	Program            string `json:"program"`
-	URL                string `json:"url"`
-	StorageMajor       string `json:"storage_major"`
-	StorageMinor       string `json:"storage_minor"`
-	Version            string `json:"version"`
+	Program             string `json:"program"`
+	URL                 string `json:"url"`
+	StorageMajor        string `json:"storage_major"`
+	StorageMinor        string `json:"storage_minor"`
+	Version             string `json:"version"`
 	EncryptedTestPhrase string `json:"encrypted_test_phrase,omitempty"`
 }
 
@@ -415,7 +415,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Loaded CRDT state from KV\n")
 
 	// Initialize file store
-	fileStore := partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug)
+	fileStore := partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug, opts.StorageMajor, opts.StorageMinor)
 
 	// Handle encryption if key provided
 	if opts.EncryptionKey != "" {
@@ -647,19 +647,19 @@ func xorEncryptString(data string, key []byte) string {
 	if len(key) == 0 || len(data) == 0 {
 		return data
 	}
-	
+
 	// Check if input is hex-encoded (all hex chars and even length)
 	dataBytes := []byte(data)
 	if decoded, err := hex.DecodeString(data); err == nil {
 		// Input was hex, use decoded bytes
 		dataBytes = decoded
 	}
-	
+
 	result := make([]byte, len(dataBytes))
 	for i := range dataBytes {
 		result[i] = dataBytes[i] ^ key[i%len(key)]
 	}
-	
+
 	// If original input was hex, return string; otherwise return hex
 	if _, err := hex.DecodeString(data); err == nil {
 		return string(result)

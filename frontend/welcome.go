@@ -28,7 +28,8 @@ func (f *Frontend) HandleWelcome(w http.ResponseWriter, r *http.Request) {
         .subtitle { font-size: 1.2em; color: #94a3b8; margin-bottom: 40px; }
         .node-info { background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 12px; padding: 30px; margin: 30px 0; }
         .endpoints { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-top: 30px; }
-        .endpoint-card { background: rgba(15, 15, 30, 0.9); border-radius: 8px; padding: 20px; border: 1px solid rgba(59, 130, 246, 0.2); }
+        .endpoint-card { background: rgba(15, 15, 30, 0.9); border-radius: 8px; padding: 20px; border: 1px solid rgba(59, 130, 246, 0.2); cursor: pointer; transition: transform 0.2s, border-color 0.2s; }
+        .endpoint-card:hover { transform: translateY(-2px); border-color: rgba(59, 130, 246, 0.5); }
         .endpoint-card h3 { color: #06b6d4; margin-bottom: 10px; }
         .endpoint-card a { color: #3b82f6; text-decoration: none; font-weight: bold; }
         .endpoint-card a:hover { text-decoration: underline; }
@@ -50,37 +51,37 @@ func (f *Frontend) HandleWelcome(w http.ResponseWriter, r *http.Request) {
         </div>
         
         <div class="endpoints">
-            <div class="endpoint-card">
+            <div class="endpoint-card" onclick="window.location='/profiling'">
                 <h3>🔍 Profiling</h3>
                 <p>Performance analysis</p>
                 <a href="/profiling">Open Profiling</a>
             </div>
             
-            <div class="endpoint-card">
+            <div class="endpoint-card" onclick="window.location='/files/'">
                 <h3>📁 File Browser</h3>
                 <p>Web-based file manager</p>
                 <a href="/files/">Open File Browser</a>
             </div>
             
-            <div class="endpoint-card">
+            <div class="endpoint-card" onclick="window.location='/monitor'">
                 <h3>📊 Monitor</h3>
                 <p>Node statistics and controls</p>
                 <a href="/monitor">Open Monitor Dashboard</a>
             </div>
             
-            <div class="endpoint-card">
+            <div class="endpoint-card" onclick="window.location='/crdt'">
                 <h3>🧪 CRDT Inspector</h3>
                 <p>Browse frogpond</p>
                 <a href="/crdt">Open CRDT Inspector</a>
             </div>
             
-            <div class="endpoint-card">
+            <div class="endpoint-card" onclick="window.location='/cluster-visualizer.html'">
                 <h3>📊 Cluster Visualizer</h3>
                 <p>Network visualization</p>
                 <a href="/cluster-visualizer.html">Open Visualizer</a>
             </div>
             
-            <div class="endpoint-card">
+            <div class="endpoint-card" onclick="window.location='/api'">
                 <h3>🧩 API Reference</h3>
                 <p>Browse endpoints</p>
                 <a href="/api">Open API Page</a>

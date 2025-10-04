@@ -18,18 +18,10 @@ var embeddedClusterVisualizer []byte
 //go:embed crdt-inspector.html
 var embeddedCRDTInspector []byte
 
-//go:embed profiling.html
-var embeddedProfiling []byte
-
-//go:embed profiling.js
-var embeddedProfilingJS []byte
-
 var embeddedAssets = map[string][]byte{
 	"file-browser.html":       embeddedFileBrowser,
 	"cluster-visualizer.html": embeddedClusterVisualizer,
 	"crdt-inspector.html":     embeddedCRDTInspector,
-	"profiling.html":          embeddedProfiling,
-	"profiling.js":            embeddedProfilingJS,
 }
 
 func loadAsset(name string) ([]byte, error) {

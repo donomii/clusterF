@@ -23,6 +23,8 @@ type FileStore struct {
 	partitionLocks sync.Map // map[string]*sync.RWMutex - per-partition locks
 	debugLog       bool
 	encryptionKey  []byte   // XOR encryption key (nil = no encryption)
+	storageMajor   string   // storage format major (ensemble or bolt)
+	storageMinor   string   // storage format minor (ensemble or bolt)
 }
 
 // checkForRecursiveScan panics if we detect a recursive scan call
@@ -48,10 +50,15 @@ type FileData struct {
 }
 
 // NewFileStore creates a new FileStore with per-partition storage
-func NewFileStore(baseDir string, debug bool) *FileStore {
+func NewFileStore(baseDir string, debug bool, storageMajor, storageMinor string) *FileStore {
+	if storageMajor == "" {
+		storageMajor = "extent"
+	}
 	return &FileStore{
-		baseDir:  baseDir,
-		debugLog: debug,
+		baseDir:      baseDir,
+		debugLog:     debug,
+		storageMajor: storageMajor,
+		storageMinor: storageMinor,
 	}
 }
 
@@ -120,9 +127,8 @@ func (fs *FileStore) openPartitionStores(partitionID string) (ensemblekv.KvLike,
 		return nil, nil, fmt.Errorf("failed to create content directory: %v", err)
 	}
 
-	//FIXME make storage type configurable
-	metadataKV := ensemblekv.SimpleEnsembleCreator("extent", "", metadataPath, 20*1024*1024, 50, 256*1024*1024)
-	contentKV := ensemblekv.SimpleEnsembleCreator("extent", "", contentPath, 20*1024*1024, 50, 64*1024*1024)
+	metadataKV := ensemblekv.SimpleEnsembleCreator(fs.storageMajor, fs.storageMinor, metadataPath, 20*1024*1024, 50, 256*1024*1024)
+	contentKV := ensemblekv.SimpleEnsembleCreator(fs.storageMajor, fs.storageMinor, contentPath, 20*1024*1024, 50, 64*1024*1024)
 
 	if metadataKV == nil {
 		return nil, nil, fmt.Errorf("failed to create metadata store")
