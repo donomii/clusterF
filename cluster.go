@@ -759,12 +759,6 @@ func (c *Cluster) runFilesync(ctx context.Context) {
 func (c *Cluster) Stop() {
 	c.Logger().Printf("Stopping node %s", c.NodeId)
 
-	// Close FileStore handles BEFORE cancelling context
-	if c.partitionManager != nil {
-		c.debugf("Closing partition file store")
-		c.partitionManager.FileStore().Close()
-	}
-
 	// Shutdown all threads via ThreadManager
 	c.debugf("Shutting down all threads")
 	failedThreads := c.threadManager.Shutdown()
@@ -789,6 +783,12 @@ func (c *Cluster) Stop() {
 		if transport, ok := c.httpDataClient.Transport.(*http.Transport); ok {
 			transport.CloseIdleConnections()
 		}
+	}
+
+	// Close FileStore handles
+	if c.partitionManager != nil {
+		c.debugf("Closing partition file store")
+		c.partitionManager.FileStore().Close()
 	}
 
 	c.Logger().Printf("Node %s stopped", c.NodeId)
