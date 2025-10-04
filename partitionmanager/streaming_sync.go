@@ -176,7 +176,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 		}
 
 		if entry.Key == "" {
-			continue
+			break // End of stream marker
 		}
 
 		// Verify entry checksum
