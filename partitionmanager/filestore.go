@@ -68,6 +68,7 @@ func NewFileStore(baseDir string, debug bool, storageMajor, storageMinor string)
 
 // Close closes all cached handles
 func (fs *FileStore) Close() {
+	fs.debugf("Closing FileStore and all cached handles")
 	fs.handleMutex.Lock()
 	defer fs.handleMutex.Unlock()
 

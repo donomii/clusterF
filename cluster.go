@@ -766,6 +766,7 @@ func (c *Cluster) Stop() {
 	}
 
 	// Shutdown all threads via ThreadManager
+	c.debugf("Shutting down all threads")
 	failedThreads := c.threadManager.Shutdown()
 	if len(failedThreads) > 0 {
 		c.Logger().Printf("Some threads failed to shutdown: %v", failedThreads)

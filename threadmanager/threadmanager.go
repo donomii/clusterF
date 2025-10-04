@@ -28,9 +28,9 @@ type ThreadInfo struct {
 
 // ThreadManager manages all goroutines for a cluster node
 type ThreadManager struct {
-	nodeID  string
-	logger  *log.Logger
-	threads *syncmap.SyncMap[string, *ThreadInfo]
+	nodeID          string
+	logger          *log.Logger
+	threads         *syncmap.SyncMap[string, *ThreadInfo]
 	ctx             context.Context
 	cancel          context.CancelFunc
 	shutdownTimeout time.Duration
@@ -314,9 +314,6 @@ func (tm *ThreadManager) Shutdown() []string {
 	// Stop the monitoring goroutine
 	tm.monitorCancel()
 
-	// Cancel the main context to signal all threads to stop
-	tm.cancel()
-
 	threadsToWaitFor := make(map[string]*ThreadInfo)
 	tm.threads.Range(func(name string, info *ThreadInfo) bool {
 		if info.IsRunning {
@@ -324,6 +321,9 @@ func (tm *ThreadManager) Shutdown() []string {
 		}
 		return true
 	})
+
+	// Cancel the main context to signal all threads to stop
+	tm.cancel()
 
 	if len(threadsToWaitFor) == 0 {
 		tm.Debugf("No running threads to shutdown")
