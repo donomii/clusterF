@@ -756,11 +756,9 @@ func (c *Cluster) Stop() {
 	c.Logger().Printf("Stopping node %s", c.NodeId)
 	c.debugf("Stopping node %s", c.NodeId)
 
-	// Shutdown all threads via ThreadManager FIRST
-	failedThreads := c.threadManager.Shutdown()
-	if len(failedThreads) > 0 {
-		c.Logger().Printf("Some threads failed to shutdown: %v", failedThreads)
-		c.debugf("Some threads failed to shutdown: %v", failedThreads)
+	// Close FileStore handles BEFORE cancelling context
+	if c.partitionManager != nil {
+		c.partitionManager.FileStore().Close()
 	}
 
 	c.cancel()
@@ -785,6 +783,13 @@ func (c *Cluster) Stop() {
 		if transport, ok := c.httpDataClient.Transport.(*http.Transport); ok {
 			transport.CloseIdleConnections()
 		}
+	}
+
+	// Shutdown all threads via ThreadManager
+	failedThreads := c.threadManager.Shutdown()
+	if len(failedThreads) > 0 {
+		c.Logger().Printf("Some threads failed to shutdown: %v", failedThreads)
+		c.debugf("Some threads failed to shutdown: %v", failedThreads)
 	}
 
 	c.Logger().Printf("Node %s stopped", c.NodeId)

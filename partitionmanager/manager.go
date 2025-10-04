@@ -774,7 +774,9 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 			}
 		}
 		if fileCount, ok := holderData["file_count"].(float64); ok {
-			totalFiles = int(fileCount) // Use the latest file count
+			if int(fileCount) > totalFiles {
+				totalFiles = int(fileCount) // Use the highest file count
+			}
 		}
 		if checksum, ok := holderData["checksum"].(string); ok {
 			checksums[holder] = checksum

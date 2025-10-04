@@ -346,6 +346,7 @@ Press Ctrl+C to stop...
 	if !noDesktop {
 		// Check if we have a display environment before attempting desktop UI
 		if hasGraphicsEnvironment() {
+			// Start signal handler in background
 			go func() {
 				<-sigChan
 				fmt.Println("\nShutting down...")
@@ -358,7 +359,11 @@ Press Ctrl+C to stop...
 				defer func() { _ = recover() }()
 				StartDesktopUI(cluster.HTTPDataPort, cluster) // blocks until window closes
 			}()
-
+			// Desktop UI closed, shutdown
+			fmt.Println("\nShutting down...")
+			cluster.Stop()
+			fmt.Println("Goodbye!")
+			return
 		} else {
 			cluster.Logger().Printf("[UI] No graphics environment detected, skipping desktop UI")
 		}

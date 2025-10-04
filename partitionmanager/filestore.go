@@ -22,9 +22,13 @@ type FileStore struct {
 	baseDir        string
 	partitionLocks sync.Map // map[string]*sync.RWMutex - per-partition locks
 	debugLog       bool
-	encryptionKey  []byte   // XOR encryption key (nil = no encryption)
-	storageMajor   string   // storage format major (ensemble or bolt)
-	storageMinor   string   // storage format minor (ensemble or bolt)
+	encryptionKey  []byte // XOR encryption key (nil = no encryption)
+	storageMajor   string // storage format major (ensemble or bolt)
+	storageMinor   string // storage format minor (ensemble or bolt)
+	// Handle caches
+	metadataHandles sync.Map // map[string]ensemblekv.KvLike - cached metadata handles
+	contentHandles  sync.Map // map[string]ensemblekv.KvLike - cached content handles
+	handleMutex     sync.Mutex // protects handle opening/closing
 }
 
 // checkForRecursiveScan panics if we detect a recursive scan call
@@ -60,6 +64,28 @@ func NewFileStore(baseDir string, debug bool, storageMajor, storageMinor string)
 		storageMajor: storageMajor,
 		storageMinor: storageMinor,
 	}
+}
+
+// Close closes all cached handles
+func (fs *FileStore) Close() {
+	fs.handleMutex.Lock()
+	defer fs.handleMutex.Unlock()
+
+	fs.metadataHandles.Range(func(key, value interface{}) bool {
+		if kv, ok := value.(ensemblekv.KvLike); ok {
+			kv.Close()
+		}
+		fs.metadataHandles.Delete(key)
+		return true
+	})
+
+	fs.contentHandles.Range(func(key, value interface{}) bool {
+		if kv, ok := value.(ensemblekv.KvLike); ok {
+			kv.Close()
+		}
+		fs.contentHandles.Delete(key)
+		return true
+	})
 }
 
 // SetEncryptionKey sets the encryption key for this FileStore
@@ -111,6 +137,16 @@ func (fs *FileStore) getPartitionLock(partitionID string) *sync.RWMutex {
 
 // openPartitionStores opens both metadata and content stores for a partition
 func (fs *FileStore) openPartitionStores(partitionID string) (ensemblekv.KvLike, ensemblekv.KvLike, error) {
+	fs.handleMutex.Lock()
+	defer fs.handleMutex.Unlock()
+
+	// Check cache first
+	if metaHandle, ok := fs.metadataHandles.Load(partitionID); ok {
+		if contentHandle, ok := fs.contentHandles.Load(partitionID); ok {
+			return metaHandle.(ensemblekv.KvLike), contentHandle.(ensemblekv.KvLike), nil
+		}
+	}
+
 	partitionDir := filepath.Join(fs.baseDir, partitionID)
 	if err := os.MkdirAll(partitionDir, 0755); err != nil {
 		return nil, nil, fmt.Errorf("failed to create partition directory: %v", err)
@@ -138,17 +174,16 @@ func (fs *FileStore) openPartitionStores(partitionID string) (ensemblekv.KvLike,
 		return nil, nil, fmt.Errorf("failed to create content store")
 	}
 
+	// Cache the handles
+	fs.metadataHandles.Store(partitionID, metadataKV)
+	fs.contentHandles.Store(partitionID, contentKV)
+
 	return metadataKV, contentKV, nil
 }
 
-// closePartitionStores closes both stores
+// closePartitionStores does nothing now - handles are cached
 func (fs *FileStore) closePartitionStores(metadataKV, contentKV ensemblekv.KvLike) {
-	if metadataKV != nil {
-		metadataKV.Close()
-	}
-	if contentKV != nil {
-		contentKV.Close()
-	}
+	// Handles are now cached and not closed after each operation
 }
 
 // extractPartitionID extracts the partition ID from a key
