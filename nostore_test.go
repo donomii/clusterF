@@ -28,7 +28,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 			ID:            nodeID,
 			DataDir:       dataDir,
 			HTTPDataPort:  30000 + i,
-			DiscoveryPort: 9999,
+			DiscoveryPort: 58888, // Unique test port, isolated from live nodes
 			NoStore:       false, // Normal storage nodes
 		})
 		nodes[i].Debug = true
@@ -42,7 +42,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 		ID:            clientNodeID,
 		DataDir:       fmt.Sprintf("./test-data/nostore-test/%s", clientNodeID),
 		HTTPDataPort:  30002,
-		DiscoveryPort: 9999,
+		DiscoveryPort: 58888, // Unique test port, isolated from live nodes
 		NoStore:       true, // No-store client mode
 	})
 	nodes[2].Debug = true

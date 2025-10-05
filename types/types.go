@@ -31,13 +31,13 @@ type ClusterLike interface {
 }
 
 type PartitionManagerLike interface {
-	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
-	GetFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error) // Get file and metadata from partition, including from other nodes
-	DeleteFileFromPartition(path string) error                                       // Delete file from partition, does not send to network
-	GetMetadataFromPartition(path string) (map[string]interface{}, error)            // Get file metadata from partition, including from other nodes
-	CalculatePartitionName(path string) string 								// Calculate partition name for a given path
+	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error    // Store file in appropriate partition based on path, does not send to network
+	GetFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error)    // Get file and metadata from partition, including from other nodes
+	DeleteFileFromPartition(path string) error                                          // Delete file from partition, does not send to network
+	GetMetadataFromPartition(path string) (map[string]interface{}, error)               // Get file metadata from partition, including from other nodes
+	CalculatePartitionName(path string) string                                          // Calculate partition name for a given path
 	ScanAllFiles(fn func(filePath string, metadata map[string]interface{}) error) error // Scan all files in all partitions, calling fn for each file
-	
+
 }
 
 type DiscoveryManagerLike interface {
@@ -133,42 +133,61 @@ type SearchResult struct {
 	Checksum    string `json:"checksum,omitempty"`
 }
 
-// collapsetypes.SearchResults collapses search results into directories and files
-func CollapseSearchResults(raw_results []SearchResult, basePath string) []SearchResult {
-	results := make([]SearchResult, 0, len(raw_results))
-	seen := make(map[string]bool)
-	for _, res := range raw_results {
-		// Clip off the prefix path
-		relPath := strings.TrimPrefix(res.Path, basePath)
-		//Take the string up to the first /
-		parts := strings.SplitN(relPath, "/", 2)
-		if len(parts) > 1 {
-			if parts[0] != "" {
-				dir := parts[0] + "/"
-				//c.debugf("[SEARCH] Processing result: %s (rel: %s) is a directory", dir, relPath)
-				if !seen[dir] {
-					seen[dir] = true
-					results = append(results, SearchResult{
-						Name: dir,
-						Path: basePath + dir,
-					})
-				}
-			}
-		} else {
-			// It's a file in the current directory
-			//c.debugf("[SEARCH] Processing result: %s (rel: %s) is a file", relPath, relPath)
-			if !seen[relPath] {
-				seen[relPath] = true //Could get multiple files with same name from different peers
-				results = append(results, SearchResult{
-					Name:        relPath,
-					Path:        res.Path,
-					Size:        res.Size,
-					ContentType: res.ContentType,
-					ModifiedAt:  res.ModifiedAt,
-					Checksum:    res.Checksum,
-				})
-			}
+func CollapseToDirectory(relPath, basePath string) string {
+	// Clip off the prefix path
+	relPath = strings.TrimPrefix(relPath, basePath)
+	//Take the string up to the first /
+	parts := strings.SplitN(relPath, "/", 2)
+	if len(parts) > 1 {
+		if parts[0] != "" {
+			dir := parts[0] + "/"
+			return dir
 		}
 	}
-	return results
+
+	return relPath
+}
+
+// collapsetypes.SearchResults collapses search results into directories and files
+func CollapseSearchResults(raw_results []SearchResult, basePath string, searchPath string) []SearchResult {
+	results := make(map[string]SearchResult, len(raw_results))
+	for _, res := range raw_results {
+		AddResultToMap(res, results, basePath, searchPath)
+	}
+
+	resultList := make([]SearchResult, 0, len(results))
+	for _, result := range results {
+		resultList = append(resultList, result)
+	}
+	return resultList
+}
+
+func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, basePath, searchPath string) {
+	normPath := CollapseToDirectory(result.Path, searchPath)
+	var newResult SearchResult
+	if strings.HasSuffix(normPath, "/") {
+		// It's a directory
+		newResult = SearchResult{
+			Name: normPath,
+			Path: result.Path,
+		}
+	} else {
+		// It's a file in the current directory
+		newResult = SearchResult{
+			Name:        normPath,
+			Path:        result.Path,
+			Size:        result.Size,
+			ContentType: result.ContentType,
+			ModifiedAt:  result.ModifiedAt,
+			Checksum:    result.Checksum,
+		}
+	}
+	if existing, ok := resultMap[normPath]; ok {
+		// Merge logic: keep the one with the latest ModifiedAt
+		if result.ModifiedAt > existing.ModifiedAt {
+			resultMap[normPath] = newResult
+		}
+	} else {
+		resultMap[normPath] = newResult
+	}
 }

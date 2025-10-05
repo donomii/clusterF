@@ -16,9 +16,10 @@ func TestMinimal_NewCluster(t *testing.T) {
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
-		ID:           "test-node",
-		DataDir:      tempDir,
-		HTTPDataPort: 40000,
+		ID:            "test-node",
+		DataDir:       tempDir,
+		HTTPDataPort:  40000,
+		DiscoveryPort: 57001,
 	})
 	if cluster == nil {
 		t.Fatal("NewCluster returned nil")
@@ -32,9 +33,10 @@ func TestMinimal_StartStop(t *testing.T) {
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
-		ID:           "test-node",
-		DataDir:      tempDir,
-		HTTPDataPort: 40001,
+		ID:            "test-node",
+		DataDir:       tempDir,
+		HTTPDataPort:  40001,
+		DiscoveryPort: 57002,
 	})
 
 	// Start the cluster

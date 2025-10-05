@@ -37,7 +37,7 @@ type SearchResponse struct {
 // performLocalSearch performs a search on local files
 func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 	var results []types.SearchResult
-	seen := make(map[string]bool) // Prevent duplicates
+	result := make(map[string]types.SearchResult)
 
 	// Scan all local partition stores for files matching the query
 	c.partitionManager.ScanAllFiles(func(filePath string, metadata map[string]interface{}) error {
@@ -46,28 +46,33 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 			return nil
 		}
 
-		//c.logger.Printf("[SEARCH_DEBUG] Found local file: %s, %v", filePath, filepath.Base(filePath))
-		if !seen[filePath] {
-			seen[filePath] = true
-			results = append(results, types.SearchResult{
-				Name:        filepath.Base(filePath),
-				Path:        filePath,
-				Size:        c.GetMetadataSize(metadata),
-				ContentType: c.GetMetadataContentType(metadata),
-				ModifiedAt:  c.GetMetadataModifiedAt(metadata),
-				Checksum:    c.GetMetadataChecksum(metadata),
-			})
+		if !strings.Contains(filePath, req.Query) {
+			return nil
 		}
-		// Apply limit if specified
-		if req.Limit > 0 && len(results) >= req.Limit {
-			return fmt.Errorf("limit reached") // Break the loop
+
+		// Add to results if not already seen
+		// Collapse to directory if needed
+
+		res := types.SearchResult{
+			Name:        filepath.Base(filePath),
+			Path:        filePath,
+			Size:        c.GetMetadataSize(metadata),
+			ContentType: c.GetMetadataContentType(metadata),
+			ModifiedAt:  c.GetMetadataModifiedAt(metadata),
+			Checksum:    c.GetMetadataChecksum(metadata),
 		}
+
+		types.AddResultToMap(res, result, req.Query, req.Query)
 
 		return nil
 	})
 
 	c.debugf("[SEARCH] Found %d local results for query: %s", len(results), req.Query)
 
+	// Convert map to slice
+	for _, res := range result {
+		results = append(results, res)
+	}
 	return results
 }
 
@@ -101,8 +106,8 @@ func (c *Cluster) GetMetadataChecksum(metadata map[string]interface{}) string {
 	return checksum
 }
 
-// searchAllPeers performs a search across all peers and combines results
-func (c *Cluster) searchAllPeers(req SearchRequest) []types.SearchResult {
+// searchAllNodes performs a search across all peers and combines results
+func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 	var allResults []types.SearchResult
 	seen := make(map[string]bool)
 
@@ -203,12 +208,13 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 
 // ListDirectoryUsingSearch implements directory listing using the search API
 func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, error) {
+	fmt.Printf("[SEARCH] Listing directory using search for path: %s\n", path)
 	// Normalize path to ensure it ends with / for prefix search
 	if path == "" {
 		path = "/"
 	}
 	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
+		return nil, fmt.Errorf("path must start with /")
 	}
 	if !strings.HasSuffix(path, "/") {
 		path += "/"
@@ -219,16 +225,16 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 	// Create search request for directory mode
 	req := SearchRequest{
 		Query: path,
-		Limit: 1000, // Reasonable limit for directory listings
+		Limit: 1000000, // Reasonable limit for directory listings
 	}
 
 	// Search all peers
-	raw_results := c.searchAllPeers(req)
+	raw_results := c.searchAllNodes(req)
 	c.debugf("[SEARCH] Found %d results for %s", len(raw_results), path)
 
 	// Create directories by collapsing paths
 	c.debugf("[SEARCH] Found %d file results for %s", len(raw_results), path)
-	results := types.CollapseSearchResults(raw_results, path)
+	results := types.CollapseSearchResults(raw_results, path, path)
 
 	// Convert to FileMetadata format
 	var fileMetadata []*types.FileMetadata
@@ -260,7 +266,7 @@ func (c *Cluster) SearchFiles(filename string) ([]*types.FileMetadata, error) {
 	}
 
 	// Search all peers
-	raw_results := c.searchAllPeers(req)
+	raw_results := c.searchAllNodes(req)
 
 	results := make([]types.SearchResult, 0, len(raw_results))
 	seen := make(map[string]bool)

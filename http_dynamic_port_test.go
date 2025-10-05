@@ -22,7 +22,7 @@ func TestHTTPServer_DynamicPortAllocation(t *testing.T) {
 			DataDir:       filepath.Join(tempDir, fmt.Sprintf("node%d", i)),
 			UDPListenPort: 23000 + i,
 			HTTPDataPort:  32000, // Same port for all - should cause conflicts
-			DiscoveryPort: 19400 + i,
+			DiscoveryPort: 56000 + i,
 		})
 
 		clusters[i].Start()
@@ -88,7 +88,7 @@ func TestHTTPServer_RestartWithNewPort(t *testing.T) {
 		DataDir:       filepath.Join(tempDir, "restart-test"),
 		UDPListenPort: 23100,
 		HTTPDataPort:  32100,
-		DiscoveryPort: 19600,
+		DiscoveryPort: 56100,
 	})
 
 	cluster.Start()
@@ -145,7 +145,7 @@ func TestHTTPServer_PortRangeExhaustion(t *testing.T) {
 		DataDir:       filepath.Join(tempDir, "exhaustion-test"),
 		UDPListenPort: 23200,
 		HTTPDataPort:  0, // Force random port selection
-		DiscoveryPort: 19700,
+		DiscoveryPort: 56200,
 	})
 
 	cluster.Start()

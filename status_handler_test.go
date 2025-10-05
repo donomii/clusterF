@@ -11,9 +11,10 @@ import (
 
 func TestStatusHandlerReturnsJSON(t *testing.T) {
 	cluster := NewCluster(ClusterOpts{
-		ID:           "status-node",
-		DataDir:      filepath.Join(t.TempDir(), "data"),
-		HTTPDataPort: 4321,
+		ID:            "status-node",
+		DataDir:       filepath.Join(t.TempDir(), "data"),
+		HTTPDataPort:  4321,
+		DiscoveryPort: 55002,
 	})
 	defer cluster.Stop()
 

@@ -30,9 +30,10 @@ func TestFileSystem_BasicOperations(t *testing.T) {
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
-		ID:           "test-fs-node",
-		DataDir:      tempDir,
-		HTTPDataPort: 40000,
+		ID:            "test-fs-node",
+		DataDir:       tempDir,
+		HTTPDataPort:  40000,
+		DiscoveryPort: 50001,
 	})
 
 	cluster.Start()
@@ -85,9 +86,10 @@ func TestFileSystem_Directories(t *testing.T) {
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
-		ID:           "test-dir-node",
-		DataDir:      tempDir,
-		HTTPDataPort: 40001,
+		ID:            "test-dir-node",
+		DataDir:       tempDir,
+		HTTPDataPort:  40001,
+		DiscoveryPort: 50002,
 	})
 
 	cluster.Start()
@@ -181,9 +183,10 @@ func TestFileSystem_LargeFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
-		ID:           "test-large-node",
-		DataDir:      tempDir,
-		HTTPDataPort: 40002,
+		ID:            "test-large-node",
+		DataDir:       tempDir,
+		HTTPDataPort:  40002,
+		DiscoveryPort: 50003,
 	})
 
 	cluster.Start()
@@ -221,9 +224,10 @@ func TestFileSystem_HTTPEndpoints(t *testing.T) {
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
-		ID:           "test-http-node",
-		DataDir:      tempDir,
-		HTTPDataPort: 40003,
+		ID:            "test-http-node",
+		DataDir:       tempDir,
+		HTTPDataPort:  40003,
+		DiscoveryPort: 50004,
 	})
 
 	cluster.Start()
@@ -380,9 +384,10 @@ func TestFileSystem_ErrorConditions(t *testing.T) {
 	tempDir := t.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
-		ID:           "test-error-node",
-		DataDir:      tempDir,
-		HTTPDataPort: 40004,
+		ID:            "test-error-node",
+		DataDir:       tempDir,
+		HTTPDataPort:  40004,
+		DiscoveryPort: 50005,
 	})
 
 	cluster.Start()
@@ -421,8 +426,9 @@ func BenchmarkFileSystem_SmallFiles(b *testing.B) {
 	tempDir := b.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
-		ID:      "bench-small",
-		DataDir: tempDir,
+		ID:            "bench-small",
+		DataDir:       tempDir,
+		DiscoveryPort: 50006,
 	})
 
 	fs := cluster.FileSystem
@@ -459,8 +465,9 @@ func BenchmarkFileSystem_LargeFiles(b *testing.B) {
 	tempDir := b.TempDir()
 
 	cluster := NewCluster(ClusterOpts{
-		ID:      "bench-large",
-		DataDir: tempDir,
+		ID:            "bench-large",
+		DataDir:       tempDir,
+		DiscoveryPort: 50007,
 	})
 
 	fs := cluster.FileSystem
