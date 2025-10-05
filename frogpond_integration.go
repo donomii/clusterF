@@ -94,6 +94,37 @@ func (c *Cluster) getCurrentRF() int {
 	return rf
 }
 
+// getPartitionSyncInterval gets the partition sync interval from frogpond (in seconds)
+func (c *Cluster) getPartitionSyncInterval() int {
+	data := c.frogpond.GetDataPoint("cluster/partition_sync_interval")
+	if data.Deleted || len(data.Value) == 0 {
+		return 30 // Default 30 seconds
+	}
+
+	var interval int
+	if err := json.Unmarshal(data.Value, &interval); err != nil {
+		return 30
+	}
+
+	if interval < 1 {
+		return 1
+	}
+	return interval
+}
+
+// setPartitionSyncInterval updates the cluster partition sync interval (in seconds)
+func (c *Cluster) setPartitionSyncInterval(seconds int) {
+	if seconds < 1 {
+		seconds = 1
+	}
+
+	intervalJSON, _ := json.Marshal(seconds)
+	updates := c.frogpond.SetDataPoint("cluster/partition_sync_interval_seconds", intervalJSON)
+	c.sendUpdatesToPeers(updates)
+
+	c.Logger().Printf("[PARTITION] Set partition sync interval to %d seconds", seconds)
+}
+
 // setReplicationFactor updates the cluster replication factor
 func (c *Cluster) setReplicationFactor(rf int) {
 	if rf < 1 {

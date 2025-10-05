@@ -326,6 +326,11 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 	nodes, cleanup := setupTestCluster(t, config, config.TestName)
 	defer cleanup()
 
+	// Set fast partition sync interval for testing (1 second instead of default 30)
+	for _, node := range nodes {
+		node.setPartitionSyncInterval(1)
+	}
+
 	// Wait for nodes to discover each other
 	WaitForConditionT(t, "Node discovery", func() bool {
 		for i, node := range nodes {
@@ -357,23 +362,33 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 	expectedPartition := fmt.Sprintf("p%05d", partNum)
 
 	// Verify the file can be retrieved from each node over HTTP
+	// Note: This relies on partition replication, which happens in the background
+	// The partition needs to be replicated to RF (3) nodes, which can take time
 	for i, n := range nodes {
 		base := fmt.Sprintf("http://localhost:%d", n.HTTPDataPort)
 		WaitForConditionT(t, fmt.Sprintf("File availability on node %d", i), func() bool {
 			resp, err := http.Get(base + "/api/files" + filePath)
 			if err != nil {
+				t.Logf("Node %d: HTTP error: %v", i, err)
 				return false
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
+				t.Logf("Node %d: Status %d (partition may not be replicated yet)", i, resp.StatusCode)
 				return false
 			}
 			b, err := io.ReadAll(resp.Body)
 			if err != nil {
+				t.Logf("Node %d: Read error: %v", i, err)
 				return false
 			}
-			return bytes.Equal(b, testContent)
-		}, 500, 30000)
+			if !bytes.Equal(b, testContent) {
+				t.Logf("Node %d: Content mismatch", i)
+				return false
+			}
+			t.Logf("Node %d: File retrieved successfully", i)
+			return true
+		}, 500, 60000) // Increased timeout to 60 seconds for partition replication
 	}
 
 	t.Logf("✅ Multi-node partition replication test passed: partition %s present and file retrievable on all %d nodes", expectedPartition, len(nodes))

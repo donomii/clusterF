@@ -975,6 +975,29 @@ func (pm *PartitionManager) calculatePartitionChecksum(partitionID PartitionID) 
 	return checksum
 }
 
+// getPartitionSyncInterval returns the partition sync interval from CRDT, or default
+func (pm *PartitionManager) getPartitionSyncInterval() time.Duration {
+	if !pm.hasFrogpond() {
+		return 30 * time.Second
+	}
+
+	dp := pm.deps.Frogpond.GetDataPoint("cluster/partition_sync_interval_seconds")
+	if dp.Deleted || len(dp.Value) == 0 {
+		return 30 * time.Second
+	}
+
+	var seconds int
+	if err := json.Unmarshal(dp.Value, &seconds); err != nil {
+		return 30 * time.Second
+	}
+
+	if seconds < 1 {
+		seconds = 1
+	}
+
+	return time.Duration(seconds) * time.Second
+}
+
 // periodicPartitionCheck continuously syncs partitions one at a time
 func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 	// Skip partition syncing if in no-store mode (client mode)
@@ -1023,10 +1046,11 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 
 			} else {
 				// Nothing to sync, wait a bit before checking again
+				syncInterval := pm.getPartitionSyncInterval()
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(30 * time.Second):
+				case <-time.After(syncInterval):
 				}
 			}
 		}
