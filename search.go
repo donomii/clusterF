@@ -62,7 +62,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 			Checksum:    c.GetMetadataChecksum(metadata),
 		}
 
-		types.AddResultToMap(res, result, req.Query, req.Query)
+		types.AddResultToMap(res, result, req.Query)
 
 		return nil
 	})
@@ -131,6 +131,17 @@ func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 				allResults = append(allResults, result)
 			}
 		}
+	}
+
+	searchMap := make(map[string]types.SearchResult)
+
+	for _, res := range allResults {
+		types.AddResultToMap(res, searchMap, req.Query)
+	}
+
+	allResults = make([]types.SearchResult, 0, len(searchMap))
+	for _, res := range searchMap {
+		allResults = append(allResults, res)
 	}
 
 	// Sort results alphabetically
@@ -234,7 +245,7 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 
 	// Create directories by collapsing paths
 	c.debugf("[SEARCH] Found %d file results for %s", len(raw_results), path)
-	results := types.CollapseSearchResults(raw_results, path, path)
+	results := types.CollapseSearchResults(raw_results, path)
 
 	// Convert to FileMetadata format
 	var fileMetadata []*types.FileMetadata
@@ -245,52 +256,6 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 			Size:        result.Size,
 			ContentType: result.ContentType,
 			IsDirectory: strings.HasSuffix(result.Name, "/"),
-			Checksum:    result.Checksum,
-		}
-
-		if result.ModifiedAt > 0 {
-			metadata.ModifiedAt = time.Unix(result.ModifiedAt, 0)
-		}
-
-		fileMetadata = append(fileMetadata, metadata)
-	}
-
-	return fileMetadata, nil
-}
-
-// SearchFiles implements file search using the search API
-func (c *Cluster) SearchFiles(filename string) ([]*types.FileMetadata, error) {
-	req := SearchRequest{
-		Query: filename,
-		Limit: 100, // Reasonable limit for file search
-	}
-
-	// Search all peers
-	raw_results := c.searchAllNodes(req)
-
-	results := make([]types.SearchResult, 0, len(raw_results))
-	seen := make(map[string]bool)
-	for _, res := range raw_results {
-		dir := filepath.Dir(res.Path)
-		if !seen[dir] {
-			seen[dir] = true
-			results = append(results, types.SearchResult{
-				Name: filepath.Base(dir) + "/",
-				Path: dir,
-			})
-		}
-	}
-
-	// Convert to FileMetadata format
-	var fileMetadata []*types.FileMetadata
-	for _, result := range results {
-
-		metadata := &types.FileMetadata{
-			Name:        result.Name,
-			Path:        result.Path,
-			Size:        result.Size,
-			ContentType: result.ContentType,
-			IsDirectory: false,
 			Checksum:    result.Checksum,
 		}
 

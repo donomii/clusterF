@@ -148,11 +148,11 @@ func CollapseToDirectory(relPath, basePath string) string {
 	return relPath
 }
 
-// collapsetypes.SearchResults collapses search results into directories and files
-func CollapseSearchResults(raw_results []SearchResult, basePath string, searchPath string) []SearchResult {
+// CollapseSearchResults collapses search results into directories and files
+func CollapseSearchResults(raw_results []SearchResult, searchPath string) []SearchResult {
 	results := make(map[string]SearchResult, len(raw_results))
 	for _, res := range raw_results {
-		AddResultToMap(res, results, basePath, searchPath)
+		AddResultToMap(res, results, searchPath)
 	}
 
 	resultList := make([]SearchResult, 0, len(results))
@@ -162,7 +162,7 @@ func CollapseSearchResults(raw_results []SearchResult, basePath string, searchPa
 	return resultList
 }
 
-func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, basePath, searchPath string) {
+func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, searchPath string) {
 	normPath := CollapseToDirectory(result.Path, searchPath)
 	var newResult SearchResult
 	if strings.HasSuffix(normPath, "/") {
