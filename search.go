@@ -50,6 +50,10 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 			return nil
 		}
 
+		if !strings.HasPrefix(filePath, req.Query) {
+			return nil
+		}
+
 		// Add to results if not already seen
 		// Collapse to directory if needed
 
@@ -152,6 +156,10 @@ func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 	// Apply limit if specified
 	if req.Limit > 0 && len(allResults) > req.Limit {
 		allResults = allResults[:req.Limit]
+	}
+	for _, r := range allResults {
+		c.logger.Printf("Result: %v", r.Name)
+		c.logger.Printf("ResultPath: %v", r.Path)
 	}
 
 	return allResults

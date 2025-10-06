@@ -171,7 +171,7 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 		// It's a directory
 		newResult = SearchResult{
 			Name: normPath,
-			Path: result.Path,
+			Path: searchPath + normPath,
 		}
 	} else {
 		// It's a file in the current directory
