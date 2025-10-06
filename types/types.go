@@ -152,6 +152,8 @@ func CollapseToDirectory(relPath, basePath string) string {
 func CollapseSearchResults(raw_results []SearchResult, searchPath string) []SearchResult {
 	results := make(map[string]SearchResult, len(raw_results))
 	for _, res := range raw_results {
+		norm_res := CollapseToDirectory(res.Path, searchPath)
+		res.Name = norm_res
 		AddResultToMap(res, results, searchPath)
 	}
 
