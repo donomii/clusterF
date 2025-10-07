@@ -12,7 +12,7 @@ require (
 )
 
 require (
-	github.com/donomii/ensemblekv v0.0.0-20251007195504-092f44a7ce7b
+	github.com/donomii/ensemblekv v0.0.0-20251007211002-62acd47208cd
 	github.com/fsnotify/fsnotify v1.7.0
 )
 
