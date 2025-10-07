@@ -29,11 +29,11 @@ func NewServer(fs types.FileSystemLike, clusterDir string, port int, logger *log
 
 	addr := fmt.Sprintf(":%d", port)
 	httpServer := &http.Server{
-		Addr:         addr,
-		Handler:      handler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  30 * time.Second, // important for keep-alive churn
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      150 * time.Second,
+		IdleTimeout:       30 * time.Second, // important for keep-alive churn
 	}
 
 	return &Server{
