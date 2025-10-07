@@ -1208,6 +1208,15 @@ func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata map[s
 	})
 }
 
+func isIn(id types.NodeID, list []types.NodeID) bool {
+	for _, item := range list {
+		if id == item {
+			return true
+		}
+	}
+	return false
+}
+
 // FileStore returns the underlying FileStore for direct access (used by tests)
 func (pm *PartitionManager) FileStore() *FileStore {
 	return pm.deps.FileStore
@@ -1216,14 +1225,6 @@ func (pm *PartitionManager) FileStore() *FileStore {
 func (pm *PartitionManager) GetPartitionStats() map[string]interface{} {
 	// Count local partitions by scanning metadata store
 	localPartitions := make(map[string]bool)
-	pm.deps.FileStore.ScanMetadata("partition:", func(key string, meta []byte) error {
-		parts := strings.Split(key, ":")
-		if len(parts) >= 2 {
-			localPartitions[parts[1]] = true
-
-		}
-		return nil
-	})
 
 	allPartitions := pm.getAllPartitions()
 	totalPartitions := len(allPartitions)
@@ -1231,6 +1232,13 @@ func (pm *PartitionManager) GetPartitionStats() map[string]interface{} {
 	underReplicated := 0
 	pendingSync := 0
 	currentRF := pm.replicationFactor()
+
+	for _, info := range allPartitions {
+		if isIn(pm.deps.Cluster.ID(), info.Holders) {
+			localPartitions[string(info.ID)] = true
+		}
+
+	}
 
 	for _, info := range allPartitions {
 
@@ -1246,11 +1254,11 @@ func (pm *PartitionManager) GetPartitionStats() map[string]interface{} {
 		}
 		if len(info.Holders) < currentRF {
 			underReplicated++
-
 			// Check if we need to sync this partition (we don't have it but should)
 			if !localPartitions[string(info.ID)] {
 				pendingSync++
 			}
+
 		}
 	}
 

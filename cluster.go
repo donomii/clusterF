@@ -983,7 +983,13 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 		c.debugf("[STATUS] Got partition stats: %+v", partitionStats)
 	} else {
 		c.debugf("[STATUS] PartitionManager is nil")
-		partitionStats = map[string]interface{}{}
+		partitionStats = map[string]interface{}{
+			"local_partitions": 0,
+			"total_partitions": 0,
+			"under_replicated": 0,
+			"pending_sync":     0,
+			"total_files":      0,
+		}
 	}
 
 	// Get replication factor safely
