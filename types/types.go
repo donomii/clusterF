@@ -34,7 +34,7 @@ type PartitionManagerLike interface {
 	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
 	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)           // Get file and metadata from partition, including from other nodes
 	DeleteFileFromPartition(path string) error                                       // Delete file from partition, does not send to network
-	GetMetadataFromPartition(path string) (map[string]interface{}, error)            // Get file metadata from partition, including from other nodes
+	GetMetadataFromPartition(path string) (FileMetadata, error)                      // Get file metadata from partition, including from other nodes
 	CalculatePartitionName(path string) string                                       // Calculate partition name for a given path
 	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error        // Scan all files in all partitions, calling fn for each file
 
@@ -71,9 +71,9 @@ type FileSystemLike interface {
 	CreateDirectoryWithModTime(path string, modTime time.Time) error
 	StoreFileWithModTime(path string, data []byte, contentType string, modTime time.Time) error
 	DeleteFile(path string) error
-	MetadataForPath(path string) (*FileMetadata, error)
+	MetadataForPath(path string) (FileMetadata, error)
 	// Additional methods for WebDAV support
-	GetFile(path string) ([]byte, *FileMetadata, error)
+	GetFile(path string) ([]byte, FileMetadata, error)
 	ListDirectory(path string) ([]*FileMetadata, error)
 }
 
@@ -105,7 +105,6 @@ type FileMetadata struct {
 	CreatedAt   time.Time `json:"created_at"`
 	ModifiedAt  time.Time `json:"modified_at"`
 	IsDirectory bool      `json:"is_directory"`
-	Children    []string  `json:"children,omitempty"` // For directories
 	Checksum    string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
 	Deleted     bool      `json:"deleted,omitempty"`
 }

@@ -5,12 +5,12 @@
 package main
 
 import (
-	"testing"
-	"time"
-	"path/filepath"
-	"os"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
 
 	"github.com/donomii/clusterF/filesystem"
 	"github.com/donomii/clusterF/partitionmanager"
@@ -45,8 +45,8 @@ func (m *MockCluster) NoStore() bool {
 	return false
 }
 
-func (m *MockCluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, error) {
-	return []*types.FileMetadata{}, nil // Not needed for this test
+func (m *MockCluster) ListDirectoryUsingSearch(path string) ([]types.FileMetadata, error) {
+	return []types.FileMetadata{}, nil // Not needed for this test
 }
 
 func (m *MockCluster) DataClient() *http.Client {
@@ -71,10 +71,10 @@ func TestChecksumFunctionality(t *testing.T) {
 	// Initialize KV stores
 	metadataKVPath := filepath.Join(tmpDir, "metadata")
 	contentKVPath := filepath.Join(tmpDir, "content")
-	
+
 	metadataKV := ensemblekv.SimpleEnsembleCreator("extent", "", metadataKVPath, 8*1024*1024, 32, 256*1024*1024)
 	contentKV := ensemblekv.SimpleEnsembleCreator("extent", "", contentKVPath, 2*1024*1024, 16, 64*1024*1024)
-	
+
 	if metadataKV == nil {
 		t.Fatalf("Failed to create metadata KV store")
 	}
@@ -87,19 +87,19 @@ func TestChecksumFunctionality(t *testing.T) {
 
 	// Initialize partition manager
 	deps := partitionmanager.Dependencies{
-		NodeID:         types.NodeID("test-node"),
-		NoStore:        false,
-		Logger:         logger,
-		Debugf:         func(format string, args ...interface{}) { logger.Printf(format, args...) },
-		MetadataKV:     metadataKV,
-		ContentKV:      contentKV,
-		HTTPDataClient: &http.Client{},
-		Discovery:      nil,
-		LoadPeer:       func(types.NodeID) (*types.PeerInfo, bool) { return nil, false },
-		Frogpond:       frogpond,
-		SendUpdatesToPeers: func([]frogpond.DataPoint) {},
+		NodeID:                types.NodeID("test-node"),
+		NoStore:               false,
+		Logger:                logger,
+		Debugf:                func(format string, args ...interface{}) { logger.Printf(format, args...) },
+		MetadataKV:            metadataKV,
+		ContentKV:             contentKV,
+		HTTPDataClient:        &http.Client{},
+		Discovery:             nil,
+		LoadPeer:              func(types.NodeID) (*types.PeerInfo, bool) { return nil, false },
+		Frogpond:              frogpond,
+		SendUpdatesToPeers:    func([]frogpond.DataPoint) {},
 		NotifyFileListChanged: func() {},
-		GetCurrentRF:   func() int { return 3 },
+		GetCurrentRF:          func() int { return 3 },
 	}
 
 	pm := partitionmanager.NewPartitionManager(deps)

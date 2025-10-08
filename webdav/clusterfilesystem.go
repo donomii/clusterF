@@ -171,7 +171,8 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 	}
 
 	// First try to get basic metadata
-	meta, err := cfs.fs.MetadataForPath(clusterPath)
+	metaS, err := cfs.fs.MetadataForPath(clusterPath)
+	meta := &metaS
 	if err != nil {
 		cfs.debugf("[WEBDAV] Stat: MetadataForPath failed: %v", err)
 		return cfs.fakeStatIfNotFound(clusterPath)
@@ -200,7 +201,7 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 	contentType := "application/octet-stream"
 	if !meta.IsDirectory {
 		// For files, try to get full metadata to get content type
-		if _, fullMeta, err := cfs.fs.GetFile(clusterPath); err == nil && fullMeta != nil {
+		if _, fullMeta, err := cfs.fs.GetFile(clusterPath); err == nil {
 			if fullMeta.ContentType != "" {
 				contentType = fullMeta.ContentType
 			}
@@ -350,7 +351,7 @@ func (cfs *ClusterFileSystem) Create(ctx context.Context, name string) (io.Write
 		if !errors.Is(err, types.ErrFileNotFound) {
 			return nil, webdav.NewHTTPError(http.StatusInternalServerError, err)
 		}
-	} else if meta != nil && meta.IsDirectory {
+	} else if meta.IsDirectory {
 		return nil, webdav.NewHTTPError(http.StatusMethodNotAllowed, fmt.Errorf("cannot overwrite directory"))
 	}
 
@@ -395,7 +396,7 @@ func (cfs *ClusterFileSystem) Mkdir(ctx context.Context, name string) error {
 	}
 
 	// Check if directory already exists
-	if meta, err := cfs.fs.MetadataForPath(clusterPath); err == nil && meta != nil {
+	if _, err := cfs.fs.MetadataForPath(clusterPath); err == nil {
 		return webdav.NewHTTPError(http.StatusMethodNotAllowed, fmt.Errorf("directory already exists"))
 	}
 
@@ -424,7 +425,7 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 
 	// Check if source exists
 	srcMeta, err := cfs.fs.MetadataForPath(srcClusterPath)
-	if err != nil || srcMeta == nil {
+	if err != nil {
 		return false, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("source not found"))
 	}
 
@@ -511,8 +512,8 @@ func (cfs *ClusterFileSystem) Move(ctx context.Context, src, dst string, options
 	}
 
 	// Check if source exists
-	srcMeta, err := cfs.fs.MetadataForPath(srcClusterPath)
-	if err != nil || srcMeta == nil {
+	_, err = cfs.fs.MetadataForPath(srcClusterPath)
+	if err != nil {
 		return false, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("source not found"))
 	}
 

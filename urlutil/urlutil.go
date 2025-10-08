@@ -72,6 +72,11 @@ func BuildFilesURL(address string, port int, filePath string) (string, error) {
 	return BuildHTTPURL(address, port, "/api/files"+normalized)
 }
 
+func BuildMetadataURL(address string, port int, filePath string) (string, error) {
+	normalized := normalizeAbsolutePath(filePath)
+	return BuildHTTPURL(address, port, "/api/metadata"+normalized)
+}
+
 func EncodePath(path string) string {
 	_, encoded := encodePath(path)
 	return encoded

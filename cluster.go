@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -924,6 +925,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/api/crdt/get", corsMiddleware(c.Debug, c.Logger(), c.handleCRDTGetAPI))
 	mux.HandleFunc("/api/crdt/search", corsMiddleware(c.Debug, c.Logger(), c.handleCRDTSearchAPI))
 	mux.HandleFunc("/api/files/", corsMiddleware(c.Debug, c.Logger(), c.handleFilesAPI))
+	mux.HandleFunc("/api/metadata/", corsMiddleware(c.Debug, c.Logger(), c.handleMetadataAPI))
 	// Partition sync endpoints
 	mux.HandleFunc("/api/partition-sync/", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionSyncAPI))
 	mux.HandleFunc("/api/partition-stats", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionStats))
@@ -1124,6 +1126,37 @@ func (c *Cluster) handleIntegrityCheck(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/metadata")
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	c.debugf("[METADATA_API] GET request for path: %s", path)
+
+	metadata, err := c.FileSystem.GetMetadata(path)
+	if err != nil {
+		if errors.Is(err, types.ErrFileNotFound) {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, fmt.Sprintf("Failed to retrieve metadata: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(metadata)
 }
 
 // ---------- Utilities ----------

@@ -439,7 +439,7 @@ func (e *Syncer) importAll(ctx context.Context) error {
 
 		if d.IsDir() {
 			// ensure directory exists in cluster
-			if meta, err := e.fs.MetadataForPath(clusterPath); err == nil && meta != nil && meta.IsDirectory {
+			if meta, err := e.fs.MetadataForPath(clusterPath); err == nil && meta.IsDirectory {
 				return nil
 			}
 			_ = e.fs.CreateDirectory(clusterPath)
@@ -465,8 +465,8 @@ func (e *Syncer) importAll(ctx context.Context) error {
 	})
 }
 
-func metadataMatches(meta *types.FileMetadata, size int64, modTime time.Time) bool {
-	if meta == nil || meta.IsDirectory {
+func metadataMatches(meta types.FileMetadata, size int64, modTime time.Time) bool {
+	if meta.IsDirectory {
 		return false
 	}
 	if meta.Size != size {

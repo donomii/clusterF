@@ -272,78 +272,24 @@ func (fs *ClusterFileSystem) GetFileWithContentType(path string) (io.ReadCloser,
 }
 
 // GetFile retrieves a file from the partition system
-func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, error) {
+func (fs *ClusterFileSystem) GetFile(path string) ([]byte, types.FileMetadata, error) {
 	// Get file content and metadata together
-	content, metadataMap, err := fs.cluster.PartitionManager().GetFileAndMetaFromPartition(path)
+	content, metadata, err := fs.cluster.PartitionManager().GetFileAndMetaFromPartition(path)
 	if err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
-			return nil, nil, types.ErrFileNotFound
+			return nil, types.FileMetadata{}, types.ErrFileNotFound
 		}
-		return nil, nil, err
+		return nil, types.FileMetadata{}, err
 	}
 
 	// Check if file is marked as deleted
-	if deleted, ok := metadataMap["deleted"].(bool); ok && deleted {
-		return nil, nil, types.ErrFileNotFound
-	}
-
-	// Convert metadata map to struct
-	metadata := &types.FileMetadata{}
-	if name, ok := metadataMap["name"].(string); ok {
-		metadata.Name = name
-	}
-	if path, ok := metadataMap["path"].(string); ok {
-		metadata.Path = path
-	}
-	if sizeFloat, ok := metadataMap["size"].(float64); ok {
-		metadata.Size = int64(sizeFloat)
-	}
-	if contentType, ok := metadataMap["content_type"].(string); ok {
-		metadata.ContentType = contentType
-	}
-	if createdVal, ok := metadataMap["created_at"]; ok {
-		switch v := createdVal.(type) {
-		case string:
-			if t, err := parseTimestamp(v); err == nil {
-				metadata.CreatedAt = t
-			}
-		case float64:
-			metadata.CreatedAt = time.Unix(int64(v), 0)
-		}
-	}
-	if modifiedVal, ok := metadataMap["modified_at"]; ok {
-		switch v := modifiedVal.(type) {
-		case string:
-			if t, err := parseTimestamp(v); err == nil {
-				metadata.ModifiedAt = t
-			} else {
-				panic("no")
-			}
-		case float64:
-			panic("no")
-		}
-	} else {
-		fs.debugf("[METADATA_DEBUG] modified_at NOT FOUND in metadata for %s. Keys present: %v", path, getKeys(metadataMap))
-	}
-	if checksum, ok := metadataMap["checksum"].(string); ok {
-		metadata.Checksum = checksum
-	}
-	//fs.debugf("[CHECKSUM_DEBUG] Retrieved %s with checksum: '%s'", path, metadata.Checksum)
-	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
-		for _, c := range childrenIface {
-			if cstr, ok := c.(string); ok {
-				metadata.Children = append(metadata.Children, cstr)
-			}
-		}
-	}
-
-	if metadata.IsDirectory {
-		return nil, nil, types.ErrIsDirectory
+	if metadata.Deleted {
+		return nil, types.FileMetadata{}, types.ErrFileNotFound
 	}
 
 	// Verify file integrity using checksum
 	if err := verifyChecksum(content, metadata.Checksum); err != nil {
-		return nil, nil, fmt.Errorf("file integrity check failed for %s: %v", path, err)
+		return nil, types.FileMetadata{}, fmt.Errorf("file integrity check failed for %s: %v", path, err)
 	}
 
 	if metadata.ModifiedAt.IsZero() {
@@ -405,58 +351,19 @@ func (fs *ClusterFileSystem) validatePath(path string) error {
 	return nil
 }
 
-func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, error) {
+func (fs *ClusterFileSystem) GetMetadata(path string) (types.FileMetadata, error) {
 	// Try to get metadata from partition system
-	metadataMap, err := fs.cluster.PartitionManager().GetMetadataFromPartition(path)
+	metadata, err := fs.cluster.PartitionManager().GetMetadataFromPartition(path)
 	if err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
-			return nil, types.ErrFileNotFound
+			return types.FileMetadata{}, types.ErrFileNotFound
 		}
-		return nil, err
+		return types.FileMetadata{}, err
 	}
 
 	// Check if file is marked as deleted
-	if deleted, ok := metadataMap["deleted"].(bool); ok && deleted {
-		return nil, types.ErrFileNotFound
-	}
-
-	// Convert metadata map to struct
-	var metadata types.FileMetadata
-	metadata.Name, _ = metadataMap["name"].(string)
-	metadata.Path, _ = metadataMap["path"].(string)
-	if sizeFloat, ok := metadataMap["size"].(float64); ok {
-		metadata.Size = int64(sizeFloat)
-	}
-	metadata.ContentType, _ = metadataMap["content_type"].(string)
-	metadata.Checksum, _ = metadataMap["checksum"].(string)
-	if createdVal, ok := metadataMap["created_at"]; ok {
-		switch v := createdVal.(type) {
-		case string:
-			if t, err := parseTimestamp(v); err == nil {
-				metadata.CreatedAt = t
-			}
-		case float64:
-			panic("no")
-		}
-	}
-	if modifiedVal, ok := metadataMap["modified_at"]; ok {
-		switch v := modifiedVal.(type) {
-		case string:
-			if t, err := parseTimestamp(v); err == nil {
-				metadata.ModifiedAt = t
-			} else {
-				panic("no")
-			}
-		case float64:
-			panic("no")
-		}
-	}
-	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
-		for _, c := range childrenIface {
-			if cstr, ok := c.(string); ok {
-				metadata.Children = append(metadata.Children, cstr)
-			}
-		}
+	if metadata.Deleted {
+		return types.FileMetadata{}, types.ErrFileNotFound
 	}
 
 	if metadata.Checksum == "" {
@@ -467,11 +374,11 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, erro
 		panic("no")
 	}
 
-	return &metadata, nil
+	return metadata, nil
 }
 
 // MetadataForPath adapts internal metadata to the exporter module's format.
-func (fs *ClusterFileSystem) MetadataForPath(path string) (*types.FileMetadata, error) {
+func (fs *ClusterFileSystem) MetadataForPath(path string) (types.FileMetadata, error) {
 	return fs.GetMetadata(path)
 }
 

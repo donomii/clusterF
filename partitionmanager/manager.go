@@ -13,9 +13,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
-	"path"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -260,57 +258,29 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 		decodedPath = "/" + decodedPath
 	}
 
-	fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, decodedPath)
+	metadataURL, err := urlutil.BuildMetadataURL(peer.Address, peer.HTTPPort, decodedPath)
 	if err != nil {
-		return nil, err
+		return types.FileMetadata{}, err
 	}
 
-	req, err := http.NewRequest(http.MethodHead, fileURL, nil)
+	req, err := http.NewRequest(http.MethodGet, metadataURL, nil)
 	if err != nil {
-		return nil, err
+		return types.FileMetadata{}, err
 	}
 
 	resp, err := pm.httpClient().Do(req)
 	if err != nil {
-		return nil, err
+		return types.FileMetadata{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("peer %s returned %s for metadata %s", peer.NodeID, resp.Status, filename)
+		return types.FileMetadata{}, fmt.Errorf("peer %s returned %s for metadata %s", peer.NodeID, resp.Status, filename)
 	}
 
-	headers := resp.Header
-	metadata := map[string]interface{}{
-		"name":    path.Base(decodedPath),
-		"path":    decodedPath,
-		"deleted": false,
-	}
-
-	if cl := headers.Get("Content-Length"); cl != "" {
-		if size, err := strconv.ParseInt(cl, 10, 64); err == nil {
-			metadata["size"] = float64(size)
-		}
-	}
-
-	if ct := headers.Get("Content-Type"); ct != "" {
-		metadata["content_type"] = ct
-	}
-
-	if lm := headers.Get("X-ClusterF-Modified-At"); lm != "" {
-		if t, err := time.Parse(http.TimeFormat, lm); err == nil {
-			metadata["modified_at"] = t.Format(time.RFC3339)
-		}
-	}
-
-	if created := headers.Get("X-ClusterF-Created-At"); created != "" {
-		metadata["created_at"] = created
-	}
-
-	if checksum := headers.Get("X-ClusterF-Checksum"); checksum != "" {
-		metadata["checksum"] = checksum
-	} else {
-		panic("fuck ai")
+	var metadata types.FileMetadata
+	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+		return types.FileMetadata{}, fmt.Errorf("failed to decode metadata from peer %s: %v", peer.NodeID, err)
 	}
 
 	return metadata, nil
@@ -443,24 +413,20 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, types.FileMet
 		}
 
 		// Verify checksum if available
-		if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
-			if err := pm.verifyFileChecksum(content, checksum, path, peer.NodeID); err != nil {
-				pm.logf("[PARTITION] Checksum verification failed for %s from %s: %v", path, peer.NodeID, err)
-				continue // Try next peer
-			}
-			pm.debugf("[PARTITION] Checksum verified for %s from %s", path, peer.NodeID)
-		} else {
-			panic("fuck ai")
-			pm.debugf("[PARTITION] No checksum available for %s from %s", path, peer.NodeID)
+
+		if err := pm.verifyFileChecksum(content, metadata.Checksum, path, peer.NodeID); err != nil {
+			pm.logf("[PARTITION] Checksum verification failed for %s from %s: %v", path, peer.NodeID, err)
+			continue // Try next peer
 		}
+		pm.debugf("[PARTITION] Checksum verified for %s from %s", path, peer.NodeID)
 
 		return content, metadata, nil
 	}
 
-	return nil, nil, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
+	return nil, types.FileMetadata{}, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
 }
 
-func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]interface{}, error) {
+func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMetadata, error) {
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: getting metadata %s from peers", path)
 		return pm.GetMetadataFromPeers(path)
@@ -473,35 +439,35 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (map[string]in
 	if err != nil {
 		// It's normal for a file not to be found locally
 		//pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
-		return nil, types.ErrFileNotFound
+		return types.FileMetadata{}, types.ErrFileNotFound
 	}
 
 	//FIXME: bolt seems to return nil data with no error for not found
 	if len(metadata) == 0 {
-		return nil, types.ErrFileNotFound
+		return types.FileMetadata{}, types.ErrFileNotFound
 	}
 
-	var parsedMetadata map[string]interface{}
+	var parsedMetadata types.FileMetadata
 	if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-		return nil, pm.errorf(metadata, "corrupt file metadata")
+		return types.FileMetadata{}, pm.errorf(metadata, "corrupt file metadata")
 	}
 
-	if deleted, ok := parsedMetadata["deleted"].(bool); ok && deleted {
-		return nil, types.ErrFileNotFound
+	if parsedMetadata.Deleted {
+		return types.FileMetadata{}, types.ErrFileNotFound
 	}
 
 	return parsedMetadata, nil
 }
 
-func (pm *PartitionManager) GetMetadataFromPeers(path string) (map[string]interface{}, error) {
+func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadata, error) {
 	partitionID := HashToPartition(path)
 	partition := pm.getPartitionInfo(partitionID)
 	if partition == nil {
-		return nil, fmt.Errorf("partition %s not found for file %s", partitionID, path)
+		return types.FileMetadata{}, fmt.Errorf("partition %s not found for file %s", partitionID, path)
 	}
 
 	if len(partition.Holders) == 0 {
-		return nil, fmt.Errorf("no holders registered for partition %s", partitionID)
+		return types.FileMetadata{}, fmt.Errorf("no holders registered for partition %s", partitionID)
 	}
 
 	peers := pm.getPeers()
@@ -546,9 +512,9 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (map[string]interf
 
 	if len(orderedPeers) == 0 {
 		if len(peers) == 0 {
-			return nil, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
+			return types.FileMetadata{}, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
 		}
-		return nil, fmt.Errorf("no registered holders available for partition %s", partitionID)
+		return types.FileMetadata{}, fmt.Errorf("no registered holders available for partition %s", partitionID)
 	}
 
 	pm.debugf("[PARTITION] Fetching metadata %s from partition %s holders: %v", path, partitionID, partition.Holders)
@@ -562,7 +528,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (map[string]interf
 		return metadata, nil
 	}
 
-	return nil, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
+	return types.FileMetadata{}, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
 }
 
 // deleteFileFromPartition removes a file from its partition

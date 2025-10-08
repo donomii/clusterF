@@ -4,14 +4,14 @@
 package main
 
 import (
-	"testing"
-	"time"
-	"path/filepath"
-	"os"
+	"fmt"
 	"log"
 	"net/http"
-	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"testing"
+	"time"
 
 	"github.com/donomii/clusterF/filesystem"
 	"github.com/donomii/clusterF/partitionmanager"
@@ -46,8 +46,8 @@ func (m *MockClusterSearch) NoStore() bool {
 	return false
 }
 
-func (m *MockClusterSearch) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, error) {
-	return []*types.FileMetadata{}, nil
+func (m *MockClusterSearch) ListDirectoryUsingSearch(path string) ([]types.FileMetadata, error) {
+	return []types.FileMetadata{}, nil
 }
 
 func (m *MockClusterSearch) DataClient() *http.Client {
@@ -68,10 +68,10 @@ func setupSearchTest(t *testing.T) (*filesystem.ClusterFileSystem, string) {
 
 	metadataKVPath := filepath.Join(tmpDir, "metadata")
 	contentKVPath := filepath.Join(tmpDir, "content")
-	
+
 	metadataKV := ensemblekv.SimpleEnsembleCreator("extent", "", metadataKVPath, 8*1024*1024, 32, 256*1024*1024)
 	contentKV := ensemblekv.SimpleEnsembleCreator("extent", "", contentKVPath, 2*1024*1024, 16, 64*1024*1024)
-	
+
 	if metadataKV == nil {
 		t.Fatalf("Failed to create metadata KV store")
 	}
@@ -82,19 +82,19 @@ func setupSearchTest(t *testing.T) (*filesystem.ClusterFileSystem, string) {
 	frogpond := frogpond.NewNode()
 
 	deps := partitionmanager.Dependencies{
-		NodeID:         types.NodeID("test-node-search"),
-		NoStore:        false,
-		Logger:         logger,
-		Debugf:         func(format string, args ...interface{}) { logger.Printf(format, args...) },
-		MetadataKV:     metadataKV,
-		ContentKV:      contentKV,
-		HTTPDataClient: &http.Client{},
-		Discovery:      nil,
-		LoadPeer:       func(types.NodeID) (*types.PeerInfo, bool) { return nil, false },
-		Frogpond:       frogpond,
-		SendUpdatesToPeers: func([]frogpond.DataPoint) {},
+		NodeID:                types.NodeID("test-node-search"),
+		NoStore:               false,
+		Logger:                logger,
+		Debugf:                func(format string, args ...interface{}) { logger.Printf(format, args...) },
+		MetadataKV:            metadataKV,
+		ContentKV:             contentKV,
+		HTTPDataClient:        &http.Client{},
+		Discovery:             nil,
+		LoadPeer:              func(types.NodeID) (*types.PeerInfo, bool) { return nil, false },
+		Frogpond:              frogpond,
+		SendUpdatesToPeers:    func([]frogpond.DataPoint) {},
 		NotifyFileListChanged: func() {},
-		GetCurrentRF:   func() int { return 3 },
+		GetCurrentRF:          func() int { return 3 },
 	}
 
 	pm := partitionmanager.NewPartitionManager(deps)
@@ -172,7 +172,7 @@ func TestLargeDirectoryListing(t *testing.T) {
 	// Create directory with thousands of files
 	numFiles := 2000
 	t.Logf("Creating directory with %d files...", numFiles)
-	
+
 	for i := 0; i < numFiles; i++ {
 		path := fmt.Sprintf("/large/file%04d.dat", i)
 		content := fmt.Sprintf("File number %d", i)
@@ -257,7 +257,7 @@ func TestSearchPatterns(t *testing.T) {
 
 	// Create files with different extensions and patterns
 	testFiles := []struct {
-		path string
+		path    string
 		content string
 	}{
 		{"/search/document1.txt", "text document"},
