@@ -279,8 +279,13 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 	}
 
 	var metadata types.FileMetadata
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
-		return types.FileMetadata{}, fmt.Errorf("failed to decode metadata from peer %s: %v", peer.NodeID, err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return types.FileMetadata{}, fmt.Errorf("failed to read response body from peer %s: %v", peer.NodeID, err)
+	}
+
+	if err := json.Unmarshal(body, &metadata); err != nil {
+		return types.FileMetadata{}, fmt.Errorf("failed to decode metadata from peer %s: %v, response body (first 500 chars): %s", peer.NodeID, err, string(body[:min(500, len(body))]))
 	}
 
 	return metadata, nil
