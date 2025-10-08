@@ -417,7 +417,7 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 			continue
 		}
 
-		pm.debugf("[PARTITION] Holder %s for partition %s has no reachable peer info", holder, partitionID)
+		//pm.debugf("[PARTITION] Holder %s for partition %s has no reachable peer info", holder, partitionID)
 	}
 
 	if len(orderedPeers) == 0 {
@@ -541,7 +541,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (map[string]interf
 			continue
 		}
 
-		pm.debugf("[PARTITION] Holder %s for partition %s has no reachable peer info", holder, partitionID)
+		//pm.debugf("[PARTITION] Holder %s for partition %s has no reachable peer info", holder, partitionID)
 	}
 
 	if len(orderedPeers) == 0 {
@@ -1189,7 +1189,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 
 // getPartitionStats returns statistics about partitions
 // ScanAllFiles scans all local partition stores and calls fn for each file
-func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata map[string]interface{}) error) error {
+func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types.FileMetadata) error) error {
 	return pm.deps.FileStore.ScanMetadata("", func(key string, metadataBytes []byte) error {
 		// Extract file path from key (format: partition:pXXXXX:file:/path)
 		parts := strings.Split(key, ":file:")
@@ -1199,7 +1199,7 @@ func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata map[s
 		filePath := parts[1]
 
 		// Parse metadata
-		var metadata map[string]interface{}
+		var metadata types.FileMetadata
 		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
 			return nil // Skip corrupt metadata
 		}

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -99,12 +98,13 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		w.Header().Set("Content-Type", ct)
 	}
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
-	w.Header().Set("Last-Modified", metadata.ModifiedAt.UTC().Format(http.TimeFormat))
 	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
 	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339))
 	if metadata.Checksum != "" {
 		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
 		w.Header().Set("ETag", fmt.Sprintf("\"%s\"", metadata.Checksum))
+	} else {
+		panic("no")
 	}
 	w.WriteHeader(http.StatusOK)
 	w.Write(content)
@@ -145,13 +145,15 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
-	w.Header().Set("Last-Modified", metadata.ModifiedAt.UTC().Format(http.TimeFormat))
 	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
 	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339))
 	w.Header().Set("X-ClusterF-Is-Directory", "false")
 	if metadata.Checksum != "" {
+
 		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
 		w.Header().Set("ETag", fmt.Sprintf("\"%s\"", metadata.Checksum))
+	} else {
+		panic("no")
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -186,8 +188,8 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	forwardedFrom := r.Header.Get("X-Forwarded-From")
 	isForwarded := forwardedFrom != ""
 
-	var metadata map[string]interface{}
-	var modTime time.Time
+	var metadata types.FileMetadata
+
 	if isForwarded {
 		metaHeader := r.Header.Get("X-ClusterF-Metadata")
 		if metaHeader == "" {
@@ -203,10 +205,9 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 			http.Error(w, "Invalid forwarded metadata payload", http.StatusBadRequest)
 			return
 		}
-		var parseErr error
-		modTime, parseErr = parseForwardedModTime(metadata)
-		if parseErr != nil {
-			http.Error(w, fmt.Sprintf("%v", parseErr), http.StatusBadRequest)
+
+		if metadata.ModifiedAt.IsZero() {
+			http.Error(w, "ModifiedAt is zero", http.StatusBadRequest)
 			return
 		}
 	}
@@ -217,12 +218,12 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	}
 
 	if isForwarded {
-		if metadata != nil {
-			if ct, ok := metadata["content_type"].(string); ok && ct != "" {
-				contentType = ct
-			}
+
+		if metadata.ContentType != "" {
+			contentType = metadata.ContentType
 		}
-		if err := c.FileSystem.StoreFileWithModTime(path, content, contentType, modTime); err != nil {
+
+		if err := c.FileSystem.StoreFileWithModTime(path, content, contentType, metadata.ModifiedAt); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -252,79 +253,12 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	})
 }
 
-func parseForwardedModTime(meta map[string]interface{}) (time.Time, error) {
-	if meta == nil {
-		return time.Time{}, fmt.Errorf("forwarded metadata missing")
-	}
-	if raw, ok := meta["version"]; ok {
-		switch v := raw.(type) {
-		case float64:
-			if v != 0 {
-				nanos := int64(v)
-				return time.Unix(0, nanos), nil
-			}
-		case string:
-			if v != "" {
-				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-					return time.Unix(0, n), nil
-				}
-			}
-		}
-	}
-	if raw, ok := meta["modified_at"]; ok {
-		switch v := raw.(type) {
-		case float64:
-			return time.Unix(int64(v), 0), nil
-		case string:
-			if v == "" {
-				break
-			}
-			if t, err := time.Parse(time.RFC3339, v); err == nil {
-				return t, nil
-			}
-			if t, err := time.Parse(time.RFC3339, v); err == nil {
-				return t, nil
-			}
-			if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
-				return time.Unix(secs, 0), nil
-			}
-		}
-	}
-	return time.Time{}, fmt.Errorf("forwarded metadata missing modified time")
-}
-
 func parseHeaderTimestamp(value string) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, fmt.Errorf("empty timestamp header")
 	}
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t, nil
-	}
-	if t, err := time.Parse(time.RFC3339, value); err == nil {
-		return t, nil
-	}
-	if strings.Contains(value, ".") {
-		if f, err := strconv.ParseFloat(value, 64); err == nil {
-			secs := int64(f)
-			nanos := int64((f - float64(secs)) * 1e9)
-			return time.Unix(secs, nanos), nil
-		}
-	}
-	if i, err := strconv.ParseInt(value, 10, 64); err == nil {
-		abs := i
-		if abs < 0 {
-			abs = -abs
-		}
-		switch {
-		case abs >= 1_000_000_000_000_000_000:
-			return time.Unix(0, i), nil
-		case abs >= 1_000_000_000_000_000:
-			return time.Unix(0, i*1_000), nil
-		case abs >= 1_000_000_000_000:
-			return time.Unix(0, i*1_000_000), nil
-		default:
-			return time.Unix(i, 0), nil
-		}
 	}
 	return time.Time{}, fmt.Errorf("unrecognized timestamp format")
 }

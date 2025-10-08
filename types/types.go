@@ -31,12 +31,12 @@ type ClusterLike interface {
 }
 
 type PartitionManagerLike interface {
-	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error    // Store file in appropriate partition based on path, does not send to network
-	GetFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error)    // Get file and metadata from partition, including from other nodes
-	DeleteFileFromPartition(path string) error                                          // Delete file from partition, does not send to network
-	GetMetadataFromPartition(path string) (map[string]interface{}, error)               // Get file metadata from partition, including from other nodes
-	CalculatePartitionName(path string) string                                          // Calculate partition name for a given path
-	ScanAllFiles(fn func(filePath string, metadata map[string]interface{}) error) error // Scan all files in all partitions, calling fn for each file
+	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
+	GetFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error) // Get file and metadata from partition, including from other nodes
+	DeleteFileFromPartition(path string) error                                       // Delete file from partition, does not send to network
+	GetMetadataFromPartition(path string) (map[string]interface{}, error)            // Get file metadata from partition, including from other nodes
+	CalculatePartitionName(path string) string                                       // Calculate partition name for a given path
+	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error        // Scan all files in all partitions, calling fn for each file
 
 }
 
@@ -107,30 +107,32 @@ type FileMetadata struct {
 	IsDirectory bool      `json:"is_directory"`
 	Children    []string  `json:"children,omitempty"` // For directories
 	Checksum    string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
+	Deleted     bool      `json:"deleted,omitempty"`
 }
 
 type NodeData struct {
-	NodeID      string `json:"node_id"`
-	Address     string `json:"address"`
-	HTTPPort    int    `json:"http_port"`
-	LastSeen    int64  `json:"last_seen"`
-	Available   bool   `json:"available"`
-	BytesStored int64  `json:"bytes_stored"`
-	DiskSize    int64  `json:"disk_size"`
-	DiskFree    int64  `json:"disk_free"`
-	IsStorage   bool   `json:"is_storage"`
+	NodeID      string    `json:"node_id"`
+	Address     string    `json:"address"`
+	HTTPPort    int       `json:"http_port"`
+	LastSeen    time.Time `json:"last_seen"`
+	Available   bool      `json:"available"`
+	BytesStored int64     `json:"bytes_stored"`
+	DiskSize    int64     `json:"disk_size"`
+	DiskFree    int64     `json:"disk_free"`
+	IsStorage   bool      `json:"is_storage"`
 }
 
 type NodeID string
 
 // types.SearchResult represents a search result entry
 type SearchResult struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Size        int64  `json:"size,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
-	ModifiedAt  int64  `json:"modified_at,omitempty"`
-	Checksum    string `json:"checksum,omitempty"`
+	Name        string    `json:"name"`
+	Path        string    `json:"path"`
+	Size        int64     `json:"size,omitempty"`
+	ContentType string    `json:"content_type,omitempty"`
+	ModifiedAt  time.Time `json:"modified_at,omitempty"`
+	CreatedAt   time.Time `json:"created_at,omitempty"`
+	Checksum    string    `json:"checksum,omitempty"`
 }
 
 func CollapseToDirectory(relPath, basePath string) string {
@@ -186,7 +188,7 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 	}
 	if existing, ok := resultMap[normPath]; ok {
 		// Merge logic: keep the one with the latest ModifiedAt
-		if result.ModifiedAt > existing.ModifiedAt {
+		if newResult.ModifiedAt.After(existing.ModifiedAt) {
 			resultMap[normPath] = newResult
 		}
 	} else {

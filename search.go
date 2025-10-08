@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
@@ -40,9 +39,9 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 	result := make(map[string]types.SearchResult)
 
 	// Scan all local partition stores for files matching the query
-	c.partitionManager.ScanAllFiles(func(filePath string, metadata map[string]interface{}) error {
+	c.partitionManager.ScanAllFiles(func(filePath string, metadata types.FileMetadata) error {
 		// Skip deleted files
-		if deleted, ok := metadata["deleted"].(bool); ok && deleted {
+		if metadata.Deleted {
 			return nil
 		}
 
@@ -60,10 +59,10 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 		res := types.SearchResult{
 			Name:        filepath.Base(filePath),
 			Path:        filePath,
-			Size:        c.GetMetadataSize(metadata),
-			ContentType: c.GetMetadataContentType(metadata),
-			ModifiedAt:  c.GetMetadataModifiedAt(metadata),
-			Checksum:    c.GetMetadataChecksum(metadata),
+			Size:        metadata.Size,
+			ContentType: metadata.ContentType,
+			ModifiedAt:  metadata.ModifiedAt,
+			Checksum:    metadata.Checksum,
 		}
 
 		types.AddResultToMap(res, result, req.Query)
@@ -84,6 +83,8 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 func (c *Cluster) GetMetadataSize(metadata map[string]interface{}) int64 {
 	if size, ok := metadata["size"].(float64); ok {
 		return int64(size)
+	} else {
+		panic("no")
 	}
 	return 0
 }
@@ -98,6 +99,8 @@ func (c *Cluster) GetMetadataContentType(metadata map[string]interface{}) string
 func (c *Cluster) GetMetadataModifiedAt(metadata map[string]interface{}) int64 {
 	if modifiedAt, ok := metadata["modified_at"].(float64); ok {
 		return int64(modifiedAt)
+	} else {
+		panic("no")
 	}
 	return 0
 }
@@ -265,10 +268,7 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 			ContentType: result.ContentType,
 			IsDirectory: strings.HasSuffix(result.Name, "/"),
 			Checksum:    result.Checksum,
-		}
-
-		if result.ModifiedAt > 0 {
-			metadata.ModifiedAt = time.Unix(result.ModifiedAt, 0)
+			ModifiedAt:  result.ModifiedAt,
 		}
 
 		fileMetadata = append(fileMetadata, metadata)

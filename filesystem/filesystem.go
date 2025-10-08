@@ -416,40 +416,9 @@ func (fs *ClusterFileSystem) ListDirectory(path string) ([]*types.FileMetadata, 
 
 // DeleteFile removes a file from the cluster
 func (fs *ClusterFileSystem) DeleteFile(path string) error {
-	metadata, err := fs.GetMetadata(path)
-	if err != nil {
-		return err
-	}
-
-	if metadata.IsDirectory {
-		// Check if directory is empty
-		children, err := fs.ListDirectory(path)
-		if err != nil {
-			return err
-		}
-		if len(children) > 0 {
-			return fmt.Errorf("directory not empty")
-		}
-	}
-
 	// Delete from partition system
 	if err := fs.cluster.PartitionManager().DeleteFileFromPartition(path); err != nil {
 		return fmt.Errorf("failed to delete file: %v", err)
-	}
-
-	// Directory updates are no longer needed since we use search-based directory listing
-
-	// Mirror delete to OS export directory if configured
-	if fs.cluster != nil && fs.cluster.Exporter() != nil {
-		if metadata.IsDirectory {
-			if err := fs.cluster.Exporter().RemoveDir(path); err != nil {
-				fs.debugf("[EXPORT] RemoveDir mirror failed for %s: %v", path, err)
-			}
-		} else {
-			if err := fs.cluster.Exporter().RemoveFile(path); err != nil {
-				fs.debugf("[EXPORT] RemoveFile mirror failed for %s: %v", path, err)
-			}
-		}
 	}
 
 	return nil
@@ -471,12 +440,6 @@ func parseTimestamp(value string) (time.Time, error) {
 	}
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t, nil
-	}
-	if t, err := time.Parse(time.RFC3339, value); err == nil {
-		return t, nil
-	}
-	if secs, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return time.Unix(secs, 0), nil
 	}
 	return time.Time{}, fmt.Errorf("unrecognized timestamp: %s", value)
 }
@@ -529,7 +492,7 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, erro
 				metadata.CreatedAt = t
 			}
 		case float64:
-			metadata.CreatedAt = time.Unix(int64(v), 0)
+			panic("no")
 		}
 	}
 	if modifiedVal, ok := metadataMap["modified_at"]; ok {
@@ -539,7 +502,7 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, erro
 				metadata.ModifiedAt = t
 			}
 		case float64:
-			metadata.ModifiedAt = time.Unix(int64(v), 0)
+			panic("no")
 		}
 	}
 	if childrenIface, ok := metadataMap["children"].([]interface{}); ok {
@@ -597,11 +560,7 @@ func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *types.PeerInfo, path stri
 			}
 		}
 		if remoteMod.IsZero() {
-			if alt := resp.Header.Get("X-ClusterF-Created-At"); alt != "" {
-				if t, err := time.Parse(time.RFC3339, alt); err == nil {
-					remoteMod = t
-				}
-			}
+			panic("no")
 		}
 		remoteSize := int64(-1)
 		if cl := resp.Header.Get("Content-Length"); cl != "" {
@@ -610,7 +569,7 @@ func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *types.PeerInfo, path stri
 			}
 		}
 		if !remoteMod.IsZero() && !remoteMod.Before(modTime) {
-			if size <= 0 || remoteSize == size {
+			if remoteSize == size {
 				return true, nil
 			}
 		}

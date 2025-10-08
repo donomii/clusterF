@@ -62,7 +62,7 @@ func (c *Cluster) getPeerList() []types.PeerInfo {
 			NodeID:      nodeData.NodeID,
 			Address:     nodeData.Address,
 			HTTPPort:    nodeData.HTTPPort,
-			LastSeen:    time.Unix(nodeData.LastSeen, 0),
+			LastSeen:    nodeData.LastSeen,
 			Available:   nodeData.Available,
 			BytesStored: nodeData.BytesStored,
 			DiskSize:    nodeData.DiskSize,
@@ -206,14 +206,14 @@ func (c *Cluster) getAvailableNodes() []types.NodeID {
 			continue
 		}
 
-		var nodeData map[string]interface{}
+		var nodeData types.NodeData
 		if err := json.Unmarshal(data.Value, &nodeData); err != nil {
 			continue
 		}
 
-		if avail, ok := nodeData["available"].(bool); ok && avail {
-			if nodeIDStr, ok := nodeData["node_id"].(string); ok {
-				available = append(available, types.NodeID(nodeIDStr))
+		if nodeData.Available {
+			if nodeData.NodeID != "" {
+				available = append(available, types.NodeID(nodeData.NodeID))
 			}
 		}
 	}
@@ -296,7 +296,7 @@ func (c *Cluster) updateNodeMetadata() {
 		NodeID:      string(c.NodeId),
 		Address:     address,
 		HTTPPort:    c.HTTPDataPort,
-		LastSeen:    time.Now().Unix(),
+		LastSeen:    time.Now(),
 		Available:   true,
 		BytesStored: bytesStored,
 		DiskSize:    diskSize,

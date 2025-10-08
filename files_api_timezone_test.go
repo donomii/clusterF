@@ -47,7 +47,7 @@ func TestHandleFilePutModifiedAtHeader(t *testing.T) {
 		{
 			name:        "RFC3339Nano with timezone",
 			modifiedAt:  "2024-04-27T00:50:34.090000033+09:00",
-			expectError: false,
+			expectError: true,
 		},
 		{
 			name:        "RFC3339 with timezone",
@@ -57,17 +57,17 @@ func TestHandleFilePutModifiedAtHeader(t *testing.T) {
 		{
 			name:        "RFC3339Nano UTC",
 			modifiedAt:  "2024-04-27T00:50:34.090000033Z",
-			expectError: false,
+			expectError: true,
 		},
 		{
 			name:        "Unix timestamp nanoseconds",
 			modifiedAt:  "1714146634090000033",
-			expectError: false,
+			expectError: true,
 		},
 		{
 			name:        "Unix timestamp seconds",
 			modifiedAt:  "1714146634",
-			expectError: false,
+			expectError: true,
 		},
 		{
 			name:           "Missing header",

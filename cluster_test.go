@@ -475,10 +475,13 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 			var err error
 			var resp *http.Response
 			baseURL := fmt.Sprintf("http://localhost:%d", node.HTTPDataPort)
+			
+			jst, _ := time.LoadLocation("Asia/Tokyo")
+			uploadTime := time.Date(2024, 4, 27, 10, 30, 45, 0, jst)
+			
 			success := CheckSuccessWithTimeout(func() bool {
 				// Store file using file system
 
-				uploadTime := time.Now()
 				req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files"+filePath, bytes.NewReader(testData))
 				req.Header.Set("Content-Type", "application/octet-stream")
 				req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
@@ -516,22 +519,43 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 					return
 				}
 			}
-			clearResponseBody(resp)
+			
+			// Verify ModifiedAt header matches what we uploaded
+			modifiedAt := resp.Header.Get("X-ClusterF-Modified-At")
+			if modifiedAt == "" {
+				errCh <- fmt.Errorf("Missing X-ClusterF-Modified-At header for file %d", i)
+				clearResponseBody(resp)
+				return
+			}
+			parsedTime, err := time.Parse(time.RFC3339, modifiedAt)
+			if err != nil {
+				errCh <- fmt.Errorf("Failed to parse X-ClusterF-Modified-At for file %d: %v", i, err)
+				clearResponseBody(resp)
+				return
+			}
+			if !parsedTime.Equal(uploadTime) {
+				errCh <- fmt.Errorf("ModifiedAt mismatch for file %d: got %v, want %v", i, parsedTime, uploadTime)
+				clearResponseBody(resp)
+				return
+			}
 
 			if resp.StatusCode != http.StatusOK {
 				errCh <- fmt.Errorf("Expected 200, got %d", resp.StatusCode)
+				clearResponseBody(resp)
 				return
 			}
 
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
 				errCh <- fmt.Errorf("Failed to read response: %v", err)
+				clearResponseBody(resp)
 				return
 			}
 
 			if !bytes.Equal(body, testData) {
 				errCh <- fmt.Errorf("Data mismatch for chunk %d", i)
 			}
+			clearResponseBody(resp)
 		}(j)
 	}
 	wg.Wait()
