@@ -83,13 +83,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 	return results
 }
 
-func (c *Cluster) GetMetadataChecksum(metadata map[string]interface{}) string {
-	checksum, ok := metadata["checksum"].(string)
-	if !ok {
-		c.logger.Panicf("missing checksum in metadata: %v", metadata)
-	}
-	return checksum
-}
+
 
 // searchAllNodes performs a search across all peers and combines results
 func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {

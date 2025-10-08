@@ -253,7 +253,7 @@ func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bo
 	}
 
 	// Parse both metadata for CRDT comparison
-	var localMetadata, remoteMetadata map[string]interface{}
+	var localMetadata, remoteMetadata types.FileMetadata
 	if err := json.Unmarshal(localData.Metadata, &localMetadata); err != nil {
 		pm.debugf("[PARTITION] Failed to parse local metadata for %s: %v", remoteEntry.Key, err)
 		return true // Accept remote if we can't parse local
@@ -264,29 +264,27 @@ func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bo
 	}
 
 	// CRDT rule: use latest timestamp, break ties with version
-	remoteTime, _ := remoteMetadata["modified_at"].(float64)
-	localTime, _ := localMetadata["modified_at"].(float64)
-	remoteDeletedAt, _ := remoteMetadata["deleted_at"].(float64)
-	localDeletedAt, _ := localMetadata["deleted_at"].(float64)
+	remoteTime := remoteMetadata.ModifiedAt
+	localTime := localMetadata.ModifiedAt
+	remoteDeletedAt := remoteMetadata.DeletedAt
+	localDeletedAt := localMetadata.DeletedAt
 
 	// Use the latest of modified_at or deleted_at
-	if remoteDeletedAt > remoteTime {
+	if remoteDeletedAt.After(remoteTime) {
 		remoteTime = remoteDeletedAt
 	}
-	if localDeletedAt > localTime {
+	if localDeletedAt.After(localTime) {
 		localTime = localDeletedAt
 	}
 
 	// Remote is newer
-	if remoteTime > localTime {
+	if remoteTime.After(localTime) {
 		return true
 	}
 
 	// Same timestamp, use version to break tie
 	if remoteTime == localTime {
-		remoteVersion, _ := remoteMetadata["version"].(float64)
-		localVersion, _ := localMetadata["version"].(float64)
-		return remoteVersion > localVersion
+		return true
 	}
 
 	// Local is newer or same

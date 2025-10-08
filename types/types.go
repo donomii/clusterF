@@ -107,6 +107,7 @@ type FileMetadata struct {
 	IsDirectory bool      `json:"is_directory"`
 	Checksum    string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
 	Deleted     bool      `json:"deleted,omitempty"`
+	DeletedAt   time.Time `json:"deleted_at,omitempty"`
 }
 
 type NodeData struct {

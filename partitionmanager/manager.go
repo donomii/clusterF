@@ -550,25 +550,21 @@ func (pm *PartitionManager) DeleteFileFromPartition(path string) error {
 
 	// Get existing metadata
 	existingMetadata, _ := pm.deps.FileStore.GetMetadata(fileKey)
-	var metadata map[string]interface{}
+	var metadata types.FileMetadata
 	if existingMetadata != nil {
 		// Parse existing metadata
 		json.Unmarshal(existingMetadata, &metadata)
 	} else {
 		// File doesn't exist locally, but still create tombstone for CRDT
 		pm.debugf("[PARTITION] File %s not found locally, creating tombstone anyway", path)
-		metadata = make(map[string]interface{})
+
 	}
 
 	// Mark as deleted in metadata
-	metadata["deleted"] = true
-	metadata["deleted_at"] = time.Now().Unix()
-	metadata["modified_at"] = time.Now().Unix()
-	if version, ok := metadata["version"].(float64); ok {
-		metadata["version"] = version + 1
-	} else {
-		metadata["version"] = float64(1)
-	}
+	metadata.Deleted = true
+	metadata.DeletedAt = time.Now()
+	metadata.ModifiedAt = time.Now()
+
 
 	// Store tombstone metadata and delete content
 	tombstoneJSON, _ := json.Marshal(metadata)
