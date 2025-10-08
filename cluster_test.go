@@ -481,7 +481,7 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 				uploadTime := time.Now()
 				req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files"+filePath, bytes.NewReader(testData))
 				req.Header.Set("Content-Type", "application/octet-stream")
-				req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
+				req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 				resp, err = client.Do(req)
 				return err == nil
 			}, 2000, 20000) // Retry for up to 20 seconds
@@ -736,7 +736,7 @@ func TestCluster_ConcurrentOperations(t *testing.T) {
 			uploadTime := time.Now()
 			req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files/"+fileName, bytes.NewReader(testData))
 			req.Header.Set("Content-Type", "application/octet-stream")
-			req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
+			req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 			resp, err := client.Do(req)
 			if err != nil {
 				errors <- err
@@ -854,7 +854,7 @@ func TestCluster_BasicOperations(t *testing.T) {
 		uploadTime := time.Now()
 		req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files/test-file.txt", bytes.NewReader(testData))
 		req.Header.Set("Content-Type", "text/plain")
-		req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
+		req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("PUT request failed: %v", err)
@@ -1002,7 +1002,7 @@ func TestCluster_MultiNode_Discovery(t *testing.T) {
 	uploadTime := time.Now()
 	req, _ := http.NewRequest(http.MethodPut, url, bytes.NewReader(testData))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
+	req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("PUT failed: %v", err)
@@ -1324,7 +1324,7 @@ func TestCluster_MixedEncryption(t *testing.T) {
 		uploadTime := time.Now()
 		req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files"+filePath, bytes.NewReader(testData))
 		req.Header.Set("Content-Type", "text/plain")
-		req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
+		req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("Node %d: Failed to store file: %v", i, err)

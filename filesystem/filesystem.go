@@ -180,8 +180,8 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		"path":         metadata.Path,
 		"size":         metadata.Size,
 		"content_type": metadata.ContentType,
-		"created_at":   metadata.CreatedAt.Format(time.RFC3339Nano),
-		"modified_at":  modTime.Format(time.RFC3339Nano),
+		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
+		"modified_at":  modTime.Format(time.RFC3339),
 		"version":      float64(modTime.UnixNano()),
 		"deleted":      false,
 		"checksum":     checksum,
@@ -271,7 +271,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		if metaErr == nil {
 			upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size)
 			if err == nil && upToDate {
-				fs.debugf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339Nano))
+				fs.debugf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
 				skippedPeers++
 				continue
 			}
@@ -382,6 +382,8 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, 
 		case float64:
 			metadata.ModifiedAt = time.Unix(int64(v), 0)
 		}
+	} else {
+		fs.debugf("[METADATA_DEBUG] modified_at NOT FOUND in metadata for %s. Keys present: %v", path, getKeys(metadataMap))
 	}
 	if checksum, ok := metadataMap["checksum"].(string); ok {
 		metadata.Checksum = checksum
@@ -455,11 +457,19 @@ func (fs *ClusterFileSystem) DeleteFile(path string) error {
 
 // Helper functions
 
+func getKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 func parseTimestamp(value string) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, fmt.Errorf("empty timestamp")
 	}
-	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t, nil
 	}
 	if t, err := time.Parse(time.RFC3339, value); err == nil {

@@ -254,7 +254,7 @@ func TestFileSystem_HTTPEndpoints(t *testing.T) {
 	req, _ := http.NewRequest("PUT", baseURL+"/api/files/test.txt",
 		strings.NewReader(testContent))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
+	req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Failed to upload file via HTTP: %v", err)

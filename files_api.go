@@ -145,7 +145,7 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
-	w.Header().Set("Last-Modified", metadata.ModifiedAt.Format(http.TimeFormat))
+	w.Header().Set("Last-Modified", metadata.ModifiedAt.UTC().Format(http.TimeFormat))
 	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
 	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339))
 	w.Header().Set("X-ClusterF-Is-Directory", "false")
@@ -279,7 +279,7 @@ func parseForwardedModTime(meta map[string]interface{}) (time.Time, error) {
 			if v == "" {
 				break
 			}
-			if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
 				return t, nil
 			}
 			if t, err := time.Parse(time.RFC3339, v); err == nil {
@@ -297,7 +297,7 @@ func parseHeaderTimestamp(value string) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, fmt.Errorf("empty timestamp header")
 	}
-	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t, nil
 	}
 	if t, err := time.Parse(time.RFC3339, value); err == nil {

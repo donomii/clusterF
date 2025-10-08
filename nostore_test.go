@@ -43,7 +43,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 		DataDir:       fmt.Sprintf("./test-data/nostore-test/%s", clientNodeID),
 		HTTPDataPort:  30002,
 		DiscoveryPort: 58888, // Unique test port, isolated from live nodes
-		NoStore:       true, // No-store client mode
+		NoStore:       true,  // No-store client mode
 	})
 	nodes[2].Debug = true
 	nodes[2].DiscoveryManager().SetTimings(1*time.Second, 5*time.Second)
@@ -74,7 +74,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	uploadTime := time.Now()
 	req, _ := http.NewRequest(http.MethodPut, storeURL, bytes.NewReader(testData))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339Nano))
+	req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	uploadTime2 := time.Now()
 	req, _ = http.NewRequest(http.MethodPut, clientStoreURL, bytes.NewReader(clientStoreData))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-ClusterF-Modified-At", uploadTime2.Format(time.RFC3339Nano))
+	req.Header.Set("X-ClusterF-Modified-At", uploadTime2.Format(time.RFC3339))
 
 	resp, err = client.Do(req)
 	if err != nil {
