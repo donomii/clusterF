@@ -581,8 +581,8 @@ func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *types.PeerInfo, path stri
 		return false, nil
 	case http.StatusOK:
 		remoteMod := time.Time{}
-		if lm := resp.Header.Get("Last-Modified"); lm != "" {
-			if t, err := time.Parse(http.TimeFormat, lm); err == nil {
+		if lm := resp.Header.Get("X-ClusterF-Modified-At"); lm != "" {
+			if t, err := time.Parse(time.RFC3339, lm); err == nil {
 				remoteMod = t
 			}
 		}

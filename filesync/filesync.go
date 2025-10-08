@@ -479,7 +479,8 @@ func metadataMatches(meta *types.FileMetadata, size int64, modTime time.Time) bo
 	if diff < 0 {
 		diff = -diff
 	}
-	return diff <= time.Second
+	fmt.Printf("diff: %v\n", diff.Milliseconds())
+	return diff.Milliseconds() < 1000
 }
 
 func (e *Syncer) markIgnore(full string) {
@@ -607,7 +608,11 @@ func uploadSyncfile(e *Syncer, p, clusterPath string, st fs.FileInfo, throttle c
 	// Check if file already exists with same content
 	if meta, err := e.fs.MetadataForPath(clusterPath); err == nil {
 		if metadataMatches(meta, st.Size(), st.ModTime()) {
+			e.logger.Printf("[IMPORT] Skipping synchronised file %s", clusterPath)
 			return
+		} else {
+			e.logger.Printf(`[IMPORT] Updating existing file "%s" in cluster: %+v, local size: %v, local time %v`, clusterPath, meta, st.Size(), st.ModTime())
+
 		}
 	}
 

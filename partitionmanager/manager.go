@@ -297,7 +297,7 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 		metadata["content_type"] = ct
 	}
 
-	if lm := headers.Get("Last-Modified"); lm != "" {
+	if lm := headers.Get("X-ClusterF-Modified-At"); lm != "" {
 		if t, err := time.Parse(http.TimeFormat, lm); err == nil {
 			metadata["modified_at"] = t.Format(time.RFC3339)
 		}
