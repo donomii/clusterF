@@ -457,6 +457,9 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 				relativePath := strings.TrimPrefix(entry.Path, srcClusterPath)
 				newDstPath := dstClusterPath + relativePath
 
+				if entry.ModifiedAt.IsZero() {
+					panic("no")
+				}
 				if entry.IsDirectory {
 					cfs.fs.CreateDirectory(newDstPath)
 				} else {
@@ -481,6 +484,9 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 			contentType = "application/octet-stream"
 		}
 
+		if fullMeta.ModifiedAt.IsZero() {
+			panic("no")
+		}
 		if err := cfs.fs.StoreFileWithModTime(dstClusterPath, data, contentType, fullMeta.ModifiedAt); err != nil {
 			return false, webdav.NewHTTPError(http.StatusInternalServerError, err)
 		}

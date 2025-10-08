@@ -32,7 +32,7 @@ type ClusterLike interface {
 
 type PartitionManagerLike interface {
 	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
-	GetFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error) // Get file and metadata from partition, including from other nodes
+	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)           // Get file and metadata from partition, including from other nodes
 	DeleteFileFromPartition(path string) error                                       // Delete file from partition, does not send to network
 	GetMetadataFromPartition(path string) (map[string]interface{}, error)            // Get file metadata from partition, including from other nodes
 	CalculatePartitionName(path string) string                                       // Calculate partition name for a given path
@@ -185,6 +185,9 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 			ModifiedAt:  result.ModifiedAt,
 			Checksum:    result.Checksum,
 		}
+	}
+	if newResult.ModifiedAt.IsZero() {
+		panic("no")
 	}
 	if existing, ok := resultMap[normPath]; ok {
 		// Merge logic: keep the one with the latest ModifiedAt

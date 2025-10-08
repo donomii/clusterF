@@ -250,7 +250,7 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename str
 	return content, nil
 }
 
-func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename string) (map[string]interface{}, error) {
+func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename string) (types.FileMetadata, error) {
 	decodedPath, err := url.PathUnescape(filename)
 	if err != nil {
 		decodedPath = filename
@@ -317,7 +317,7 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 }
 
 // getFileAndMetaFromPartition retrieves metadata and content from separate stores
-func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, map[string]interface{}, error) {
+func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, types.FileMetadata, error) {
 	// If in no-store mode, always try peers first
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path)
@@ -340,28 +340,28 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 	}
 
 	// Parse metadata
-	var metadata map[string]interface{}
+	var metadata types.FileMetadata
 	if err := json.Unmarshal(fileData.Metadata, &metadata); err != nil {
-		return nil, nil, pm.errorf(fileData.Metadata, "corrupt file metadata")
+		return nil, types.FileMetadata{}, pm.errorf(fileData.Metadata, "corrupt file metadata")
 	}
 
 	// Check if file is marked as deleted
-	if deleted, ok := metadata["deleted"].(bool); ok && deleted {
-		return nil, nil, types.ErrFileNotFound
+	if metadata.Deleted {
+		return nil, types.FileMetadata{}, types.ErrFileNotFound
 	}
 
 	// Verify checksum if available
-	if checksum, ok := metadata["checksum"].(string); ok && checksum != "" {
-		if err := pm.verifyFileChecksum(fileData.Content, checksum, path, string(pm.deps.NodeID)); err != nil {
-			pm.logf("[PARTITION] Local file corruption detected for %s: %v", path, err)
-			// File is corrupted locally, try to get from peers
-			return pm.getFileFromPeers(path)
-		}
-		pm.debugf("[PARTITION] Local checksum verified for %s", path)
-	} else {
-		panic("fuck ai")
-		pm.debugf("[PARTITION] No checksum available for local file %s", path)
+	checksum := metadata.Checksum
+	if checksum == "" {
+		panic("no")
 	}
+
+	if err := pm.verifyFileChecksum(fileData.Content, checksum, path, string(pm.deps.NodeID)); err != nil {
+		pm.logf("[PARTITION] Local file corruption detected for %s: %v", path, err)
+		// File is corrupted locally, try to get from peers
+		return pm.getFileFromPeers(path)
+	}
+	pm.debugf("[PARTITION] Local checksum verified for %s", path)
 
 	pm.debugf("[PARTITION] Found file %s locally in partition %s", path, partitionID)
 	pm.debugf("[PARTITION] Retrieved file %s: %d bytes content", path, len(fileData.Content))
@@ -369,15 +369,15 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ma
 }
 
 // getFileFromPeers attempts to retrieve a file from peer nodes
-func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]interface{}, error) {
+func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, types.FileMetadata, error) {
 	partitionID := HashToPartition(path)
 	partition := pm.getPartitionInfo(partitionID)
 	if partition == nil {
-		return nil, nil, fmt.Errorf("partition %s not found for file %s", partitionID, path)
+		return nil, types.FileMetadata{}, fmt.Errorf("partition %s not found for file %s", partitionID, path)
 	}
 
 	if len(partition.Holders) == 0 {
-		return nil, nil, fmt.Errorf("no holders registered for partition %s", partitionID)
+		return nil, types.FileMetadata{}, fmt.Errorf("no holders registered for partition %s", partitionID)
 	}
 
 	peers := pm.getPeers()
@@ -422,9 +422,9 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, map[string]in
 
 	if len(orderedPeers) == 0 {
 		if len(peers) == 0 {
-			return nil, nil, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
+			return nil, types.FileMetadata{}, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
 		}
-		return nil, nil, fmt.Errorf("no registered holders available for partition %s", partitionID)
+		return nil, types.FileMetadata{}, fmt.Errorf("no registered holders available for partition %s", partitionID)
 	}
 
 	pm.debugf("[PARTITION] Fetching %s from partition %s holders: %v", path, partitionID, partition.Holders)

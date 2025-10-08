@@ -95,60 +95,14 @@ func logerrf(format string, args ...interface{}) error {
 }
 
 func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
-	var meta map[string]interface{}
+	var meta types.FileMetadata
 	if err := json.Unmarshal(metadataJSON, &meta); err != nil {
-		return time.Time{}, 0, err
+		panic("no")
 	}
-	var modTime time.Time
-	if raw, ok := meta["version"]; ok {
-		switch v := raw.(type) {
-		case float64:
-			if v != 0 {
-				modTime = time.Unix(0, int64(v))
-			}
-		case string:
-			if v != "" {
-				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-					modTime = time.Unix(0, n)
-				} else if t, err := parseTimestamp(v); err == nil {
-					modTime = t
-				}
-			}
-		}
+	if meta.ModifiedAt.IsZero() {
+		panic("no")
 	}
-	if modTime.IsZero() {
-		if raw, ok := meta["modified_at"]; ok {
-			switch v := raw.(type) {
-			case float64:
-				modTime = time.Unix(int64(v), 0)
-			case string:
-				if v != "" {
-					if t, err := parseTimestamp(v); err == nil {
-						modTime = t
-					}
-				}
-			}
-		}
-	}
-	size := int64(0)
-	if raw, ok := meta["size"]; ok {
-		switch v := raw.(type) {
-		case float64:
-			size = int64(v)
-		case string:
-			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-				size = n
-			}
-		case int64:
-			size = v
-		case int:
-			size = int64(v)
-		}
-	}
-	if modTime.IsZero() {
-		return time.Time{}, size, fmt.Errorf("forwarded metadata missing mod time")
-	}
-	return modTime, size, nil
+	return meta.ModifiedAt, meta.Size, nil
 }
 
 // StoreFileWithModTime stores a file using an explicit modification time
@@ -173,21 +127,12 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		Checksum:    checksum,
 	}
 
-	// Store file and metadata together in partition system
-	// Create enhanced metadata for file
-	enhancedMetadata := map[string]interface{}{
-		"name":         metadata.Name,
-		"path":         metadata.Path,
-		"size":         metadata.Size,
-		"content_type": metadata.ContentType,
-		"created_at":   metadata.CreatedAt.Format(time.RFC3339),
-		"modified_at":  modTime.Format(time.RFC3339),
-		"version":      float64(modTime.UnixNano()),
-		"deleted":      false,
-		"checksum":     checksum,
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
 	}
+
 	//fs.debugf("[CHECKSUM_DEBUG] Enhanced metadata for %s has checksum: %s", path, enhancedMetadata["checksum"])
-	metadataJSON, _ := json.Marshal(enhancedMetadata)
+	metadataJSON, _ := json.Marshal(metadata)
 
 	// For no-store clients, forward uploads to storage nodes
 	if fs.cluster.NoStore() {
@@ -196,13 +141,6 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 
 	if err := fs.cluster.PartitionManager().StoreFileInPartition(path, metadataJSON, content); err != nil {
 		return logerrf("failed to store file: %v", err)
-	}
-
-	// Mirror to OS export directory if configured
-	if fs.cluster != nil && fs.cluster.Exporter() != nil {
-		if err := fs.cluster.Exporter().WriteFile(path, content, modTime); err != nil {
-			fs.debugf("[EXPORT] WriteFile mirror failed for %s: %v", path, err)
-		}
 	}
 
 	return nil
@@ -378,9 +316,11 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, 
 		case string:
 			if t, err := parseTimestamp(v); err == nil {
 				metadata.ModifiedAt = t
+			} else {
+				panic("no")
 			}
 		case float64:
-			metadata.ModifiedAt = time.Unix(int64(v), 0)
+			panic("no")
 		}
 	} else {
 		fs.debugf("[METADATA_DEBUG] modified_at NOT FOUND in metadata for %s. Keys present: %v", path, getKeys(metadataMap))
@@ -404,6 +344,10 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, *types.FileMetadata, 
 	// Verify file integrity using checksum
 	if err := verifyChecksum(content, metadata.Checksum); err != nil {
 		return nil, nil, fmt.Errorf("file integrity check failed for %s: %v", path, err)
+	}
+
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
 	}
 
 	return content, metadata, nil
@@ -500,6 +444,8 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, erro
 		case string:
 			if t, err := parseTimestamp(v); err == nil {
 				metadata.ModifiedAt = t
+			} else {
+				panic("no")
 			}
 		case float64:
 			panic("no")
@@ -515,6 +461,10 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (*types.FileMetadata, erro
 
 	if metadata.Checksum == "" {
 		panic("fuck ai")
+	}
+
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
 	}
 
 	return &metadata, nil

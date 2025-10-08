@@ -473,7 +473,7 @@ func metadataMatches(meta *types.FileMetadata, size int64, modTime time.Time) bo
 		return false
 	}
 	if meta.ModifiedAt.IsZero() {
-		return false
+		panic("no")
 	}
 	diff := meta.ModifiedAt.Sub(modTime)
 	if diff < 0 {

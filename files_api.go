@@ -143,6 +143,9 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
+	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
 	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
@@ -207,6 +210,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		}
 
 		if metadata.ModifiedAt.IsZero() {
+			panic("no")
 			http.Error(w, "ModifiedAt is zero", http.StatusBadRequest)
 			return
 		}

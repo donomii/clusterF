@@ -53,6 +53,10 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 			return nil
 		}
 
+		if metadata.ModifiedAt.IsZero() {
+			panic("no")
+		}
+
 		// Add to results if not already seen
 		// Collapse to directory if needed
 
@@ -77,32 +81,6 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 		results = append(results, res)
 	}
 	return results
-}
-
-// Helper functions to extract metadata fields
-func (c *Cluster) GetMetadataSize(metadata map[string]interface{}) int64 {
-	if size, ok := metadata["size"].(float64); ok {
-		return int64(size)
-	} else {
-		panic("no")
-	}
-	return 0
-}
-
-func (c *Cluster) GetMetadataContentType(metadata map[string]interface{}) string {
-	if contentType, ok := metadata["content_type"].(string); ok {
-		return contentType
-	}
-	return ""
-}
-
-func (c *Cluster) GetMetadataModifiedAt(metadata map[string]interface{}) int64 {
-	if modifiedAt, ok := metadata["modified_at"].(float64); ok {
-		return int64(modifiedAt)
-	} else {
-		panic("no")
-	}
-	return 0
 }
 
 func (c *Cluster) GetMetadataChecksum(metadata map[string]interface{}) string {
@@ -261,6 +239,9 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 	// Convert to FileMetadata format
 	var fileMetadata []*types.FileMetadata
 	for _, result := range results {
+		if result.ModifiedAt.IsZero() {
+			panic("no")
+		}
 		metadata := &types.FileMetadata{
 			Name:        strings.TrimSuffix(result.Name, "/"),
 			Path:        result.Path,
