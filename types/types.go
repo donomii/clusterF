@@ -171,8 +171,9 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 	if strings.HasSuffix(normPath, "/") {
 		// It's a directory
 		newResult = SearchResult{
-			Name: normPath,
-			Path: searchPath + normPath,
+			Name:       normPath,
+			Path:       searchPath + normPath,
+			ModifiedAt: result.ModifiedAt,
 		}
 	} else {
 		// It's a file in the current directory
