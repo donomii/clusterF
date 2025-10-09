@@ -980,20 +980,14 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	c.debugf("[STATUS] Handler called")
 
 	// Get partition stats without holding the main mutex
-	var partitionStats map[string]interface{}
+	var partitionStats types.PartitionStatistics
 	if c.partitionManager != nil {
 		c.debugf("[STATUS] Getting partition stats")
 		partitionStats = c.partitionManager.GetPartitionStats()
 		c.debugf("[STATUS] Got partition stats: %+v", partitionStats)
 	} else {
 		c.debugf("[STATUS] PartitionManager is nil")
-		partitionStats = map[string]interface{}{
-			"local_partitions": 0,
-			"total_partitions": 0,
-			"under_replicated": 0,
-			"pending_sync":     0,
-			"total_files":      0,
-		}
+		partitionStats = types.PartitionStatistics{}
 	}
 
 	// Get replication factor safely
@@ -1011,17 +1005,17 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 		currentFile = cf.(string)
 	}
 
-	status := map[string]interface{}{
-		"node_id":            c.NodeId,
-		"data_dir":           c.DataDir,
-		"http_port":          c.HTTPDataPort,
-		"replication_factor": rf,
-		"partition_stats":    partitionStats,
-		"current_file":       currentFile,
+	status := types.NodeStatus{
+		Node_id:            string(c.NodeId),
+		Data_dir:           c.DataDir,
+		Http_port:          c.HTTPDataPort,
+		Replication_factor: rf.(int),
+		Partition_stats:    partitionStats,
+		Current_file:       currentFile,
 	}
 
 	// Debug: log what we're sending
-	c.debugf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.NodeId, status["replication_factor"], partitionStats)
+	c.debugf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.NodeId, status.Replication_factor, partitionStats)
 
 	w.Header().Set("Content-Type", "application/json")
 	c.debugf("[STATUS] Set headers")
@@ -1038,18 +1032,18 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	peerList := c.getPeerList()
-	stats := map[string]interface{}{
-		"node_id":            c.NodeId,
-		"http_port":          c.HTTPDataPort,
-		"discovery_port":     c.DiscoveryPort,
-		"data_dir":           c.DataDir,
-		"timestamp":          time.Now().Unix(),
-		"replication_factor": c.getCurrentRF(),
-		"peer_list":          peerList,
+	stats := types.NodeStatus{
+		Node_id:            string(c.NodeId),
+		Http_port:          c.HTTPDataPort,
+		Discovery_port:     c.DiscoveryPort,
+		Data_dir:           c.DataDir,
+		Timestamp:          time.Now(),
+		Replication_factor: c.getCurrentRF(),
+		Peer_list:          peerList,
 	}
 
 	// Debug: log what we're sending
-	c.debugf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.NodeId, len(peerList), stats["replication_factor"])
+	c.debugf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.NodeId, len(peerList), stats.Replication_factor)
 
 	json.NewEncoder(w).Encode(stats)
 }

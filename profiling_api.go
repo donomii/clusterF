@@ -17,7 +17,7 @@ func (c *Cluster) handleProfilingAPI(w http.ResponseWriter, r *http.Request) {
 		c.profilingMutex.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]bool{
 			"active": active,
 		})
 
@@ -97,7 +97,7 @@ func (c *Cluster) stopProfiling() {
 func (c *Cluster) enableProfiling() error {
 	c.profilingMutex.Lock()
 	defer c.profilingMutex.Unlock()
-	
+
 	if !c.profilingActive {
 		if err := c.startProfiling(); err != nil {
 			return err

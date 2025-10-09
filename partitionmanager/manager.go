@@ -197,11 +197,9 @@ func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byt
 
 	// Debug: verify what we just stored
 	if storedData, err := pm.deps.FileStore.Get(fileKey); err == nil && storedData.Exists {
-		var parsedMeta map[string]interface{}
+		var parsedMeta types.FileMetadata
 		if json.Unmarshal(storedData.Metadata, &parsedMeta) == nil {
-			if _, ok := parsedMeta["checksum"]; ok {
-				//pm.logf("[CHECKSUM_DEBUG] Just stored %s with checksum: %v", path, checksum)
-			} else {
+			if parsedMeta.Checksum == "" {
 				panic("fuck ai")
 				//pm.logf("[CHECKSUM_DEBUG] ERROR: Just stored %s but no checksum in metadata!", path)
 			}
@@ -600,7 +598,7 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	pm.deps.FileStore.ScanMetadata(prefix, func(key string, metadata []byte) error {
 		if strings.HasPrefix(key, prefix) && strings.Contains(key, ":file:") {
 			// Parse the metadata to check if it's deleted
-			var parsedMetadata map[string]interface{}
+			var parsedMetadata types.FileMetadata
 			if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
 				pm.errorf(metadata, "corrupt metadata in updatePartitionMetadata")
 				// Parse error - count as existing file
@@ -608,7 +606,7 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 				return nil
 			}
 			// Check if file is marked as deleted
-			if deleted, ok := parsedMetadata["deleted"].(bool); !ok || !deleted {
+			if !parsedMetadata.Deleted {
 				// File is not deleted, count it
 				fileCount++
 			}
@@ -1187,7 +1185,7 @@ func (pm *PartitionManager) FileStore() *FileStore {
 	return pm.deps.FileStore
 }
 
-func (pm *PartitionManager) GetPartitionStats() map[string]interface{} {
+func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 	// Count local partitions by scanning metadata store
 	localPartitions := make(map[string]bool)
 
@@ -1232,13 +1230,13 @@ func (pm *PartitionManager) GetPartitionStats() map[string]interface{} {
 		totalFiles += info.FileCount
 	}
 
-	return map[string]interface{}{
-		"local_partitions":      len(localPartitions),
-		"total_partitions":      totalPartitions,
-		"under_replicated":      underReplicated,
-		"pending_sync":          pendingSync,
-		"replication_factor":    currentRF,
-		"total_files":           totalFiles,
-		"partition_count_limit": DefaultPartitionCount,
+	return types.PartitionStatistics{
+		Local_partitions:      len(localPartitions),
+		Total_partitions:      totalPartitions,
+		Under_replicated:      underReplicated,
+		Pending_sync:          pendingSync,
+		Replication_factor:    currentRF,
+		Total_files:           totalFiles,
+		Partition_count_limit: DefaultPartitionCount,
 	}
 }

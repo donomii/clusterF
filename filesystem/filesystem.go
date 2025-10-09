@@ -315,25 +315,6 @@ func (fs *ClusterFileSystem) DeleteFile(path string) error {
 }
 
 // Helper functions
-
-func getKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-func parseTimestamp(value string) (time.Time, error) {
-	if value == "" {
-		return time.Time{}, fmt.Errorf("empty timestamp")
-	}
-	if t, err := time.Parse(time.RFC3339, value); err == nil {
-		return t, nil
-	}
-	return time.Time{}, fmt.Errorf("unrecognized timestamp: %s", value)
-}
-
 func (fs *ClusterFileSystem) validatePath(path string) error {
 	if len(path) > MaxPathLen {
 		return fmt.Errorf("path too long")

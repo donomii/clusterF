@@ -16,6 +16,7 @@ var (
 	ErrIsDirectory  = errors.New("path is a directory")
 )
 
+// A cluster node
 type ClusterLike interface {
 	PartitionManager() PartitionManagerLike
 	DiscoveryManager() DiscoveryManagerLike
@@ -30,6 +31,8 @@ type ClusterLike interface {
 	GetNodeInfo(nodeID NodeID) *NodeData
 }
 
+// The partition manager, everything needed to access partitions and files
+// The FileStore should not be accessed directly, except by partitionManager
 type PartitionManagerLike interface {
 	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
 	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)           // Get file and metadata from partition, including from other nodes
@@ -40,6 +43,7 @@ type PartitionManagerLike interface {
 
 }
 
+// Handles discovering peers on the network
 type DiscoveryManagerLike interface {
 
 	// GetPeers returns a list of all known peers
@@ -58,6 +62,7 @@ type DiscoveryManagerLike interface {
 	GetPeerCount() int
 }
 
+// Handles importing and exporting data files to/from disk
 type ExporterLike interface {
 	WriteFile(clusterPath string, data []byte, modTime time.Time) error
 	RemoveDir(clusterPath string) error
@@ -124,7 +129,7 @@ type NodeData struct {
 
 type NodeID string
 
-// types.SearchResult represents a search result entry
+// SearchResult is a search result entry
 type SearchResult struct {
 	Name        string    `json:"name"`
 	Path        string    `json:"path"`
@@ -133,6 +138,39 @@ type SearchResult struct {
 	ModifiedAt  time.Time `json:"modified_at,omitempty"`
 	CreatedAt   time.Time `json:"created_at,omitempty"`
 	Checksum    string    `json:"checksum,omitempty"`
+}
+
+// Sent to the browser for display
+type PartitionStatistics struct {
+	Local_partitions      int `json:"local_partitions"`
+	Total_partitions      int `json:"total_partitions"`
+	Under_replicated      int `json:"under_replicated"`
+	Pending_sync          int `json:"pending_sync"`
+	Replication_factor    int `json:"replication_factor"`
+	Total_files           int `json:"total_files"`
+	Partition_count_limit int `json:"partition_count_limit"`
+}
+
+// Sent to the browser for display
+type NodeStatus struct {
+	Node_id            string              `json:"node_id"`
+	Data_dir           string              `json:"data_dir"`
+	Http_port          int                 `json:"http_port"`
+	Replication_factor int                 `json:"replication_factor"`
+	Partition_stats    PartitionStatistics `json:"partition_stats"`
+	Current_file       string              `json:"current_file"`
+	Discovery_port     int                 `json:"discovery_port"`
+	Timestamp          time.Time           `json:"timestamp"`
+	Peer_list          []PeerInfo          `json:"peer_list"`
+}
+
+// Monitor transcoding
+type TranscodeStatistics struct {
+	TotalEntries int    `json:"total_entries"`
+	TotalSize    int    `json:"total_size"`
+	MaxSize      int    `json:"max_size"`
+	InProgress   int    `json:"in_progress"`
+	CacheDir     string `json:"cache_dir"`
 }
 
 func CollapseToDirectory(relPath, basePath string) string {

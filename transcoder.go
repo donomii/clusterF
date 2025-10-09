@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/syncmap"
+	"github.com/donomii/clusterF/types"
 )
 
 type Transcoder struct {
@@ -329,7 +330,7 @@ func (t *Transcoder) cleanupCache() {
 }
 
 // GetCacheStats returns cache statistics
-func (t *Transcoder) GetCacheStats() map[string]interface{} {
+func (t *Transcoder) GetCacheStats() types.TranscodeStatistics {
 	var totalSize int64
 	var inProgress int
 	var totalEntries int
@@ -343,11 +344,11 @@ func (t *Transcoder) GetCacheStats() map[string]interface{} {
 		return true
 	})
 
-	return map[string]interface{}{
-		"total_entries": totalEntries,
-		"total_size":    totalSize,
-		"max_size":      t.maxCacheSize,
-		"in_progress":   inProgress,
-		"cache_dir":     t.cacheDir,
+	return types.TranscodeStatistics{
+		TotalEntries: totalEntries,
+		TotalSize:    int(totalSize),
+		MaxSize:      int(t.maxCacheSize),
+		InProgress:   inProgress,
+		CacheDir:     t.cacheDir,
 	}
 }

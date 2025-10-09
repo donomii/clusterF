@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/donomii/clusterF/types"
 	ensemblekv "github.com/donomii/ensemblekv"
 )
 
@@ -599,9 +600,9 @@ func (fs *FileStore) CalculatePartitionChecksum(prefix string) (string, error) {
 			return nil
 		}
 
-		var parsedMetadata map[string]interface{}
+		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
-			if deleted, ok := parsedMetadata["deleted"].(bool); !ok || !deleted {
+			if !parsedMetadata.Deleted {
 				entries = append(entries, entry{
 					key:      key,
 					metadata: metadata,
