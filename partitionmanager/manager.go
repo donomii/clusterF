@@ -443,12 +443,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 	metadata, err := pm.deps.FileStore.GetMetadata(fileKey)
 	if err != nil {
 		// It's normal for a file not to be found locally
-		//pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
-		return types.FileMetadata{}, types.ErrFileNotFound
-	}
-
-	//FIXME: bolt seems to return nil data with no error for not found
-	if len(metadata) == 0 {
+		pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
 		return types.FileMetadata{}, types.ErrFileNotFound
 	}
 
@@ -458,6 +453,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 	}
 
 	if parsedMetadata.Deleted {
+		pm.debugf("[PARTITION] File was deleted: %v", path)
 		return types.FileMetadata{}, types.ErrFileNotFound
 	}
 
@@ -564,7 +560,6 @@ func (pm *PartitionManager) DeleteFileFromPartition(path string) error {
 	metadata.Deleted = true
 	metadata.DeletedAt = time.Now()
 	metadata.ModifiedAt = time.Now()
-
 
 	// Store tombstone metadata and delete content
 	tombstoneJSON, _ := json.Marshal(metadata)
