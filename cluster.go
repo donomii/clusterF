@@ -1146,6 +1146,7 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 
 	metadata, err := c.FileSystem.GetMetadata(path)
 	if err != nil {
+		c.debugf("[METADATA_API] Not found: %v", path)
 		if errors.Is(err, types.ErrFileNotFound) {
 			http.Error(w, "Not found", http.StatusNotFound)
 			return

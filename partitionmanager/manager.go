@@ -449,7 +449,8 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 
 	var parsedMetadata types.FileMetadata
 	if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-		return types.FileMetadata{}, pm.errorf(metadata, "corrupt file metadata")
+		pm.debugf("[PARTITION] Corrupt: %v", path)
+		return types.FileMetadata{}, pm.errorf(metadata, "corrupt file metadata: "+path)
 	}
 
 	if parsedMetadata.Deleted {
