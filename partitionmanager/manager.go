@@ -432,8 +432,8 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, types.FileMet
 }
 
 func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMetadata, error) {
-	pm.debugf("Starting GetMetadataFromPartition")
-	defer pm.debugf("Leaving GetMetadataFromPartition")
+	pm.debugf("Starting GetMetadataFromPartition for path %v", path)
+	defer pm.debugf("Leaving GetMetadataFromPartition for path %v", path)
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: getting metadata %s from peers", path)
 		return pm.GetMetadataFromPeers(path)

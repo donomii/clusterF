@@ -250,8 +250,8 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 
 // GetMetadata retrieves only metadata
 func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
-	fs.debugf("Starting FileStore.GetMetadata")
-	defer fs.debugf("Leaving FileStore.GetMetadata")
+	fs.debugf("Starting FileStore.GetMetadata for key %v", key)
+	defer fs.debugf("Leaving FileStore.GetMetadata for key %v", key)
 
 	partitionID := extractPartitionID(key)
 	if partitionID == "" {
