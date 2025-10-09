@@ -352,6 +352,8 @@ func (fs *ClusterFileSystem) validatePath(path string) error {
 }
 
 func (fs *ClusterFileSystem) GetMetadata(path string) (types.FileMetadata, error) {
+	fs.debugf("Starting GetMetadata")
+	defer fs.debugf("Leaving GetMetadata")
 	// Try to get metadata from partition system
 	metadata, err := fs.cluster.PartitionManager().GetMetadataFromPartition(path)
 	if err != nil {
