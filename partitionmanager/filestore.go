@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -129,7 +128,7 @@ func (fs *FileStore) debugf(format string, args ...interface{}) {
 		return
 	}
 	_, file, line, _ := runtime.Caller(1)
-	log.Printf("[FILESTORE %s:%d] %s", filepath.Base(file), line, fmt.Sprintf(format, args...))
+	fmt.Printf("[FILESTORE %s:%d] %s", filepath.Base(file), line, fmt.Sprintf(format, args...))
 }
 
 // getPartitionLock gets or creates a lock for a specific partition
