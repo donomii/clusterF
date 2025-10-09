@@ -376,6 +376,7 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (types.FileMetadata, error
 		panic("no")
 	}
 
+	fs.debugf("Found metadata: %+v for path %v", metadata, path)
 	return metadata, nil
 }
 

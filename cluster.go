@@ -1033,24 +1033,6 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleCRDTList lists immediate children (dirs and keys) under a prefix, with pagination
-
-// countCRDTKeys counts non-deleted keys under a given prefix in the CRDT store.
-
-// handleCRDTSearch searches for keys containing a substring within a prefix.
-// This is on-demand and may scan the prefix; use with reasonable prefixes.
-
-// handleWelcome serves the welcome/root page
-
-// handleVisualizer serves the cluster visualizer HTML
-// moved to page_visualizer.go
-
-// handleMonitorDashboard serves a simple cluster monitoring dashboard
-// moved to page_monitor.go
-
-// handleAPIDocs serves a human-friendly HTML page listing API endpoints
-// moved to page_api_docs.go
-
 // handleClusterStats provides cluster-wide statistics for monitoring
 func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1071,22 +1053,6 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(stats)
 }
-
-// ---------- File System HTTP Handlers ----------
-
-// handleFiles serves the file browser interface
-
-// handleFilesAPI handles file system API operations
-
-// handleFileGet handles GET requests for files/directories
-
-// handleFilePut handles PUT requests for uploading files
-
-// handleFilePost handles POST requests for creating directories
-
-// handleFileDelete handles DELETE requests for files/directories
-
-// generateFileBrowserHTML creates the full file browser interface
 
 // ---------- Partition HTTP Handlers ----------
 
@@ -1305,17 +1271,6 @@ func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
-
-// handleProfilingPage serves the profiling control page
-
-// handleProfilingAPI handles profiling control API
-// moved to page_profiling.go
-
-// startProfiling enables Go's built-in profiling
-// moved to page_profiling.go
-
-// stopProfiling disables Go's built-in profiling
-// moved to page_profiling.go
 
 // performInitialSyncWithPeer performs bidirectional full KV store sync with a new peer
 func (c *Cluster) performInitialSyncWithPeer(peer *types.PeerInfo) {

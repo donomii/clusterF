@@ -479,7 +479,7 @@ func metadataMatches(meta types.FileMetadata, size int64, modTime time.Time) boo
 	if diff < 0 {
 		diff = -diff
 	}
-	fmt.Printf("diff: %v\n", diff.Milliseconds())
+
 	return diff.Milliseconds() < 1000
 }
 
@@ -623,8 +623,12 @@ func uploadSyncfile(e *Syncer, p, clusterPath string, st fs.FileInfo, throttle c
 	}
 
 	ct := contentTypeFromExt(p)
-	_ = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
-	e.logger.Printf("[IMPORT] Uploaded %s", clusterPath)
+	err = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
+	if err != nil {
+		e.logger.Printf("[IMPORT] Synchronisation failed for %v: %v", clusterPath, err)
+	} else {
+		e.logger.Printf("[IMPORT] Synchronised %s", clusterPath)
+	}
 }
 
 // importPathToClusterPath converts a local file path to cluster path, returns (clusterPath, true) for files or ("", false) for directories
