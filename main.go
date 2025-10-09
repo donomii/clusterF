@@ -246,6 +246,7 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 		StorageMajor:  storageMajor,
 		StorageMinor:  storageMinor,
 		EncryptionKey: encryptionKey,
+		Debug:         debug,
 	})
 
 	// Enable debug logging if requested

@@ -204,15 +204,16 @@ type ClusterOpts struct {
 
 	DiscoveryPort int
 	BroadcastIP   net.IP
-	Logger        *log.Logger
-	ExportDir     string // if set, mirror files to this directory for OS sharing
-	ClusterDir    string // if set, only export files with this path prefix
-	ImportDir     string // if set, import files from this directory to the cluster
-	ExcludeDirs   string // comma-separated list of directory names to exclude during import
-	NoStore       bool   // if true, don't store partitions locally (client mode)
-	StorageMajor  string // storage format major (ensemble or bolt)
-	StorageMinor  string // storage format minor (ensemble or bolt)
-	EncryptionKey string // encryption key for at-rest encryption
+	Logger        *log.Logger //  if not provided, will use log.New(os.Stderr, "", log.Lstd)
+	ExportDir     string      // if set, mirror files to this directory for OS sharing
+	ClusterDir    string      // if set, only export files with this path prefix
+	ImportDir     string      // if set, import files from this directory to the cluster
+	ExcludeDirs   string      // comma-separated list of directory names to exclude during import
+	NoStore       bool        // if true, don't store partitions locally (client mode)
+	StorageMajor  string      // storage format major (ensemble or bolt)
+	StorageMinor  string      // storage format minor (ensemble or bolt)
+	EncryptionKey string      // encryption key for at-rest encryption
+	Debug         bool        // Enable debugging for all modules in the cluster
 }
 
 func NewCluster(opts ClusterOpts) *Cluster {
@@ -280,6 +281,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 		ctx:    ctx,
 		cancel: cancel,
+		Debug:  opts.Debug,
 	}
 	c.debugf("Initialized cluster struct\n")
 
