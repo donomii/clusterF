@@ -32,6 +32,7 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 
 	if pm.deps.Cluster.GetPartitionSyncPaused() {
 		http.Error(w, "sync paused", http.StatusServiceUnavailable)
+		return
 	}
 	pm.debugf("[PARTITION] Starting streaming sync for partition %s", partitionID)
 
