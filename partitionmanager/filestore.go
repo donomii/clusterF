@@ -504,14 +504,14 @@ func (fs *FileStore) doSearch(prefix, partitionID string, wg *sync.WaitGroup, fn
 
 	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
 	if err != nil {
-		fmt.Printf("Warn: skipping partition %v in search", partitionID)
+		fmt.Printf("Warn: skipping partition %v in search\n", partitionID)
 		return // Skip this partition if it can't be opened
 	}
 	fs.debugf("Opened partition %v after %v", partitionID, time.Since(start))
 
 	countKeys := 0
 	_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
-		fmt.Printf("Examining key %v in partition %v after %v", string(k), partitionID, time.Since(start))
+		fmt.Printf("Examining key %v in partition %v after %v\n", string(k), partitionID, time.Since(start))
 		countKeys = countKeys + 1
 		keyStr := string(k)
 		if prefix == "" || strings.HasPrefix(keyStr, prefix) {
