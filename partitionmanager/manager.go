@@ -1190,14 +1190,14 @@ func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types
 		fmt.Printf("Searching %v\n", key)
 		parts := strings.Split(key, ":file:")
 		if len(parts) != 2 {
-			return nil // Skip non-file entries
+			panic("no")
 		}
 		filePath := parts[1]
 
 		// Parse metadata
 		var metadata types.FileMetadata
 		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-			return nil // Skip corrupt metadata
+			panic("no")
 		}
 
 		return fn(filePath, metadata)
