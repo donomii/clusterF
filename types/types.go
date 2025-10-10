@@ -18,17 +18,18 @@ var (
 
 // A cluster node
 type ClusterLike interface {
-	PartitionManager() PartitionManagerLike
-	DiscoveryManager() DiscoveryManagerLike
-	Exporter() ExporterLike
-	Logger() *log.Logger
-	NoStore() bool
-	ListDirectoryUsingSearch(path string) ([]*FileMetadata, error)
-	DataClient() *http.Client
-	ID() NodeID
-	GetAllNodes() map[NodeID]*NodeData
-	GetNodesForPartition(partitionName string) []NodeID
-	GetNodeInfo(nodeID NodeID) *NodeData
+	PartitionManager() PartitionManagerLike                        // Return the Partition Manager of this Node
+	DiscoveryManager() DiscoveryManagerLike                        // Return the Discovery Manager of this Node
+	Exporter() ExporterLike                                        // Return the Exporter of this Node
+	Logger() *log.Logger                                           // Return the logger for this node
+	NoStore() bool                                                 // Return true if this node does not participate in data storage
+	ListDirectoryUsingSearch(path string) ([]*FileMetadata, error) // Search the cluster for a prefix (a directory)
+	DataClient() *http.Client                                      // The data transport client, at the moment, there is only the HTTP protocol client
+	ID() NodeID                                                    // Node id (a string)
+	GetAllNodes() map[NodeID]*NodeData                             // Return a copy of all known nodes
+	GetNodesForPartition(partitionName string) []NodeID            // Get all node that hold the given partition
+	GetNodeInfo(nodeID NodeID) *NodeData                           // Get info about a specific node
+	GetPartitionSyncPaused() bool                                  // Partition sync activity
 }
 
 // The partition manager, everything needed to access partitions and files

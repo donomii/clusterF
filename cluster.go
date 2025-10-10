@@ -1272,7 +1272,7 @@ func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request
 func (c *Cluster) handlePartitionSyncPause(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		paused := c.getPartitionSyncPaused()
+		paused := c.GetPartitionSyncPaused()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"paused": paused,

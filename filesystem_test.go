@@ -328,7 +328,7 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 
 	// Set fast partition sync interval for testing (1 second instead of default 30)
 	for _, node := range nodes {
-		node.setPartitionSyncInterval(1)
+		node.SetPartitionSyncInterval(1)
 	}
 
 	// Wait for nodes to discover each other
