@@ -515,11 +515,12 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 			start := time.Now()
 			lock := fs.getPartitionLock(partitionID)
 			lock.RLock()
+			defer lock.RUnlock()
 			fs.debugf("ScanMetadata: acquired read lock for partition %s after %v", partitionID, time.Since(start))
 
 			metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
 			if err != nil {
-				lock.RUnlock()
+
 				return // Skip this partition if it can't be opened
 			}
 
@@ -537,7 +538,6 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 			})
 
 			fs.closePartitionStores(metadataKV, contentKV)
-			lock.RUnlock()
 
 			if mapErr != nil {
 				//FIXME log

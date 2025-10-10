@@ -1187,6 +1187,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types.FileMetadata) error) error {
 	return pm.deps.FileStore.ScanMetadata("", func(key string, metadataBytes []byte) error {
 		// Extract file path from key (format: partition:pXXXXX:file:/path)
+		fmt.Printf("Searching %v", key)
 		parts := strings.Split(key, ":file:")
 		if len(parts) != 2 {
 			return nil // Skip non-file entries
