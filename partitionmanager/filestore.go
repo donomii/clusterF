@@ -524,7 +524,9 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 				return // Skip this partition if it can't be opened
 			}
 
+			countKeys := 0
 			_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
+				countKeys = countKeys + 1
 				keyStr := string(k)
 				if prefix == "" || strings.HasPrefix(keyStr, prefix) {
 					// Decrypt metadata before passing to callback
@@ -543,7 +545,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 				//FIXME log
 				return
 			}
-			fs.debugf("ScanMetadata: scanned partition %s in %v", partitionID, time.Since(start))
+			fs.debugf("ScanMetadata: scanned %v keys in partition %s in %v", countKeys, partitionID, time.Since(start))
 		}(partitionID)
 	}
 	wg.Wait()
