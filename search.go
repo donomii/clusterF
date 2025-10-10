@@ -76,7 +76,6 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 		}
 
 		types.AddResultToMap(res, result, req.Query)
-		fmt.Printf("Took %v seconds to search local store", time.Now().Sub(start).Seconds())
 
 		return nil
 	})
@@ -87,7 +86,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 		results = append(results, res)
 	}
 
-	c.debugf("[SEARCH] Found %d local results for query: %s", len(results), req.Query)
+	c.debugf("[SEARCH] Found %d local results for query: %s in %v seconds", len(results), req.Query, time.Now().Sub(start).Seconds())
 
 	return results
 }
@@ -109,9 +108,9 @@ func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 	// Search all peers
 	peers := c.DiscoveryManager().GetPeers()
 	for _, peer := range peers {
-		fmt.Printf("[SEARCH] Searching peer %s (%s)\n", peer.NodeID, peer.Address)
+		c.debugf("[SEARCH] Searching peer %s (%s)\n", peer.NodeID, peer.Address)
 		peerResults := c.searchPeer(peer, req)
-		fmt.Printf("Received results from peer: %+v", peerResults)
+		c.debugf("Received results from peer: %+v", peerResults)
 		for _, result := range peerResults {
 			if !seen[result.Path] {
 				seen[result.Path] = true
@@ -145,7 +144,7 @@ func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 		c.logger.Printf("ResultPath: %v", r.Path)
 	}
 
-	fmt.Printf("Compiled allResults: %+v", allResults)
+	c.debugf("Compiled allResults: %+v", allResults)
 
 	return allResults
 }

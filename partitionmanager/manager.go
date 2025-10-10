@@ -1203,7 +1203,7 @@ func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types
 
 		return fn(filePath, metadata)
 	})
-	fmt.Printf("Took %v seconds to scan all files", time.Now().Sub(start).Seconds())
+	pm.debugf("Took %v seconds to scan all files", time.Now().Sub(start).Seconds())
 	return res
 }
 
