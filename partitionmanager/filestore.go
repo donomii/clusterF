@@ -545,6 +545,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 			fs.debugf("ScanMetadata: scanned partition %s in %v", partitionID, time.Since(start))
 		}(partitionID)
 	}
+	wg.Wait()
 
 	return nil
 }
