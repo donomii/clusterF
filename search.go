@@ -40,7 +40,6 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 
 	// Scan all local partition stores for files matching the query
 	c.partitionManager.ScanAllFiles(func(filePath string, metadata types.FileMetadata) error {
-		fmt.Printf("Searching %v\n", filePath)
 		// Skip deleted files
 		if metadata.Deleted {
 			c.debugf("File was marked as deleted: %s\n", filePath)
@@ -81,6 +80,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 
 	// Convert map to slice
 	for _, res := range result {
+		c.debugf("Result: %+v", res)
 		results = append(results, res)
 	}
 
