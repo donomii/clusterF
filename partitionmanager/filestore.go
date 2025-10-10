@@ -511,6 +511,7 @@ func (fs *FileStore) doSearch(prefix, partitionID string, wg *sync.WaitGroup, fn
 
 	countKeys := 0
 	_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
+		fmt.Printf("Examining key %v in partition %v after %v", string(k), partitionID, time.Since(start))
 		countKeys = countKeys + 1
 		keyStr := string(k)
 		if prefix == "" || strings.HasPrefix(keyStr, prefix) {
