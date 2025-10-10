@@ -938,6 +938,8 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	// Transcode API
 	mux.HandleFunc("/api/transcode/", corsMiddleware(c.Debug, c.Logger(), c.handleTranscodeAPI))
 	mux.HandleFunc("/api/transcode-stats", corsMiddleware(c.Debug, c.Logger(), c.handleTranscodeStats))
+	// Partition sync pause API
+	mux.HandleFunc("/api/partition-sync-pause", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionSyncPause))
 
 	server = &http.Server{
 		Handler:           mux,
@@ -1259,6 +1261,53 @@ func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":            true,
 			"replication_factor": int(rf),
+		})
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handlePartitionSyncPause handles GET/PUT requests for partition sync pause state
+func (c *Cluster) handlePartitionSyncPause(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		paused := c.getPartitionSyncPaused()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"paused": paused,
+		})
+
+	case http.MethodPut:
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+
+		var request map[string]interface{}
+		if err := json.Unmarshal(body, &request); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		pausedValue, ok := request["paused"]
+		if !ok {
+			http.Error(w, "Missing paused field", http.StatusBadRequest)
+			return
+		}
+
+		paused, ok := pausedValue.(bool)
+		if !ok {
+			http.Error(w, "paused must be a boolean", http.StatusBadRequest)
+			return
+		}
+
+		c.setPartitionSyncPaused(paused)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"paused":  paused,
 		})
 
 	default:

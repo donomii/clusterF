@@ -48,6 +48,14 @@ async function refreshStats() {
         }
         const status = await statusResponse.json();
         
+        // Get partition sync pause state
+        const pauseResponse = await fetch('/api/partition-sync-pause');
+        let isPaused = false;
+        if (pauseResponse.ok) {
+            const pauseData = await pauseResponse.json();
+            isPaused = pauseData.paused || false;
+        }
+        
         debugDiv.textContent = 'Fetching cluster stats...';
         const clusterResponse = await fetch('/api/cluster-stats');
         let clusterStats = {};
@@ -147,6 +155,9 @@ async function refreshStats() {
             rfInput.value = rf;
         }
         
+        // Update sync status display
+        updateSyncStatusDisplay(isPaused);
+        
         debugDiv.textContent = 'API OK - Last update: ' + new Date().toLocaleTimeString();
         
     } catch (error) {
@@ -223,6 +234,54 @@ async function setReplicationFactor() {
 
 function openVisualizer() {
     window.open('/cluster-visualizer.html', '_blank');
+}
+
+function updateSyncStatusDisplay(isPaused) {
+    const statusSpan = document.getElementById('sync_status');
+    const pauseBtn = document.getElementById('pauseBtn');
+    
+    if (isPaused) {
+        statusSpan.textContent = 'PAUSED';
+        statusSpan.style.color = '#ef4444';
+        pauseBtn.textContent = '▶️ Resume Sync';
+    } else {
+        statusSpan.textContent = 'RUNNING';
+        statusSpan.style.color = '#22c55e';
+        pauseBtn.textContent = '⏸️ Pause Sync';
+    }
+}
+
+async function togglePartitionSyncPause() {
+    try {
+        // Get current state
+        const response = await fetch('/api/partition-sync-pause');
+        if (!response.ok) {
+            alert('❌ Failed to get current pause state');
+            return;
+        }
+        
+        const currentState = await response.json();
+        const newPausedState = !currentState.paused;
+        
+        // Set new state
+        const putResponse = await fetch('/api/partition-sync-pause', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paused: newPausedState })
+        });
+        
+        if (putResponse.ok) {
+            const result = await putResponse.json();
+            updateSyncStatusDisplay(result.paused);
+            const action = result.paused ? 'paused' : 'resumed';
+            alert('✅ Partition sync ' + action);
+        } else {
+            const error = await putResponse.text();
+            alert('❌ Failed to toggle partition sync: ' + error);
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
 }
 
 refreshStats();

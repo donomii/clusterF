@@ -125,6 +125,30 @@ func (c *Cluster) setPartitionSyncInterval(seconds int) {
 	c.Logger().Printf("[PARTITION] Set partition sync interval to %d seconds", seconds)
 }
 
+// getPartitionSyncPaused returns whether partition sync is paused
+func (c *Cluster) getPartitionSyncPaused() bool {
+	data := c.frogpond.GetDataPoint("cluster/partition_sync_paused")
+	if data.Deleted || len(data.Value) == 0 {
+		return false
+	}
+
+	var paused bool
+	if err := json.Unmarshal(data.Value, &paused); err != nil {
+		return false
+	}
+
+	return paused
+}
+
+// setPartitionSyncPaused updates the cluster partition sync pause state
+func (c *Cluster) setPartitionSyncPaused(paused bool) {
+	pausedJSON, _ := json.Marshal(paused)
+	updates := c.frogpond.SetDataPoint("cluster/partition_sync_paused", pausedJSON)
+	c.sendUpdatesToPeers(updates)
+
+	c.Logger().Printf("[PARTITION] Set partition sync paused to %v", paused)
+}
+
 // setReplicationFactor updates the cluster replication factor
 func (c *Cluster) setReplicationFactor(rf int) {
 	if rf < 1 {

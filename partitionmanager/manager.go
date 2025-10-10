@@ -961,6 +961,47 @@ func (pm *PartitionManager) getPartitionSyncInterval() time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// getPartitionSyncPaused returns whether partition sync is paused from CRDT
+func (pm *PartitionManager) getPartitionSyncPaused() bool {
+	if !pm.hasFrogpond() {
+		return false
+	}
+
+	dp := pm.deps.Frogpond.GetDataPoint("cluster/partition_sync_paused")
+	if dp.Deleted || len(dp.Value) == 0 {
+		return false
+	}
+
+	var paused bool
+	if err := json.Unmarshal(dp.Value, &paused); err != nil {
+		return false
+	}
+
+	return paused
+}
+
+func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID PartitionID, throttle chan struct{}, holders []types.NodeID) {
+	defer func() { <-throttle }()
+	// Try all available holders for this partition
+	for _, holderID := range holders {
+		if ctx.Err() != nil {
+			return
+		}
+		pm.logf("[PARTITION] Syncing %s from %s", partitionID, holderID)
+
+		// Find the peer in the nodes crdt
+		nodeData := pm.deps.Cluster.GetNodeInfo(holderID)
+		if nodeData == nil {
+			//If we can't, then remove the peer as a holder, from the crdt
+			pm.removePeerHolder(partitionID, holderID, time.Now().Add(-30*time.Minute))
+		}
+		err := pm.syncPartitionFromPeer(ctx, partitionID, holderID)
+		if err != nil {
+			pm.logf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
+		}
+	}
+}
+
 // periodicPartitionCheck continuously syncs partitions one at a time
 func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 	// Skip partition syncing if in no-store mode (client mode)
@@ -979,33 +1020,24 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
+			// Check if sync is paused
+			if pm.getPartitionSyncPaused() {
+				// Sync is paused, wait a bit before checking again
+				syncInterval := pm.getPartitionSyncInterval()
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(syncInterval):
+					continue
+				}
+			}
 			fmt.Printf("starting partition sync check...\n")
 			// Find next partition that needs syncing
 			if partitionID, holders := pm.findNextPartitionToSyncWithHolders(); partitionID != "" {
 
 				throttle <- struct{}{}
 				// Throttle concurrent syncs
-				go func(ctx context.Context, partitionID PartitionID, throttle chan struct{}) {
-					defer func() { <-throttle }()
-					// Try all available holders for this partition
-					for _, holderID := range holders {
-						if ctx.Err() != nil {
-							return
-						}
-						pm.logf("[PARTITION] Syncing %s from %s", partitionID, holderID)
-
-						// Find the peer in the nodes crdt
-						nodeData := pm.deps.Cluster.GetNodeInfo(holderID)
-						if nodeData == nil {
-							//If we can't, then remove the peer as a holder, from the crdt
-							pm.removePeerHolder(partitionID, holderID, time.Now().Add(-30*time.Minute))
-						}
-						err := pm.syncPartitionFromPeer(ctx, partitionID, holderID)
-						if err != nil {
-							pm.logf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
-						}
-					}
-				}(ctx, partitionID, throttle)
+				go pm.doPartitionSync(ctx, partitionID, throttle, holders)
 
 			} else {
 				// Nothing to sync, wait a bit before checking again
