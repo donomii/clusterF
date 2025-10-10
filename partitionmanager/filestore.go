@@ -504,39 +504,46 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 	fs.debugf("ScanMetadata: scanning %d partitions for prefix %s", len(partitions), prefix)
 
+	wg := sync.WaitGroup{}
+
 	for _, partitionID := range partitions {
-		//fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
-		start := time.Now()
-		lock := fs.getPartitionLock(partitionID)
-		lock.RLock()
-		fs.debugf("ScanMetadata: acquired read lock for partition %s after %v", partitionID, time.Since(start))
+		wg.Add(1)
+		go func(partitionID string) {
+			defer wg.Done()
+			//fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
+			start := time.Now()
+			lock := fs.getPartitionLock(partitionID)
+			lock.RLock()
+			fs.debugf("ScanMetadata: acquired read lock for partition %s after %v", partitionID, time.Since(start))
 
-		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
-		if err != nil {
-			lock.RUnlock()
-			continue // Skip this partition if it can't be opened
-		}
-
-		_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
-			keyStr := string(k)
-			if prefix == "" || strings.HasPrefix(keyStr, prefix) {
-				// Decrypt metadata before passing to callback
-				decMetadata := v
-				if len(fs.encryptionKey) > 0 {
-					decMetadata = fs.xorEncrypt(v)
-				}
-				return fn(keyStr, decMetadata)
+			metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+			if err != nil {
+				lock.RUnlock()
+				return // Skip this partition if it can't be opened
 			}
-			return nil
-		})
 
-		fs.closePartitionStores(metadataKV, contentKV)
-		lock.RUnlock()
+			_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
+				keyStr := string(k)
+				if prefix == "" || strings.HasPrefix(keyStr, prefix) {
+					// Decrypt metadata before passing to callback
+					decMetadata := v
+					if len(fs.encryptionKey) > 0 {
+						decMetadata = fs.xorEncrypt(v)
+					}
+					return fn(keyStr, decMetadata)
+				}
+				return nil
+			})
 
-		if mapErr != nil {
-			return mapErr
-		}
-		fs.debugf("ScanMetadata: scanned partition %s in %v", partitionID, time.Since(start))
+			fs.closePartitionStores(metadataKV, contentKV)
+			lock.RUnlock()
+
+			if mapErr != nil {
+				//FIXME log
+				return
+			}
+			fs.debugf("ScanMetadata: scanned partition %s in %v", partitionID, time.Since(start))
+		}(partitionID)
 	}
 
 	return nil
