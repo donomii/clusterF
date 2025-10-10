@@ -40,6 +40,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 
 	// Scan all local partition stores for files matching the query
 	c.partitionManager.ScanAllFiles(func(filePath string, metadata types.FileMetadata) error {
+		fmt.Printf("Searching %v\n", filePath)
 		// Skip deleted files
 		if metadata.Deleted {
 			return nil
@@ -82,8 +83,6 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 	}
 	return results
 }
-
-
 
 // searchAllNodes performs a search across all peers and combines results
 func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
