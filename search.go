@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
@@ -38,6 +39,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 	var results []types.SearchResult
 	result := make(map[string]types.SearchResult)
 
+	start := time.Now()
 	// Scan all local partition stores for files matching the query
 	c.partitionManager.ScanAllFiles(func(filePath string, metadata types.FileMetadata) error {
 		// Skip deleted files
@@ -74,6 +76,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 		}
 
 		types.AddResultToMap(res, result, req.Query)
+		fmt.Printf("Took %v seconds to search local store", time.Now().Sub(start).Seconds())
 
 		return nil
 	})
@@ -108,6 +111,7 @@ func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 	for _, peer := range peers {
 		fmt.Printf("[SEARCH] Searching peer %s (%s)\n", peer.NodeID, peer.Address)
 		peerResults := c.searchPeer(peer, req)
+		fmt.Printf("Received results from peer: %+v", peerResults)
 		for _, result := range peerResults {
 			if !seen[result.Path] {
 				seen[result.Path] = true
@@ -140,6 +144,8 @@ func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 		c.logger.Printf("Result: %v", r.Name)
 		c.logger.Printf("ResultPath: %v", r.Path)
 	}
+
+	fmt.Printf("Compiled allResults: %+v", allResults)
 
 	return allResults
 }

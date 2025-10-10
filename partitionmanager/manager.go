@@ -1185,9 +1185,10 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 // getPartitionStats returns statistics about partitions
 // ScanAllFiles scans all local partition stores and calls fn for each file
 func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types.FileMetadata) error) error {
-	return pm.deps.FileStore.ScanMetadata("", func(key string, metadataBytes []byte) error {
+	start := time.Now()
+	res := pm.deps.FileStore.ScanMetadata("", func(key string, metadataBytes []byte) error {
 		// Extract file path from key (format: partition:pXXXXX:file:/path)
-		
+
 		parts := strings.Split(key, ":file:")
 		if len(parts) != 2 {
 			panic("no")
@@ -1202,6 +1203,8 @@ func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types
 
 		return fn(filePath, metadata)
 	})
+	fmt.Printf("Took %v seconds to scan all files", time.Now().Sub(start).Seconds())
+	return res
 }
 
 func isIn(id types.NodeID, list []types.NodeID) bool {
