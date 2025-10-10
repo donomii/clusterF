@@ -1031,7 +1031,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 					continue
 				}
 			}
-			fmt.Printf("starting partition sync check...\n")
+			pm.debugf("starting partition sync check...\n")
 			// Find next partition that needs syncing
 			if partitionID, holders := pm.findNextPartitionToSyncWithHolders(); partitionID != "" {
 
@@ -1203,7 +1203,7 @@ func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types
 
 		return fn(filePath, metadata)
 	})
-	pm.debugf("Took %v seconds to scan all files", time.Now().Sub(start).Seconds())
+	pm.debugf("Took %v seconds to scan all files", time.Since(start).Seconds())
 	return res
 }
 

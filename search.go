@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 )
@@ -94,30 +96,36 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 // searchAllNodes performs a search across all peers and combines results
 func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 	var allResults []types.SearchResult
-	seen := make(map[string]bool)
+	seen := syncmap.NewSyncMap[string, bool]()
 
 	// Search locally first
 	localResults := c.performLocalSearch(req)
 	for _, result := range localResults {
-		if !seen[result.Path] {
-			seen[result.Path] = true
+		if exists, _ := seen.Load(result.Path); !exists {
+			seen.Store(result.Path, true)
 			allResults = append(allResults, result)
 		}
 	}
 
+	wg := &sync.WaitGroup{}
 	// Search all peers
 	peers := c.DiscoveryManager().GetPeers()
 	for _, peer := range peers {
-		c.debugf("[SEARCH] Searching peer %s (%s)\n", peer.NodeID, peer.Address)
-		peerResults := c.searchPeer(peer, req)
-		c.debugf("Received results from peer: %+v", peerResults)
-		for _, result := range peerResults {
-			if !seen[result.Path] {
-				seen[result.Path] = true
-				allResults = append(allResults, result)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.debugf("[SEARCH] Searching peer %s (%s)\n", peer.NodeID, peer.Address)
+			peerResults := c.searchPeer(peer, req)
+			c.debugf("Received results from peer: %+v", peerResults)
+			for _, result := range peerResults {
+				if exists, _ := seen.Load(result.Path); !exists {
+					seen.Store(result.Path, true)
+					allResults = append(allResults, result)
+				}
 			}
-		}
+		}()
 	}
+	wg.Wait()
 
 	searchMap := make(map[string]types.SearchResult)
 
@@ -211,7 +219,7 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 
 // ListDirectoryUsingSearch implements directory listing using the search API
 func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, error) {
-	fmt.Printf("[SEARCH] Listing directory using search for path: %s\n", path)
+	c.debugf("[SEARCH] Listing directory using search for path: %s\n", path)
 	// Normalize path to ensure it ends with / for prefix search
 	if path == "" {
 		path = "/"
