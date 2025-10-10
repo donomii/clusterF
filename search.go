@@ -43,18 +43,22 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 		fmt.Printf("Searching %v\n", filePath)
 		// Skip deleted files
 		if metadata.Deleted {
+			c.debugf("File was marked as deleted: %s\n", filePath)
 			return nil
 		}
 
 		if !strings.Contains(filePath, req.Query) {
+			c.debugf("%v not found in %v", req.Query, filePath)
 			return nil
 		}
 
 		if !strings.HasPrefix(filePath, req.Query) {
+			c.debugf("%v is not a prefix of %v", req.Query, filePath)
 			return nil
 		}
 
 		if metadata.ModifiedAt.IsZero() {
+			c.debugf("Invalid metadata timestamp: %v", metadata.ModifiedAt)
 			panic("no")
 		}
 
@@ -75,12 +79,13 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 		return nil
 	})
 
-	c.debugf("[SEARCH] Found %d local results for query: %s", len(results), req.Query)
-
 	// Convert map to slice
 	for _, res := range result {
 		results = append(results, res)
 	}
+
+	c.debugf("[SEARCH] Found %d local results for query: %s", len(results), req.Query)
+
 	return results
 }
 
