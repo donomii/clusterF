@@ -507,7 +507,7 @@ func (fs *FileStore) doSearch(prefix, partitionID string, wg *sync.WaitGroup, fn
 		fmt.Printf("Warn: skipping partition %v in search", partitionID)
 		return // Skip this partition if it can't be opened
 	}
-	fs.debugf("Opened partition %v after %v", time.Since(start))
+	fs.debugf("Opened partition %v after %v", partitionID, time.Since(start))
 
 	countKeys := 0
 	_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
@@ -553,7 +553,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 	for _, partitionID := range partitions {
 		wg.Add(1)
-		fs.doSearch(prefix, partitionID, wg, fn)
+		go fs.doSearch(prefix, partitionID, wg, fn)
 	}
 	wg.Wait()
 
