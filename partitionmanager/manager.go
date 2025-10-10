@@ -970,7 +970,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 		return
 	}
 
-	throttle := make(chan struct{}, 2)
+	throttle := make(chan struct{}, 10)
 	defer close(throttle)
 
 	// Loop forever, checking for partitions to sync
@@ -985,7 +985,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 
 				throttle <- struct{}{}
 				// Throttle concurrent syncs
-				go func(ctx context.Context, partitionID PartitionID) {
+				go func(ctx context.Context, partitionID PartitionID, throttle chan struct{}) {
 					defer func() { <-throttle }()
 					// Try all available holders for this partition
 					for _, holderID := range holders {
@@ -1005,7 +1005,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 							pm.logf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
 						}
 					}
-				}(ctx, partitionID)
+				}(ctx, partitionID, throttle)
 
 			} else {
 				// Nothing to sync, wait a bit before checking again
