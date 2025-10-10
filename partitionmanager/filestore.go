@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	ensemblekv "github.com/donomii/ensemblekv"
 )
@@ -20,7 +21,7 @@ import (
 // FileStore provides atomic access to file metadata and content with per-partition locking
 type FileStore struct {
 	baseDir        string
-	partitionLocks sync.Map // map[string]*sync.RWMutex - per-partition locks
+	partitionLocks syncmap.SyncMap[string, *sync.RWMutex] // map[string]*sync.RWMutex - per-partition locks
 	debugLog       bool
 	encryptionKey  []byte // XOR encryption key (nil = no encryption)
 	storageMajor   string // storage format major (ensemble or bolt)
@@ -135,7 +136,7 @@ func (fs *FileStore) debugf(format string, args ...interface{}) {
 // getPartitionLock gets or creates a lock for a specific partition
 func (fs *FileStore) getPartitionLock(partitionID string) *sync.RWMutex {
 	lock, _ := fs.partitionLocks.LoadOrStore(partitionID, &sync.RWMutex{})
-	return lock.(*sync.RWMutex)
+	return lock
 }
 
 // openPartitionStores opens both metadata and content stores for a partition
