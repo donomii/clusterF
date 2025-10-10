@@ -493,6 +493,50 @@ func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content [
 	return nil
 }
 
+func (fs *FileStore) doSearch(prefix, partitionID string, wg *sync.WaitGroup, fn func(key string, metadata []byte) error) {
+	defer wg.Done()
+	//fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
+	start := time.Now()
+	lock := fs.getPartitionLock(partitionID)
+	lock.RLock()
+	defer lock.RUnlock()
+	fs.debugf("ScanMetadata: acquired read lock for partition %s after %v", partitionID, time.Since(start))
+
+	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+	if err != nil {
+		fmt.Printf("Warn: skipping partition %v in search", partitionID)
+		return // Skip this partition if it can't be opened
+	}
+	fs.debugf("Opened partition %v after %v", time.Since(start))
+
+	countKeys := 0
+	_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
+		countKeys = countKeys + 1
+		keyStr := string(k)
+		if prefix == "" || strings.HasPrefix(keyStr, prefix) {
+			// Decrypt metadata before passing to callback
+			decMetadata := v
+			if len(fs.encryptionKey) > 0 {
+				decMetadata = fs.xorEncrypt(v)
+			}
+			return fn(keyStr, decMetadata)
+		}
+		return nil
+	})
+
+	fs.debugf("Finished data scan after %v", time.Since(start))
+
+	fs.closePartitionStores(metadataKV, contentKV)
+
+	if mapErr != nil {
+		fmt.Printf("Warn: map error in partition %v in search", partitionID)
+		//FIXME log
+		return
+	}
+	fs.debugf("ScanMetadata: scanned %v keys in partition %s in %v", countKeys, partitionID, time.Since(start))
+
+}
+
 // ScanMetadata calls fn for each metadata entry with the given prefix
 func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []byte) error) error {
 	checkForRecursiveScan()
@@ -505,48 +549,11 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 	fs.debugf("ScanMetadata: scanning %d partitions for prefix %s", len(partitions), prefix)
 
-	wg := sync.WaitGroup{}
+	wg := &sync.WaitGroup{}
 
 	for _, partitionID := range partitions {
 		wg.Add(1)
-		go func(partitionID string) {
-			defer wg.Done()
-			//fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
-			start := time.Now()
-			lock := fs.getPartitionLock(partitionID)
-			lock.RLock()
-			defer lock.RUnlock()
-			fs.debugf("ScanMetadata: acquired read lock for partition %s after %v", partitionID, time.Since(start))
-
-			metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
-			if err != nil {
-
-				return // Skip this partition if it can't be opened
-			}
-
-			countKeys := 0
-			_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
-				countKeys = countKeys + 1
-				keyStr := string(k)
-				if prefix == "" || strings.HasPrefix(keyStr, prefix) {
-					// Decrypt metadata before passing to callback
-					decMetadata := v
-					if len(fs.encryptionKey) > 0 {
-						decMetadata = fs.xorEncrypt(v)
-					}
-					return fn(keyStr, decMetadata)
-				}
-				return nil
-			})
-
-			fs.closePartitionStores(metadataKV, contentKV)
-
-			if mapErr != nil {
-				//FIXME log
-				return
-			}
-			fs.debugf("ScanMetadata: scanned %v keys in partition %s in %v", countKeys, partitionID, time.Since(start))
-		}(partitionID)
+		fs.doSearch(prefix, partitionID, wg, fn)
 	}
 	wg.Wait()
 
