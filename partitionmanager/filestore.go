@@ -505,7 +505,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 	fs.debugf("ScanMetadata: scanning %d partitions for prefix %s", len(partitions), prefix)
 
 	for _, partitionID := range partitions {
-		fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
+		//fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
 		start := time.Now()
 		lock := fs.getPartitionLock(partitionID)
 		lock.RLock()
@@ -536,6 +536,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 		if mapErr != nil {
 			return mapErr
 		}
+		fs.debugf("ScanMetadata: scanned partition %s in %v", partitionID, time.Since(start))
 	}
 
 	return nil
