@@ -544,35 +544,42 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 	start := time.Now()
 	checkForRecursiveScan()
 
+	wg := &sync.WaitGroup{}
 	countKeys := 0
 	res := fs.trie.VisitSubtree([]byte(prefix), func(path_b patricia.Prefix, partitionID_b patricia.Item) error {
-		partitionStore := partitionID_b.(PartitionStore)
-		fmt.Printf("[FILESTORE] Opening partitionStore %v", partitionStore)
-		metadataKV, contentKV, err := fs.openPartitionStores(partitionStore)
-		defer fs.closePartitionStores(metadataKV, contentKV)
-		if err != nil {
-			fmt.Printf("Warn: skipping partition %v in search\n", partitionStore)
-			return err // Skip this partition if it can't be opened
-		}
-		fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
+		wg.Add(1)
+		go func(path_b patricia.Prefix, partitionID_b patricia.Item) {
+			defer wg.Done()
+			partitionStore := partitionID_b.(PartitionStore)
+			fmt.Printf("[FILESTORE] Opening partitionStore %v", partitionStore)
+			metadataKV, contentKV, err := fs.openPartitionStores(partitionStore)
+			defer fs.closePartitionStores(metadataKV, contentKV)
+			if err != nil {
+				fmt.Printf("Warn: skipping partition %v in search\n", partitionStore)
+				return // Skip this partition if it can't be opened
+			}
+			fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
 
-		fmt.Printf("[FILESTORE] Examining key %v in partition %v after %v\n", string(path_b), partitionStore, time.Since(start))
-		countKeys = countKeys + 1
-		kvkey := makeKey(string(path_b))
-		fmt.Printf("[FILESTORE] KV key %v\n", kvkey)
+			fmt.Printf("[FILESTORE] Examining key %v in partition %v after %v\n", string(path_b), partitionStore, time.Since(start))
+			countKeys = countKeys + 1
+			kvkey := makeKey(string(path_b))
+			fmt.Printf("[FILESTORE] KV key %v\n", kvkey)
 
-		v, err := metadataKV.Get([]byte(kvkey))
-		if err != nil {
-			fmt.Printf("[FILESTORE] Failed to retrieve metadata for key %v\n", makeKey(string(path_b)))
-			return err
-		}
-		// Decrypt metadata before passing to callback
-		decMetadata := v
-		if len(fs.encryptionKey) > 0 {
-			decMetadata = fs.xorEncrypt(v)
-		}
-		return fn(string(path_b), decMetadata)
+			v, err := metadataKV.Get([]byte(kvkey))
+			if err != nil {
+				fmt.Printf("[FILESTORE] Failed to retrieve metadata for key %v\n", makeKey(string(path_b)))
+				return
+			}
+			// Decrypt metadata before passing to callback
+			decMetadata := v
+			if len(fs.encryptionKey) > 0 {
+				decMetadata = fs.xorEncrypt(v)
+			}
+			fn(string(path_b), decMetadata)
+		}(path_b, partitionID_b)
+		return nil
 	})
+	wg.Wait()
 	fmt.Printf("Finished ScanMetadata for for prefix %v for %v keys in %v seconds\n", prefix, countKeys, time.Since(start))
 	return res
 }
