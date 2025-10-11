@@ -550,7 +550,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 	countKeys := 0
 	res := fs.trie.VisitSubtree([]byte(prefix), func(path_b patricia.Prefix, partitionID_b patricia.Item) error {
-		partitionStore := partitionID_b.(PartitionStore)
+		partitionStore := PartitionStore(string(partitionID_b.([]byte)))
 		metadataKV, contentKV, err := fs.openPartitionStores(partitionStore)
 		defer fs.closePartitionStores(metadataKV, contentKV)
 		if err != nil {
