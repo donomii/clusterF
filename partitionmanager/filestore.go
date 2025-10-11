@@ -558,8 +558,10 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 		fmt.Printf("[FILESTORE] Examining key %v in partition %v after %v\n", string(path_b), partitionStore, time.Since(start))
 		countKeys = countKeys + 1
+		kvkey := makeKey(string(path_b))
+		fmt.Printf("[FILESTORE] KV key %v\n", kvkey)
 
-		v, err := metadataKV.Get([]byte(makeKey(string(path_b))))
+		v, err := metadataKV.Get([]byte(kvkey))
 		if err != nil {
 			fmt.Printf("[FILESTORE] Failed to retrieve metadata for key %v\n", makeKey(string(path_b)))
 			return err
@@ -571,7 +573,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 		}
 		return fn(string(path_b), decMetadata)
 	})
-	fmt.Printf("Finished ScanMetadata for %v keys in %v seconds\n", countKeys, time.Since(start))
+	fmt.Printf("Finished ScanMetadata for for prefix %v for %v keys in %v seconds\n", prefix, countKeys, time.Since(start))
 	return res
 }
 
@@ -579,6 +581,23 @@ func makeKey(path string) string {
 	partitionID := HashToPartition(path)
 	key := fmt.Sprintf("partition:%v:file:%v", partitionID, path)
 	return key
+}
+
+func (fs *FileStore) ScanPartitionMetaData(partitionId PartitionStore, fn func(key []byte, metadata []byte) error) error {
+	start := time.Now()
+	partitionStore := PartitionStore(partitionId[0:3])
+	fmt.Printf("[FILESTORE] Opening partitionStore %v", partitionStore)
+	metadataKV, contentKV, err := fs.openPartitionStores(partitionStore)
+	defer fs.closePartitionStores(metadataKV, contentKV)
+	if err != nil {
+		fmt.Printf("Warn: skipping partition %v in search\n", partitionStore)
+		return err // Skip this partition if it can't be opened
+	}
+	fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
+
+	_, err = metadataKV.MapFunc(fn)
+	return err
+
 }
 
 // getAllPartitionStores determines which partition directories to scan

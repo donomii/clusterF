@@ -593,25 +593,23 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 
 	// Count files in partition by scanning the existing filesKV
 	fileCount := 0
-	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
+	partitionStore := PartitionStore(partitionID[0:3])
 
 	// Use FileStore to scan files
-	pm.deps.FileStore.ScanMetadata(prefix, func(key string, metadata []byte) error {
-		if strings.HasPrefix(key, prefix) && strings.Contains(key, ":file:") {
-			// Parse the metadata to check if it's deleted
-			var parsedMetadata types.FileMetadata
-			if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-				pm.errorf(metadata, "corrupt metadata in updatePartitionMetadata")
-				// Parse error - count as existing file
-				fileCount++
-				return nil
-			}
-			// Check if file is marked as deleted
-			if !parsedMetadata.Deleted {
-				// File is not deleted, count it
-				fileCount++
-			}
+	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(key_b []byte, metadata []byte) error {
+		var parsedMetadata types.FileMetadata
+		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
+			pm.errorf(metadata, "corrupt metadata in ScanPartitionMetaData")
+			// Parse error - count as existing file
+			fileCount++
+			return nil
 		}
+		// Check if file is marked as deleted
+		if !parsedMetadata.Deleted {
+			// File is not deleted, count it
+			fileCount++
+		}
+
 		return nil
 	})
 
