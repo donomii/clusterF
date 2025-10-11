@@ -44,6 +44,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 	start := time.Now()
 	// Scan all local partition stores for files matching the query
 	c.partitionManager.ScanAllFiles(func(filePath string, metadata types.FileMetadata) error {
+		c.debugf("[LOCALSEARCH] Examining key %v, metadata %+v\n", filePath, metadata)
 		// Skip deleted files
 		if metadata.Deleted {
 			c.debugf("File was marked as deleted: %s\n", filePath)
@@ -77,6 +78,7 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 			Checksum:    metadata.Checksum,
 		}
 
+		c.debugf("[LOCALSEARCH] Found result %v\n", filePath)
 		types.AddResultToMap(res, result, req.Query)
 
 		return nil
