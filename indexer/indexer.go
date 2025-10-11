@@ -29,15 +29,14 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	var results []types.SearchResult
+	var results map[string]types.SearchResult = make(map[string]types.SearchResult)
 
 	for path, metadata := range idx.files {
 		if strings.HasPrefix(path, prefix) {
 			if metadata.Deleted {
 				continue
 			}
-
-			results = append(results, types.SearchResult{
+			res := types.SearchResult{
 				Name:        metadata.Name,
 				Path:        path,
 				Size:        metadata.Size,
@@ -45,11 +44,18 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 				ModifiedAt:  metadata.ModifiedAt,
 				CreatedAt:   metadata.CreatedAt,
 				Checksum:    metadata.Checksum,
-			})
+			}
+			types.AddResultToMap(res, results, prefix)
+
 		}
 	}
 
-	return results
+	var out []types.SearchResult
+	for _, res := range results {
+		out = append(out, res)
+	}
+
+	return out
 }
 
 // AddFile adds or updates a file in the index
