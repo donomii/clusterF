@@ -559,11 +559,12 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 		}
 		fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
 
-		fmt.Printf("Examining key %v in partition %v after %v\n", string(path_b), partitionStore, time.Since(start))
+		fmt.Printf("[FILESTORE] Examining key %v in partition %v after %v\n", string(path_b), partitionStore, time.Since(start))
 		countKeys = countKeys + 1
 
 		v, err := metadataKV.Get([]byte(makeKey(string(path_b))))
 		if err != nil {
+			fmt.Printf("[FILESTORE] Failed to retrieve metadata for key %v\n", makeKey(string(path_b)))
 			return err
 		}
 		// Decrypt metadata before passing to callback
