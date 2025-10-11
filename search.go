@@ -4,6 +4,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -176,7 +177,8 @@ func (c *Cluster) searchPeer(peer *types.PeerInfo, req SearchRequest) []types.Se
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.debugf("Peer %s search returned %d", peer.NodeID, resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		c.debugf("Peer %s search returned %d: %s", peer.NodeID, resp.StatusCode, string(body))
 		return nil
 	}
 
