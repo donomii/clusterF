@@ -1,7 +1,6 @@
 package partitionmanager
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -190,16 +189,13 @@ func (fs *FileStore) openPartitionStores(partitionStoreID PartitionStore) (ensem
 
 	//Build the trie
 	metadataKV.MapFunc(func(k, v []byte) error {
+		path := []byte(extractFilePath(string(k)))
+		partitionID := extractPartitionStoreID(string(k))
+		fmt.Printf("[FILESTORE] Storing %v, %v in trie\n", string(path), partitionID)
+		fs.trie.Insert(path, partitionID)
 
-		parts := bytes.SplitN(k, []byte(":file:"), 2)
-		if len(parts) > 1 {
-			path := parts[1]
-			partition := bytes.TrimPrefix(parts[0], []byte("partition:"))
-			fmt.Printf("[FILESTORE] Storing %v, %v in trie\n", string(path), string(partition))
-			fs.trie.Insert(path, partition)
+		//FIXME errors?
 
-			//FIXME errors?
-		}
 		return nil
 	})
 
