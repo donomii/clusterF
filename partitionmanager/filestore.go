@@ -195,7 +195,7 @@ func (fs *FileStore) openPartitionStores(partitionStoreID PartitionStore) (ensem
 		if len(parts) > 1 {
 			path := parts[1]
 			partition := bytes.TrimPrefix(parts[0], []byte("partition:"))
-			fmt.Printf("Storing %v, %v in trie\n", string(path), string(partition))
+			fmt.Printf("[FILESTORE] Storing %v, %v in trie\n", string(path), string(partition))
 			fs.trie.Insert(path, partition)
 
 			//FIXME errors?
