@@ -341,7 +341,7 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 			}
 		}
 		return true
-	}, 200, 12000)
+	}, 200, 6000)
 
 	// Store file on node 0
 	testContent := []byte("Multi-node replicated file content")
@@ -374,7 +374,8 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
-				t.Logf("Node %d: Status %d (partition may not be replicated yet)", i, resp.StatusCode)
+				body, _ := io.ReadAll(resp.Body)
+				t.Logf("Node %d: Status %d: %s", i, resp.StatusCode, string(body))
 				return false
 			}
 			b, err := io.ReadAll(resp.Body)
@@ -388,7 +389,7 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 			}
 			t.Logf("Node %d: File retrieved successfully", i)
 			return true
-		}, 500, 60000) // Increased timeout to 60 seconds for partition replication
+		}, 500, 20000) // Increased timeout to 60 seconds for partition replication
 	}
 
 	t.Logf("✅ Multi-node partition replication test passed: partition %s present and file retrievable on all %d nodes", expectedPartition, len(nodes))

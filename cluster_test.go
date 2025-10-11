@@ -221,6 +221,7 @@ func createTestNodesParallel(t *testing.T, count int, tempDir string, discoveryP
 			UDPListenPort: 26000 + j,
 			HTTPDataPort:  0, // Let the system assign ports dynamically
 			DiscoveryPort: discoveryPort,
+			Debug:         true,
 		})
 
 		t.Logf("Starting node %d/%d\n", j+1, count) // Debug log
@@ -475,10 +476,10 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 			var err error
 			var resp *http.Response
 			baseURL := fmt.Sprintf("http://localhost:%d", node.HTTPDataPort)
-			
+
 			jst, _ := time.LoadLocation("Asia/Tokyo")
 			uploadTime := time.Date(2024, 4, 27, 10, 30, 45, 0, jst)
-			
+
 			success := CheckSuccessWithTimeout(func() bool {
 				// Store file using file system
 
@@ -486,40 +487,43 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 				req.Header.Set("Content-Type", "application/octet-stream")
 				req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 				resp, err = client.Do(req)
-				return err == nil
+				return err == nil && resp.StatusCode == http.StatusCreated
 			}, 2000, 20000) // Retry for up to 20 seconds
 			if !success {
 				if err != nil {
 					errCh <- fmt.Errorf("PUT request failed: %v", err)
-					return
+				} else if resp != nil {
+					errCh <- fmt.Errorf("PUT request failed with status %d", resp.StatusCode)
 				} else {
 					errCh <- fmt.Errorf("PUT request failed: no response")
-					return
 				}
-			}
-			clearResponseBody(resp)
-
-			if resp.StatusCode != http.StatusCreated {
-				errCh <- fmt.Errorf("Expected 201, got %d", resp.StatusCode)
+				if resp != nil {
+					clearResponseBody(resp)
+				}
 				return
 			}
+			clearResponseBody(resp)
 			filesStored++
 
 			// Verify retrieval from same node
 			success = CheckSuccessWithTimeout(func() bool {
 				resp, err = client.Get(baseURL + "/api/files" + filePath)
-				return err == nil
+				return err == nil && resp.StatusCode == http.StatusOK
 			}, 2000, 20000) // Retry for up to 20 seconds
 			if !success {
 				if err != nil {
 					errCh <- fmt.Errorf("GET request failed: %v", err)
-					return
+				} else if resp != nil {
+					errCh <- fmt.Errorf("GET request failed with status %d", resp.StatusCode)
 				} else {
 					errCh <- fmt.Errorf("GET request failed: no response")
-					return
 				}
+				if resp != nil {
+					clearResponseBody(resp)
+				}
+				return
 			}
-			
+
 			// Verify ModifiedAt header matches what we uploaded
 			modifiedAt := resp.Header.Get("X-ClusterF-Modified-At")
 			if modifiedAt == "" {

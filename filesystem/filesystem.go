@@ -332,6 +332,7 @@ func (fs *ClusterFileSystem) validatePath(path string) error {
 	return nil
 }
 
+
 func (fs *ClusterFileSystem) GetMetadata(path string) (types.FileMetadata, error) {
 	fs.debugf("Starting GetMetadata for path %v", path)
 	defer fs.debugf("Leaving GetMetadata for path %v", path)

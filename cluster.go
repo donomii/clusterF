@@ -1193,6 +1193,7 @@ func (c *Cluster) syncPeersFromDiscovery() {
 	}
 }
 
+// FIXME obviously this isn't going to be seret on a cold start...
 // initializeClusterSettings sets up default cluster settings if not already present
 func (c *Cluster) initializeClusterSettings() {
 	// Initialize replication factor if not set
@@ -1202,16 +1203,6 @@ func (c *Cluster) initializeClusterSettings() {
 		updates := c.frogpond.SetDataPoint("cluster/replication_factor", rfJSON)
 		c.sendUpdatesToPeers(updates)
 		c.Logger().Printf("[INIT] Set default replication factor to %d", DefaultRF)
-	}
-
-	// Initialize partition sync interval if not set (in seconds)
-	intervalData := c.frogpond.GetDataPoint("cluster/partition_sync_interval_seconds")
-	if intervalData.Deleted || len(intervalData.Value) == 0 {
-		defaultInterval := 30 // 30 seconds default
-		intervalJSON, _ := json.Marshal(defaultInterval)
-		updates := c.frogpond.SetDataPoint("cluster/partition_sync_interval_seconds", intervalJSON)
-		c.sendUpdatesToPeers(updates)
-		c.Logger().Printf("[INIT] Set default partition sync interval to %d seconds", defaultInterval)
 	}
 
 }

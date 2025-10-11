@@ -42,6 +42,7 @@ require (
 	github.com/petermattis/goid v0.0.0-20250813065127-a731cc31b4fe // indirect
 	github.com/recoilme/pudge v1.0.3 // indirect
 	github.com/sasha-s/go-deadlock v0.3.6 // indirect
+	github.com/tchap/go-patricia v1.0.1 // indirect
 	go.etcd.io/bbolt v1.3.11 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 )

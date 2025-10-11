@@ -78,7 +78,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			return
 		default:
 			c.debugf("[FILES] Failed to retrieve %s: %v", path, err)
-			http.Error(w, "Failed to retrieve file", http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to retrieve file: %v", err), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -261,10 +261,12 @@ func parseHeaderTimestamp(value string) (time.Time, error) {
 	if value == "" {
 		return time.Time{}, fmt.Errorf("empty timestamp header")
 	}
-	if t, err := time.Parse(time.RFC3339, value); err == nil {
+	t, err := time.Parse(time.RFC3339, value)
+	if err == nil {
 		return t, nil
+	} else {
+		return time.Time{}, err
 	}
-	return time.Time{}, fmt.Errorf("unrecognized timestamp format")
 }
 
 func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path string) {

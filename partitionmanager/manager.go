@@ -159,6 +159,7 @@ func (pm *PartitionManager) replicationFactor() int {
 	return defaultReplicationFactor
 }
 
+// FIXME utility
 // HashToPartition calculates which partition a filename belongs to
 func HashToPartition(filename string) PartitionID {
 	h := crc32.ChecksumIEEE([]byte(filename))
@@ -941,17 +942,17 @@ func (pm *PartitionManager) calculatePartitionChecksum(partitionID PartitionID) 
 // getPartitionSyncInterval returns the partition sync interval from CRDT, or default
 func (pm *PartitionManager) getPartitionSyncInterval() time.Duration {
 	if !pm.hasFrogpond() {
-		return 30 * time.Second
+		return 1 * time.Second
 	}
 
 	dp := pm.deps.Frogpond.GetDataPoint("cluster/partition_sync_interval_seconds")
 	if dp.Deleted || len(dp.Value) == 0 {
-		return 30 * time.Second
+		return 1 * time.Second
 	}
 
 	var seconds int
 	if err := json.Unmarshal(dp.Value, &seconds); err != nil {
-		return 30 * time.Second
+		return 1 * time.Second
 	}
 
 	if seconds < 1 {
@@ -1024,6 +1025,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			if pm.getPartitionSyncPaused() {
 				// Sync is paused, wait a bit before checking again
 				syncInterval := pm.getPartitionSyncInterval()
+				fmt.Printf("Waiting syncInterval %v", syncInterval)
 				select {
 				case <-ctx.Done():
 					return
@@ -1042,6 +1044,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			} else {
 				// Nothing to sync, wait a bit before checking again
 				syncInterval := pm.getPartitionSyncInterval()
+				fmt.Printf("Waiting syncInterval %v", syncInterval)
 				select {
 				case <-ctx.Done():
 					return
@@ -1189,11 +1192,7 @@ func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types
 	res := pm.deps.FileStore.ScanMetadata("", func(key string, metadataBytes []byte) error {
 		// Extract file path from key (format: partition:pXXXXX:file:/path)
 
-		parts := strings.Split(key, ":file:")
-		if len(parts) != 2 {
-			panic("no")
-		}
-		filePath := parts[1]
+		filePath := key
 
 		// Parse metadata
 		var metadata types.FileMetadata

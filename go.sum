@@ -48,6 +48,8 @@ github.com/sasha-s/go-deadlock v0.3.6/go.mod h1:CUqNyyvMxTyjFqDT7MRg9mb4Dv/btmGT
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcUk=
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
+github.com/tchap/go-patricia v1.0.1 h1:q5LEI+jYfwV/VWMM4e9TcVd32f1KrOZ29GYDrJtU3z4=
+github.com/tchap/go-patricia v1.0.1/go.mod h1:bmLyhP68RS6kStMGxByiQ23RP/odRBOTVjwp2cDyi6I=
 github.com/teambition/rrule-go v1.7.2/go.mod h1:mBJ1Ht5uboJ6jexKdNUJg2NcwP8uUMNvStWXlJD3MvU=
 github.com/teambition/rrule-go v1.8.2/go.mod h1:Ieq5AbrKGciP1V//Wq8ktsTXwSwJHDD5mD/wLBGl3p4=
 github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6 h1:VQpB2SpK88C6B5lPHTuSZKb2Qee1QWwiFlC5CKY4AW0=
