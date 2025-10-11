@@ -193,6 +193,13 @@ func (c *Cluster) searchPeer(peer *types.PeerInfo, req SearchRequest) []types.Se
 
 // handleSearchAPI handles the search API endpoint
 func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			c.debugf("Search API panic: %v", rec)
+			http.Error(w, fmt.Sprintf("Internal server error: %v", rec), http.StatusInternalServerError)
+		}
+	}()
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -200,7 +207,7 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 
 	var req SearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("invalid request: %v", err), http.StatusBadRequest)
 		return
 	}
 
@@ -218,7 +225,10 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		c.debugf("Failed to encode search response: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+	}
 }
 
 // ListDirectoryUsingSearch implements directory listing using the search API
