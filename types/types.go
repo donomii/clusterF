@@ -71,6 +71,18 @@ type ExporterLike interface {
 	Run(ctx context.Context)
 }
 
+// Indexer maintains an in-memory index of files for fast searching
+type IndexerLike interface {
+	// PrefixSearch returns all files matching a path prefix
+	PrefixSearch(prefix string) []SearchResult
+	// AddFile adds or updates a file in the index
+	AddFile(path string, metadata FileMetadata)
+	// DeleteFile removes a file from the index
+	DeleteFile(path string)
+	// ImportFilestore imports all files from a FileStoreLike into the index
+	ImportFilestore(pm PartitionManagerLike) error
+}
+
 // FileSystem defines the file-system operations the exporter relies on.
 type FileSystemLike interface {
 	CreateDirectory(path string) error

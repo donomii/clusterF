@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -37,56 +36,23 @@ type SearchResponse struct {
 	Count   int                  `json:"count"`
 }
 
-// performLocalSearch performs a search on local files
+// performLocalSearch performs a search on local files using the indexer
 func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
-	var results []types.SearchResult
-	result := make(map[string]types.SearchResult)
-
 	start := time.Now()
-	// Scan all local partition stores for files matching the query
-	c.partitionManager.ScanAllFiles(func(filePath string, metadata types.FileMetadata) error {
-		c.debugf("[LOCALSEARCH] Examining key %v, metadata %+v\n", filePath, metadata)
-		// Skip deleted files
-		if metadata.Deleted {
-			c.debugf("File was marked as deleted: %s\n", filePath)
-			return nil
-		}
 
-		if !strings.Contains(filePath, req.Query) {
-			c.debugf("%v not found in %v", req.Query, filePath)
-			return nil
-		}
+	// Use indexer for fast prefix search
+	results := c.indexer.PrefixSearch(req.Query)
 
-		if !strings.HasPrefix(filePath, req.Query) {
-			c.debugf("%v is not a prefix of %v", req.Query, filePath)
-			return nil
-		}
-
-		if metadata.ModifiedAt.IsZero() {
-			c.debugf("Invalid metadata timestamp: %v", metadata.ModifiedAt)
-			panic("no")
-		}
-
-		// Add to results if not already seen
-		// Collapse to directory if needed
-
-		res := types.SearchResult{
-			Name:        filepath.Base(filePath),
-			Path:        filePath,
-			Size:        metadata.Size,
-			ContentType: metadata.ContentType,
-			ModifiedAt:  metadata.ModifiedAt,
-			Checksum:    metadata.Checksum,
-		}
-
-		c.debugf("[LOCALSEARCH] Found result %v\n", filePath)
-		types.AddResultToMap(res, result, req.Query)
-
-		return nil
-	})
+	// Collapse results into map to deduplicate
+	resultMap := make(map[string]types.SearchResult)
+	for _, res := range results {
+		c.debugf("[LOCALSEARCH] Found result %v\n", res.Path)
+		types.AddResultToMap(res, resultMap, req.Query)
+	}
 
 	// Convert map to slice
-	for _, res := range result {
+	results = make([]types.SearchResult, 0, len(resultMap))
+	for _, res := range resultMap {
 		c.debugf("Result: %+v", res)
 		results = append(results, res)
 	}

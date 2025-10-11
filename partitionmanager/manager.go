@@ -41,6 +41,7 @@ type Dependencies struct {
 	SendUpdatesToPeers    func([]frogpond.DataPoint)
 	NotifyFileListChanged func()
 	GetCurrentRF          func() int
+	Indexer               types.IndexerLike
 }
 
 type PartitionManager struct {
@@ -189,6 +190,14 @@ func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byt
 	// Store metadata in filesKV (metadata store)
 	if err := pm.deps.FileStore.Put(fileKey, metadataJSON, fileContent); err != nil {
 		pm.deps.Logger.Panicf("failed to store file: %v", err)
+	}
+
+	// Update indexer with new file
+	if pm.deps.Indexer != nil {
+		var metadata types.FileMetadata
+		if err := json.Unmarshal(metadataJSON, &metadata); err == nil {
+			pm.deps.Indexer.AddFile(path, metadata)
+		}
 	}
 
 	// Update partition metadata in CRDT
@@ -567,6 +576,11 @@ func (pm *PartitionManager) DeleteFileFromPartition(path string) error {
 	tombstoneJSON, _ := json.Marshal(metadata)
 	if err := pm.deps.FileStore.PutMetadata(fileKey, tombstoneJSON); err != nil {
 		return err
+	}
+
+	// Update indexer to remove file
+	if pm.deps.Indexer != nil {
+		pm.deps.Indexer.DeleteFile(path)
 	}
 
 	// Note: We don't delete the entry entirely, just mark as deleted

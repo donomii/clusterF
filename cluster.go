@@ -27,6 +27,7 @@ import (
 	"github.com/donomii/clusterF/filesync"
 	"github.com/donomii/clusterF/filesystem"
 	"github.com/donomii/clusterF/frontend"
+	"github.com/donomii/clusterF/indexer"
 	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
@@ -105,6 +106,9 @@ type Cluster struct {
 
 	// File system layer
 	FileSystem *filesystem.ClusterFileSystem
+
+	// File indexer for fast searching
+	indexer types.IndexerLike
 
 	// HTTP clients for reuse (prevents goroutine leaks)
 	httpClient     *http.Client // short-lived control traffic
@@ -452,6 +456,10 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		panic("This repository requires an encryption key (use --encryption-key)")
 	}
 
+	// Initialize indexer first (needed by partition manager)
+	c.indexer = indexer.NewIndexer(c.Logger())
+	c.debugf("Initialized indexer\n")
+
 	// Initialize partition manager
 	deps := partitionmanager.Dependencies{
 		NodeID:         types.NodeID(c.NodeId),
@@ -487,6 +495,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		SendUpdatesToPeers:    c.sendUpdatesToPeers,
 		NotifyFileListChanged: c.notifyFileListChanged,
 		GetCurrentRF:          c.getCurrentRF,
+		Indexer:               c.indexer,
 	}
 	c.partitionManager = partitionmanager.NewPartitionManager(deps)
 	c.debugf("Initialized partition manager\n")
@@ -714,6 +723,11 @@ func (c *Cluster) DataClient() *http.Client {
 
 func (c *Cluster) Start() {
 	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
+
+	// Import filestore into indexer for fast searching
+	if err := c.indexer.ImportFilestore(c.partitionManager); err != nil {
+		c.Logger().Printf("[WARNING] Failed to import filestore into indexer: %v", err)
+	}
 
 	// Start all threads using ThreadManager
 	c.threadManager.StartThread("filesync", c.runFilesync)
