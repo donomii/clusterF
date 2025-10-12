@@ -4,12 +4,13 @@
 package main
 
 import (
-    "fmt"
-    "os"
-    "runtime"
-    "sync/atomic"
+	"fmt"
+	"os"
+	"runtime"
+	"sync/atomic"
+	"time"
 
-    webview "github.com/webview/webview_go"
+	webview "github.com/webview/webview_go"
 )
 
 // Global variable to track webview shutdown
@@ -52,6 +53,7 @@ func StartDesktopUI(httpPort int, cluster *Cluster) {
 		atomic.StoreInt32(&desktopUIShutdown, 1)
 		go func() {
 			cluster.Stop()
+			time.Sleep(10 * time.Second)
 			os.Exit(0)
 		}()
 		w.Terminate()

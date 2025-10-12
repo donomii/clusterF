@@ -263,13 +263,14 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 
 	// Start WebDAV server if requested
 	if webdavDir != "" {
-		go func() {
-			defer func() { _ = recover() }()
-			webdavPort := 8080 // Default WebDAV port
-			if err := webdav.StartWebDAVServer(cluster.FileSystem, webdavDir, webdavPort, cluster.Logger()); err != nil {
-				cluster.Logger().Printf("[WEBDAV] Failed to start WebDAV server: %v", err)
-			}
-		}()
+		cluster.ThreadManager().StartThread("WebDav Server",
+			func(ctx context.Context) {
+				defer func() { _ = recover() }()
+				webdavPort := 8080 // Default WebDAV port
+				if err := webdav.StartWebDAVServer(cluster.FileSystem, webdavDir, webdavPort, cluster.Logger()); err != nil {
+					cluster.Logger().Printf("[WEBDAV] Failed to start WebDAV server: %v", err)
+				}
+			})
 	}
 
 	// Enable profiling if requested

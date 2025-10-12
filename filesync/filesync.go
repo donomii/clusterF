@@ -210,6 +210,7 @@ func (e *Syncer) Run(ctx context.Context) {
 			e.logger.Printf("[EXPORT] Initial import error: %v", err)
 		}
 
+		//FIXME use threadmanager
 		// Start watcher
 		go func() {
 			if err := e.startWatcher(ctx); err != nil {
