@@ -630,12 +630,13 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		if !parsedMetadata.Deleted {
 			// File is not deleted, count it
 			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
-			hasher, ok := partitionsChecksum[partitionID]
-			if !ok {
-				hasher = sha256.New()
-			}
-			hasher.Write(metadata)
 		}
+
+		hasher, ok := partitionsChecksum[partitionID]
+		if !ok {
+			hasher = sha256.New()
+		}
+		hasher.Write(metadata)
 
 		return nil
 	})
