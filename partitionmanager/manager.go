@@ -597,6 +597,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	if !pm.hasFrogpond() {
 		return
 	}
+	start := time.Now()
 
 	// In no-store mode, don't claim to hold partitions
 	if pm.deps.NoStore {
@@ -615,7 +616,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	// Use FileStore to scan files
 	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(key_b []byte, metadata []byte) error {
 		if ctx.Err() != nil {
-			panic(fmt.Sprintf("Context closed: %v", ctx.Err()))
+			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))
 		}
 		partitionID := types.ExtractPartitionID(string(key_b))
 		var parsedMetadata types.FileMetadata
@@ -638,6 +639,8 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 		return nil
 	})
+
+	pm.debugf("[updatePartitionMetadata] Finished scan after %v seconds", time.Since(start))
 
 	for partitionID, count := range partitionsCount {
 		// If we have no files for this partition, remove ourselves as a holder
@@ -682,6 +685,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 		}
 	}
+	pm.debugf("[updatePartitionMetadata] CRDT update finished scan after %v seconds", time.Since(start))
 }
 
 // removePartitionHolder removes this node as a holder for a partition
