@@ -65,8 +65,8 @@ func testIndexerBasics(t *testing.T, indexType IndexType) {
 	}
 
 	results = idx.PrefixSearch("/")
-	if len(results) != 3 {
-		t.Errorf("[%s] Expected 3 results for / prefix, got %d", indexType, len(results))
+	if len(results) != 2 {
+		t.Errorf("[%s] Expected 2 results for / prefix, got %d", indexType, len(results))
 	}
 
 	// Test delete

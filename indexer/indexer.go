@@ -77,7 +77,7 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 
 // prefixSearchTrie implements prefix search using the trie
 func (idx *Indexer) prefixSearchTrie(prefix string) []types.SearchResult {
-	var results []types.SearchResult
+	resultMap := make(map[string]types.SearchResult)
 
 	// Visit all entries with the given prefix
 	idx.trie.VisitSubtree(patricia.Prefix(prefix), func(path patricia.Prefix, item patricia.Item) error {
@@ -91,7 +91,7 @@ func (idx *Indexer) prefixSearchTrie(prefix string) []types.SearchResult {
 			return nil
 		}
 
-		results = append(results, types.SearchResult{
+		res := types.SearchResult{
 			Name:        metadata.Name,
 			Path:        string(path),
 			Size:        metadata.Size,
@@ -99,17 +99,23 @@ func (idx *Indexer) prefixSearchTrie(prefix string) []types.SearchResult {
 			ModifiedAt:  metadata.ModifiedAt,
 			CreatedAt:   metadata.CreatedAt,
 			Checksum:    metadata.Checksum,
-		})
+		}
+		types.AddResultToMap(res, resultMap, prefix)
 
 		return nil
 	})
+
+	var results []types.SearchResult
+	for _, res := range resultMap {
+		results = append(results, res)
+	}
 
 	return results
 }
 
 // prefixSearchFlat implements prefix search using the flat map
 func (idx *Indexer) prefixSearchFlat(prefix string) []types.SearchResult {
-	var results []types.SearchResult
+	resultMap := make(map[string]types.SearchResult)
 
 	for path, metadata := range idx.files {
 		if strings.HasPrefix(path, prefix) {
@@ -117,7 +123,7 @@ func (idx *Indexer) prefixSearchFlat(prefix string) []types.SearchResult {
 				continue
 			}
 
-			results = append(results, types.SearchResult{
+			res := types.SearchResult{
 				Name:        metadata.Name,
 				Path:        path,
 				Size:        metadata.Size,
@@ -125,8 +131,14 @@ func (idx *Indexer) prefixSearchFlat(prefix string) []types.SearchResult {
 				ModifiedAt:  metadata.ModifiedAt,
 				CreatedAt:   metadata.CreatedAt,
 				Checksum:    metadata.Checksum,
-			})
+			}
+			types.AddResultToMap(res, resultMap, prefix)
 		}
+	}
+
+	var results []types.SearchResult
+	for _, res := range resultMap {
+		results = append(results, res)
 	}
 
 	return results
@@ -140,10 +152,12 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 	switch idx.indexType {
 	case IndexTypeTrie:
 		idx.trie.Insert(patricia.Prefix(path), metadata)
+		idx.trie.Set(patricia.Prefix(path), metadata)
 	case IndexTypeFlat:
 		idx.files[path] = metadata
 	default:
 		idx.trie.Insert(patricia.Prefix(path), metadata)
+		idx.trie.Set(patricia.Prefix(path), metadata)
 	}
 }
 
