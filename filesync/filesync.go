@@ -298,7 +298,7 @@ func (e *Syncer) startWatcher(ctx context.Context) error {
 						if err == nil {
 							ct := contentTypeFromExt(ev.Name)
 							modT := st.ModTime()
-							if err := e.fs.StoreFileWithModTime(clusterPath, data, ct, modT); err != nil {
+							if err := e.fs.StoreFileWithModTime(ctx, clusterPath, data, ct, modT); err != nil {
 								e.logger.Printf("[EXPORT] StoreFile error for %s: %v", clusterPath, err)
 							}
 						}
@@ -310,7 +310,7 @@ func (e *Syncer) startWatcher(ctx context.Context) error {
 						e.removeWatchRecursive(ev.Name)
 					}
 					// delete from cluster (best-effort)
-					if err := e.fs.DeleteFile(clusterPath); err != nil {
+					if err := e.fs.DeleteFile(ctx, clusterPath); err != nil {
 						// directories might be non-empty; ignore errors
 					}
 					continue
@@ -460,7 +460,7 @@ func (e *Syncer) importAll(ctx context.Context) error {
 			return nil
 		}
 		ct := contentTypeFromExt(p)
-		_ = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
+		_ = e.fs.StoreFileWithModTime(ctx, clusterPath, data, ct, st.ModTime())
 		return nil
 	})
 }
@@ -587,13 +587,13 @@ func (e *Syncer) importFromDir(ctx context.Context) error {
 
 		throttle <- struct{}{}
 
-		go uploadSyncfile(e, p, clusterPath, st, throttle)
+		go uploadSyncfile(ctx, e, p, clusterPath, st, throttle)
 
 		return nil
 	})
 }
 
-func uploadSyncfile(e *Syncer, p, clusterPath string, st fs.FileInfo, throttle chan struct{}) {
+func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs.FileInfo, throttle chan struct{}) {
 	defer func() {
 		if e.setCurrentFile != nil {
 			e.setCurrentFile("")
@@ -623,7 +623,7 @@ func uploadSyncfile(e *Syncer, p, clusterPath string, st fs.FileInfo, throttle c
 	}
 
 	ct := contentTypeFromExt(p)
-	err = e.fs.StoreFileWithModTime(clusterPath, data, ct, st.ModTime())
+	err = e.fs.StoreFileWithModTime(ctx, clusterPath, data, ct, st.ModTime())
 	if err != nil {
 		e.logger.Printf("[IMPORT] Synchronisation failed for %v: %v", clusterPath, err)
 	} else {

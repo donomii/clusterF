@@ -2,6 +2,7 @@
 package indexer
 
 import (
+	"context"
 	"log"
 	"strings"
 	"sync"
@@ -177,7 +178,7 @@ func (idx *Indexer) DeleteFile(path string) {
 }
 
 // ImportFilestore imports all files from a PartitionManagerLike into the index
-func (idx *Indexer) ImportFilestore(pm types.PartitionManagerLike) error {
+func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManagerLike) error {
 	idx.logger.Printf("[INDEXER] Starting import of filestore (type: %s)", idx.indexType)
 
 	count := 0

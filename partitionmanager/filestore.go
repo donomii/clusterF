@@ -1,6 +1,7 @@
 package partitionmanager
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -29,8 +30,8 @@ type FileStore struct {
 	storageMajor   string // storage format major (ensemble or bolt)
 	storageMinor   string // storage format minor (ensemble or bolt)
 	// Handle caches
-	metadataHandles sync.Map // map[string]ensemblekv.KvLike - cached metadata handles
-	contentHandles  sync.Map // map[string]ensemblekv.KvLike - cached content handles
+	metadataHandles sync.Map   // map[string]ensemblekv.KvLike - cached metadata handles
+	contentHandles  sync.Map   // map[string]ensemblekv.KvLike - cached content handles
 	handleMutex     sync.Mutex // protects handle opening/closing
 }
 
@@ -633,7 +634,7 @@ func (fs *FileStore) getAllPartitionStores(prefix string) ([]PartitionStore, err
 }
 
 // CalculatePartitionChecksum computes a consistent checksum for all files in a partition
-func (fs *FileStore) CalculatePartitionChecksum(prefix string) (string, error) {
+func (fs *FileStore) CalculatePartitionChecksum(ctx context.Context, prefix string) (string, error) {
 	// Collect all non-deleted entries atomically
 	type entry struct {
 		key      string
@@ -643,6 +644,9 @@ func (fs *FileStore) CalculatePartitionChecksum(prefix string) (string, error) {
 	var entries []entry
 
 	err := fs.Scan(prefix, func(key string, metadata, content []byte) error {
+		if ctx.Err() != nil {
+			panic(fmt.Sprintf("Context finished: %v", ctx.Err()))
+		}
 		if !strings.HasPrefix(key, prefix) || !strings.Contains(key, ":file:") {
 			return nil
 		}

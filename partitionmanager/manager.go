@@ -174,7 +174,7 @@ func (pm *PartitionManager) CalculatePartitionName(path string) string {
 }
 
 // storeFileInPartition stores a file with metadata and content in separate stores
-func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error {
+func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error {
 	// If in no-store mode, don't store locally
 	if pm.deps.NoStore {
 		//FIXME panic here
@@ -201,7 +201,7 @@ func (pm *PartitionManager) StoreFileInPartition(path string, metadataJSON []byt
 	}
 
 	// Update partition metadata in CRDT
-	pm.updatePartitionMetadata(partitionID)
+	pm.updatePartitionMetadata(ctx, partitionID)
 
 	pm.logf("[PARTITION] Stored file %s  (%d bytes)", fileKey, len(fileContent))
 
@@ -544,7 +544,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadat
 }
 
 // deleteFileFromPartition removes a file from its partition
-func (pm *PartitionManager) DeleteFileFromPartition(path string) error {
+func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path string) error {
 	// If in no-store mode, don't delete locally (we don't have it anyway)
 	if pm.deps.NoStore {
 		//FIXME panic here
@@ -586,14 +586,14 @@ func (pm *PartitionManager) DeleteFileFromPartition(path string) error {
 	// Note: We don't delete the entry entirely, just mark as deleted
 
 	// Update partition metadata in CRDT
-	pm.updatePartitionMetadata(partitionID)
+	pm.updatePartitionMetadata(ctx, partitionID)
 
 	pm.logf("[PARTITION] Marked file %s as deleted in partition %s", path, partitionID)
 	return nil
 }
 
 // updatePartitionMetadata updates partition info in the CRDT
-func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
+func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, partitionID PartitionID) {
 	if !pm.hasFrogpond() {
 		return
 	}
@@ -611,6 +611,9 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 
 	// Use FileStore to scan files
 	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(key_b []byte, metadata []byte) error {
+		if ctx.Err() != nil {
+			panic(fmt.Sprintf("Context closed: %v", ctx.Err()))
+		}
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
 			pm.errorf(metadata, "corrupt metadata in ScanPartitionMetaData")
@@ -638,7 +641,7 @@ func (pm *PartitionManager) updatePartitionMetadata(partitionID PartitionID) {
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 
 	// Calculate partition checksum
-	partitionChecksum := pm.calculatePartitionChecksum(partitionID)
+	partitionChecksum := pm.calculatePartitionChecksum(ctx, partitionID)
 
 	// Add ourselves as a holder
 	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
@@ -941,9 +944,9 @@ func (pm *PartitionManager) calculateEntryChecksum(metadata, content []byte) str
 }
 
 // calculatePartitionChecksum computes a checksum for all files in a partition
-func (pm *PartitionManager) calculatePartitionChecksum(partitionID PartitionID) string {
+func (pm *PartitionManager) calculatePartitionChecksum(ctx context.Context, partitionID PartitionID) string {
 	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
-	checksum, err := pm.deps.FileStore.CalculatePartitionChecksum(prefix)
+	checksum, err := pm.deps.FileStore.CalculatePartitionChecksum(ctx, prefix)
 	if err != nil {
 		pm.debugf("[PARTITION] Failed to calculate checksum for %s: %v", partitionID, err)
 		return ""
@@ -994,6 +997,12 @@ func (pm *PartitionManager) getPartitionSyncPaused() bool {
 }
 
 func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID PartitionID, throttle chan struct{}, holders []types.NodeID) {
+	defer func() {
+		if r := recover(); r != nil {
+			pm.debugf("[PARTITION] Panic in partition sync for %s:  %v", partitionID, r)
+			return
+		}
+	}()
 	defer func() { <-throttle }()
 	// Try all available holders for this partition
 	for _, holderID := range holders {
@@ -1047,7 +1056,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			}
 			pm.debugf("starting partition sync check...\n")
 			// Find next partition that needs syncing
-			if partitionID, holders := pm.findNextPartitionToSyncWithHolders(); partitionID != "" {
+			if partitionID, holders := pm.findNextPartitionToSyncWithHolders(ctx); partitionID != "" {
 
 				throttle <- struct{}{}
 				// Throttle concurrent syncs
@@ -1068,7 +1077,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 }
 
 // findNextPartitionToSyncWithHolders finds a single partition that needs syncing and returns all available holders
-func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, []types.NodeID) {
+func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Context) (PartitionID, []types.NodeID) {
 	// If in no-store mode, don't sync any partitions
 	if pm.deps.NoStore {
 		//FIXME panic here
@@ -1131,7 +1140,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders() (PartitionID, [
 
 			if hasPartition {
 				// Calculate our checksum
-				ourChecksum = pm.calculatePartitionChecksum(partitionID)
+				ourChecksum = pm.calculatePartitionChecksum(ctx, partitionID)
 
 				// Compare with other holders' checksums
 				needSync := false

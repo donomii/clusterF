@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -153,7 +154,7 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 				// Store a demo file with node-specific content
 				demoTimestamp := time.Now()
 				demoContent := fmt.Sprintf("demo-data-from-%s-at-%d", nodeID, demoTimestamp.Unix())
-				if err := node.FileSystem.StoreFileWithModTime(fmt.Sprintf("/demo-%03d.txt", index), []byte(demoContent), "text/plain", demoTimestamp); err != nil {
+				if err := node.FileSystem.StoreFileWithModTime(context.TODO(), fmt.Sprintf("/demo-%03d.txt", index), []byte(demoContent), "text/plain", demoTimestamp); err != nil {
 					log.Print(logerrf("Failed to store demo file on %s: %v", nodeID, err))
 				}
 

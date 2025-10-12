@@ -227,7 +227,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 			contentType = metadata.ContentType
 		}
 
-		if err := c.FileSystem.StoreFileWithModTime(path, content, contentType, metadata.ModifiedAt); err != nil {
+		if err := c.FileSystem.StoreFileWithModTime(c.AppContext(), path, content, contentType, metadata.ModifiedAt); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -242,7 +242,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
 			return
 		}
-		if err := c.FileSystem.StoreFileWithModTime(path, content, contentType, localModTime); err != nil {
+		if err := c.FileSystem.StoreFileWithModTime(c.AppContext(), path, content, contentType, localModTime); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -270,7 +270,7 @@ func parseHeaderTimestamp(value string) (time.Time, error) {
 }
 
 func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path string) {
-	if err := c.FileSystem.DeleteFile(path); err != nil {
+	if err := c.FileSystem.DeleteFile(c.AppContext(), path); err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
 			http.Error(w, "Not found", http.StatusNotFound)
 			return

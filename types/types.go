@@ -30,17 +30,18 @@ type ClusterLike interface {
 	GetNodesForPartition(partitionName string) []NodeID            // Get all node that hold the given partition
 	GetNodeInfo(nodeID NodeID) *NodeData                           // Get info about a specific node
 	GetPartitionSyncPaused() bool                                  // Partition sync activity
+	AppContext() context.Context                                   //Closed when the application shuts down
 }
 
 // The partition manager, everything needed to access partitions and files
 // The FileStore should not be accessed directly, except by partitionManager
 type PartitionManagerLike interface {
-	StoreFileInPartition(path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
-	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)           // Get file and metadata from partition, including from other nodes
-	DeleteFileFromPartition(path string) error                                       // Delete file from partition, does not send to network
-	GetMetadataFromPartition(path string) (FileMetadata, error)                      // Get file metadata from partition, including from other nodes
-	CalculatePartitionName(path string) string                                       // Calculate partition name for a given path
-	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error        // Scan all files in all partitions, calling fn for each file
+	StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
+	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)                                // Get file and metadata from partition, including from other nodes
+	DeleteFileFromPartition(ctx context.Context, path string) error                                       // Delete file from partition, does not send to network
+	GetMetadataFromPartition(path string) (FileMetadata, error)                                           // Get file metadata from partition, including from other nodes
+	CalculatePartitionName(path string) string                                                            // Calculate partition name for a given path
+	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error                             // Scan all files in all partitions, calling fn for each file
 
 }
 
@@ -80,15 +81,15 @@ type IndexerLike interface {
 	// DeleteFile removes a file from the index
 	DeleteFile(path string)
 	// ImportFilestore imports all files from a FileStoreLike into the index
-	ImportFilestore(pm PartitionManagerLike) error
+	ImportFilestore(ctx context.Context, pm PartitionManagerLike) error
 }
 
 // FileSystem defines the file-system operations the exporter relies on.
 type FileSystemLike interface {
 	CreateDirectory(path string) error
 	CreateDirectoryWithModTime(path string, modTime time.Time) error
-	StoreFileWithModTime(path string, data []byte, contentType string, modTime time.Time) error
-	DeleteFile(path string) error
+	StoreFileWithModTime(ctx context.Context, path string, data []byte, contentType string, modTime time.Time) error
+	DeleteFile(ctx context.Context, path string) error
 	MetadataForPath(path string) (FileMetadata, error)
 	// Additional methods for WebDAV support
 	GetFile(path string) ([]byte, FileMetadata, error)

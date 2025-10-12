@@ -3,6 +3,7 @@ package filesystem
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -106,7 +107,7 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 }
 
 // StoreFileWithModTime stores a file using an explicit modification time
-func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, contentType string, modTime time.Time) error {
+func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) error {
 	if err := fs.validatePath(path); err != nil {
 		return err
 	}
@@ -139,7 +140,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(path string, content []byte, c
 		return fs.forwardUploadToStorageNode(path, metadataJSON, content, contentType)
 	}
 
-	if err := fs.cluster.PartitionManager().StoreFileInPartition(path, metadataJSON, content); err != nil {
+	if err := fs.cluster.PartitionManager().StoreFileInPartition(ctx, path, metadataJSON, content); err != nil {
 		return logerrf("failed to store file: %v", err)
 	}
 
@@ -305,9 +306,9 @@ func (fs *ClusterFileSystem) ListDirectory(path string) ([]*types.FileMetadata, 
 }
 
 // DeleteFile removes a file from the cluster
-func (fs *ClusterFileSystem) DeleteFile(path string) error {
+func (fs *ClusterFileSystem) DeleteFile(ctx context.Context, path string) error {
 	// Delete from partition system
-	if err := fs.cluster.PartitionManager().DeleteFileFromPartition(path); err != nil {
+	if err := fs.cluster.PartitionManager().DeleteFileFromPartition(ctx, path); err != nil {
 		return fmt.Errorf("failed to delete file: %v", err)
 	}
 
@@ -331,7 +332,6 @@ func (fs *ClusterFileSystem) validatePath(path string) error {
 	}
 	return nil
 }
-
 
 func (fs *ClusterFileSystem) GetMetadata(path string) (types.FileMetadata, error) {
 	fs.debugf("Starting GetMetadata for path %v", path)

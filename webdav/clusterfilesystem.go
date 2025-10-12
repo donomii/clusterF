@@ -64,7 +64,8 @@ func (w *clusterFileWriter) Close() error {
 		contentType = "application/octet-stream"
 	}
 
-	if err := w.cfs.fs.StoreFileWithModTime(w.clusterPath, data, contentType, time.Now()); err != nil {
+	// FIXME context?
+	if err := w.cfs.fs.StoreFileWithModTime(context.Background(), w.clusterPath, data, contentType, time.Now()); err != nil {
 		return webdav.NewHTTPError(http.StatusInternalServerError, err)
 	}
 
@@ -378,7 +379,7 @@ func (cfs *ClusterFileSystem) RemoveAll(ctx context.Context, name string) error 
 	}
 
 	// Delete the file/directory
-	if err := cfs.fs.DeleteFile(clusterPath); err != nil {
+	if err := cfs.fs.DeleteFile(ctx, clusterPath); err != nil {
 		return webdav.NewHTTPError(http.StatusInternalServerError, err)
 	}
 
@@ -469,7 +470,7 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 					if err != nil {
 						continue // Skip files that can't be read
 					}
-					cfs.fs.StoreFileWithModTime(newDstPath, data, entry.ContentType, entry.ModifiedAt)
+					cfs.fs.StoreFileWithModTime(ctx, newDstPath, data, entry.ContentType, entry.ModifiedAt)
 				}
 			}
 		}
@@ -488,7 +489,7 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 		if fullMeta.ModifiedAt.IsZero() {
 			panic("no")
 		}
-		if err := cfs.fs.StoreFileWithModTime(dstClusterPath, data, contentType, fullMeta.ModifiedAt); err != nil {
+		if err := cfs.fs.StoreFileWithModTime(ctx, dstClusterPath, data, contentType, fullMeta.ModifiedAt); err != nil {
 			return false, webdav.NewHTTPError(http.StatusInternalServerError, err)
 		}
 	}

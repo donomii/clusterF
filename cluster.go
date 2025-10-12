@@ -724,12 +724,8 @@ func (c *Cluster) DataClient() *http.Client {
 func (c *Cluster) Start() {
 	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
 
-	// Import filestore into indexer for fast searching
-	if err := c.indexer.ImportFilestore(c.partitionManager); err != nil {
-		c.Logger().Printf("[WARNING] Failed to import filestore into indexer: %v", err)
-	}
-
 	// Start all threads using ThreadManager
+	c.threadManager.StartThread("indexer-import", c.runIndexerImport)
 	c.threadManager.StartThread("filesync", c.runFilesync)
 	c.threadManager.StartThread("periodic-peer-sync", c.periodicPeerSync)
 	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
@@ -773,8 +769,20 @@ func (c *Cluster) runFilesync(ctx context.Context) {
 	}
 }
 
+func (c *Cluster) runIndexerImport(ctx context.Context) {
+	if err := c.indexer.ImportFilestore(ctx, c.partitionManager); err != nil {
+		c.Logger().Printf("[WARNING] Failed to import filestore into indexer: %v", err)
+	}
+	<-ctx.Done()
+}
+
+func (c *Cluster) AppContext() context.Context {
+	return c.ctx
+}
+
 func (c *Cluster) Stop() {
 	c.Logger().Printf("Stopping node %s", c.NodeId)
+	c.cancel() // Cancel the app ctx
 
 	// Shutdown all threads via ThreadManager
 	c.debugf("Shutting down all threads")
