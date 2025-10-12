@@ -103,7 +103,7 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 		flusher.Flush()
 	}
 
-	pm.updatePartitionMetadata(ctx, partitionID)
+	pm.updatePartitionMetadata(pm.deps.Cluster.AppContext(), partitionID)
 
 	pm.debugf("[PARTITION] Completed streaming %d entries for partition %s", entriesStreamed, partitionID)
 }
@@ -211,7 +211,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 	}
 
 	// Update our partition metadata
-	pm.updatePartitionMetadata(ctx, partitionID)
+	pm.updatePartitionMetadata(pm.deps.Cluster.AppContext(), partitionID)
 
 	pm.debugf("[PARTITION] Completed sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
 

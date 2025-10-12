@@ -201,7 +201,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	}
 
 	// Update partition metadata in CRDT
-	pm.updatePartitionMetadata(ctx, partitionID)
+	pm.updatePartitionMetadata(pm.deps.Cluster.AppContext(), partitionID)
 
 	pm.logf("[PARTITION] Stored file %s  (%d bytes)", fileKey, len(fileContent))
 
@@ -586,7 +586,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 	// Note: We don't delete the entry entirely, just mark as deleted
 
 	// Update partition metadata in CRDT
-	pm.updatePartitionMetadata(ctx, partitionID)
+	pm.updatePartitionMetadata(pm.deps.Cluster.AppContext(), partitionID)
 
 	pm.logf("[PARTITION] Marked file %s as deleted in partition %s", path, partitionID)
 	return nil
@@ -607,7 +607,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	}
 
 	// Count files in partition by scanning the existing filesKV
-	fileCount := 0
+
 	partitionStore := types.PartitionStore(StartPartitionID[0:3])
 
 	partitionsCount := make(map[types.PartitionID]int)
@@ -665,14 +665,14 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
 			holderData := map[string]interface{}{
 				"last_update": time.Now().Unix(),
-				"file_count":  fileCount,
+				"file_count":  partitionsCount[partitionID],
 				"checksum":    hex.EncodeToString(hasher.Sum(nil)),
 			}
 			holderJSON, _ := json.Marshal(holderData)
 
 			// Update file count metadata
 			metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
-			fileCountJSON, _ := json.Marshal(fileCount)
+			fileCountJSON, _ := json.Marshal(partitionsCount[partitionID])
 
 			// Send both updates to CRDT
 			updates1 := pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)
@@ -682,7 +682,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			pm.sendUpdates(updates1)
 			pm.sendUpdates(updates2)
 
-			pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, fileCount)
+			pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, partitionsCount[partitionID])
 
 		}
 	}
