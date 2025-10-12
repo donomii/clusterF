@@ -1485,7 +1485,10 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 		c.Logger().Printf("[INITIAL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		c.Logger().Printf("[INITIAL_SYNC] Peer %s returned %s", peer.NodeID, resp.Status)

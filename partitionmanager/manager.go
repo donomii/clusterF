@@ -240,7 +240,10 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename str
 		pm.debugf("[PARTITION] Failed to get file %s from %s: %v", filename, peer.NodeID, err)
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	// Check response
 	if resp.StatusCode != http.StatusOK {
@@ -280,7 +283,10 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 	if err != nil {
 		return types.FileMetadata{}, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return types.FileMetadata{}, fmt.Errorf("peer %s returned %s for metadata %s", peer.NodeID, resp.Status, filename)

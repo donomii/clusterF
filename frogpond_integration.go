@@ -39,7 +39,10 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 			if err != nil {
 				return
 			}
-			defer resp.Body.Close()
+			defer func() {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}()
 		}(peer)
 	}
 }

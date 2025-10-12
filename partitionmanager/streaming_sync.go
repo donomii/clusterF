@@ -154,12 +154,14 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 		return fmt.Errorf("failed to build sync URL: %v", err)
 	}
 
-	longClient := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := longClient.Get(syncURL)
+	resp, err := pm.httpClient().Get(syncURL)
 	if err != nil {
 		return fmt.Errorf("failed to request partition sync: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("peer returned error %d '%s'", resp.StatusCode, resp.Status)
