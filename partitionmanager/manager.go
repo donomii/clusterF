@@ -1068,7 +1068,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			if pm.getPartitionSyncPaused() {
 				// Sync is paused, wait a bit before checking again
 				syncInterval := pm.getPartitionSyncInterval()
-				fmt.Printf("Waiting syncInterval %v", syncInterval)
+				pm.debugf("Waiting syncInterval %v", syncInterval)
 				select {
 				case <-ctx.Done():
 					return
