@@ -593,6 +593,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 }
 
 // updatePartitionMetadata updates partition info in the CRDT
+// Scans the database and counts the files, checeksums them, and then updates the CRDT
 func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPartitionID types.PartitionID) {
 	if !pm.hasFrogpond() {
 		return
@@ -643,6 +644,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 	pm.debugf("[updatePartitionMetadata] Finished scan after %v seconds", time.Since(start))
 
+	allUpdates := []frogpond.DataPoint{}
 	for partitionID, count := range partitionsCount {
 		// If we have no files for this partition, remove ourselves as a holder
 		if count == 0 {
@@ -675,17 +677,16 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			fileCountJSON, _ := json.Marshal(partitionsCount[partitionID])
 
 			// Send both updates to CRDT
-			updates1 := pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)
-			updates2 := pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)
-
-			// Send updates to peers
-			pm.sendUpdates(updates1)
-			pm.sendUpdates(updates2)
+			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
+			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
 
 			pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, partitionsCount[partitionID])
 
 		}
 	}
+	// Send updates to peers
+
+	pm.sendUpdates(allUpdates)
 	pm.debugf("[updatePartitionMetadata] CRDT update finished scan after %v seconds", time.Since(start))
 }
 
