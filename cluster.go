@@ -1001,7 +1001,6 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 }
 
 func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
-	c.debugf("[STATUS] Handler called")
 
 	// Get partition stats without holding the main mutex
 	var partitionStats types.PartitionStatistics
