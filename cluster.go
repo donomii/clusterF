@@ -1083,7 +1083,7 @@ func (c *Cluster) handlePartitionSyncAPI(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	partitionID := partitionmanager.PartitionID(path)
+	partitionID := types.PartitionID(path)
 	c.partitionManager.HandlePartitionSync(w, r, partitionID)
 }
 

@@ -16,7 +16,7 @@ import (
 )
 
 // handlePartitionSync serves partition data with object-by-object streaming
-func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.Request, partitionID PartitionID) {
+func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.Request, partitionID types.PartitionID) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -109,7 +109,7 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 }
 
 // syncPartitionFromPeer synchronizes a partition using object-by-object streaming
-func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partitionID PartitionID, peerID types.NodeID) error {
+func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID) error {
 	// No-store nodes should never sync partitions
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: refusing to sync partition %s", partitionID)
@@ -221,7 +221,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 	return nil
 }
 
-func (pm *PartitionManager) removePeerHolder(partitionID PartitionID, peerID types.NodeID, backdate time.Time) {
+func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peerID types.NodeID, backdate time.Time) {
 	if !pm.hasFrogpond() {
 		return
 	}

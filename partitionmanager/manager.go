@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"hash/crc32"
 	"io"
 	"log"
@@ -48,11 +49,10 @@ type PartitionManager struct {
 	deps Dependencies
 }
 
-type PartitionID string
 type PartitionVersion int64
 
 type PartitionInfo struct {
-	ID           PartitionID             `json:"id"`
+	ID           types.PartitionID       `json:"id"`
 	Version      PartitionVersion        `json:"version"`
 	LastModified int64                   `json:"last_modified"`
 	FileCount    int                     `json:"file_count"`
@@ -162,10 +162,10 @@ func (pm *PartitionManager) replicationFactor() int {
 
 // FIXME utility
 // HashToPartition calculates which partition a filename belongs to
-func HashToPartition(filename string) PartitionID {
+func HashToPartition(filename string) types.PartitionID {
 	h := crc32.ChecksumIEEE([]byte(filename))
 	partitionNum := h % DefaultPartitionCount
-	return PartitionID(fmt.Sprintf("p%05d", partitionNum))
+	return types.PartitionID(fmt.Sprintf("p%05d", partitionNum))
 }
 
 // CalculatePartitionName implements the interface method
@@ -593,7 +593,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 }
 
 // updatePartitionMetadata updates partition info in the CRDT
-func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, partitionID PartitionID) {
+func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPartitionID types.PartitionID) {
 	if !pm.hasFrogpond() {
 		return
 	}
@@ -601,74 +601,91 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, partiti
 	// In no-store mode, don't claim to hold partitions
 	if pm.deps.NoStore {
 		//FIXME panic here
-		pm.debugf("[PARTITION] No-store mode: not updating partition metadata for %s", partitionID)
+		pm.debugf("[PARTITION] No-store mode: not updating partition metadata for %s", StartPartitionID)
 		return
 	}
 
 	// Count files in partition by scanning the existing filesKV
 	fileCount := 0
-	partitionStore := PartitionStore(partitionID[0:3])
+	partitionStore := types.PartitionStore(StartPartitionID[0:3])
+
+	partitionsCount := make(map[types.PartitionID]int)
+	partitionsChecksum := make(map[types.PartitionID]hash.Hash)
 
 	// Use FileStore to scan files
 	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(key_b []byte, metadata []byte) error {
 		if ctx.Err() != nil {
 			panic(fmt.Sprintf("Context closed: %v", ctx.Err()))
 		}
+		partitionID := types.ExtractPartitionID(string(key_b))
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
 			pm.errorf(metadata, "corrupt metadata in ScanPartitionMetaData")
 			// Parse error - count as existing file
-			fileCount++
+			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 			return nil
 		}
 		// Check if file is marked as deleted
 		if !parsedMetadata.Deleted {
 			// File is not deleted, count it
-			fileCount++
+			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
+			hasher, ok := partitionsChecksum[partitionID]
+			if !ok {
+				hasher = sha256.New()
+			}
+			hasher.Write(metadata)
 		}
 
 		return nil
 	})
 
-	// If we have no files for this partition, remove ourselves as a holder
-	if fileCount == 0 {
-		pm.removePartitionHolder(partitionID)
-		return
+	for partitionID, count := range partitionsCount {
+		// If we have no files for this partition, remove ourselves as a holder
+		if count == 0 {
+			pm.removePartitionHolder(partitionID)
+			return
+		}
+
+		// Update partition metadata in CRDT using individual keys per holder
+		// This prevents overwriting other nodes' holder entries
+		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
+
+		// Calculate partition checksum
+		//partitionChecksum := pm.calculatePartitionChecksum(ctx, partitionID)
+
+		hasher, ok := partitionsChecksum[partitionID]
+		if !ok {
+			pm.deps.Logger.Printf("ERROR: Unable to calculate checksum for partition %v\n", partitionID)
+		} else {
+			// Add ourselves as a holder
+			holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
+			holderData := map[string]interface{}{
+				"last_update": time.Now().Unix(),
+				"file_count":  fileCount,
+				"checksum":    hex.EncodeToString(hasher.Sum(nil)),
+			}
+			holderJSON, _ := json.Marshal(holderData)
+
+			// Update file count metadata
+			metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
+			fileCountJSON, _ := json.Marshal(fileCount)
+
+			// Send both updates to CRDT
+			updates1 := pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)
+			updates2 := pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)
+
+			// Send updates to peers
+			pm.sendUpdates(updates1)
+			pm.sendUpdates(updates2)
+
+			pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, fileCount)
+
+		}
 	}
-
-	// Update partition metadata in CRDT using individual keys per holder
-	// This prevents overwriting other nodes' holder entries
-	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-
-	// Calculate partition checksum
-	partitionChecksum := pm.calculatePartitionChecksum(ctx, partitionID)
-
-	// Add ourselves as a holder
-	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-	holderData := map[string]interface{}{
-		"joined_at":  time.Now().Unix(),
-		"file_count": fileCount,
-		"checksum":   partitionChecksum,
-	}
-	holderJSON, _ := json.Marshal(holderData)
-
-	// Update file count metadata
-	metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
-	fileCountJSON, _ := json.Marshal(fileCount)
-
-	// Send both updates to CRDT
-	updates1 := pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)
-	updates2 := pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)
-
-	// Send updates to peers
-	pm.sendUpdates(updates1)
-	pm.sendUpdates(updates2)
-
-	pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, fileCount)
 }
 
 // removePartitionHolder removes this node as a holder for a partition
-func (pm *PartitionManager) removePartitionHolder(partitionID PartitionID) {
+func (pm *PartitionManager) removePartitionHolder(partitionID types.PartitionID) {
 	if !pm.hasFrogpond() {
 		return
 	}
@@ -705,7 +722,7 @@ func (pm *PartitionManager) isNodeActive(nodeID types.NodeID) bool {
 }
 
 // getPartitionInfo retrieves partition info from CRDT using individual holder keys
-func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *PartitionInfo {
+func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *PartitionInfo {
 	if !pm.hasFrogpond() {
 		return nil
 	}
@@ -747,7 +764,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 			pm.errorf(dp.Value, "corrupt holder data")
 			continue
 		}
-		if joinedAt, ok := holderData["joined_at"].(float64); ok {
+		if joinedAt, ok := holderData["last_update"].(float64); ok {
 			if int64(joinedAt) > maxTimestamp {
 				maxTimestamp = int64(joinedAt)
 			}
@@ -777,9 +794,9 @@ func (pm *PartitionManager) getPartitionInfo(partitionID PartitionID) *Partition
 }
 
 // getAllPartitions returns all known partitions from CRDT using individual holder keys
-func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
+func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionInfo {
 	if !pm.hasFrogpond() {
-		return map[PartitionID]*PartitionInfo{}
+		return map[types.PartitionID]*PartitionInfo{}
 	}
 
 	// Get all partition holder entries
@@ -813,7 +830,7 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 	}
 
 	// Convert to PartitionInfo objects
-	result := make(map[PartitionID]*PartitionInfo)
+	result := make(map[types.PartitionID]*PartitionInfo)
 	for partitionID, nodeData := range partitionMap {
 		var holders []types.NodeID
 		var totalFiles int
@@ -824,7 +841,7 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 			holders = append(holders, types.NodeID(nodeID))
 
 			if holderData, ok := data.(map[string]interface{}); ok {
-				if joinedAt, ok := holderData["joined_at"].(float64); ok {
+				if joinedAt, ok := holderData["last_update"].(float64); ok {
 					if int64(joinedAt) > maxTimestamp {
 						maxTimestamp = int64(joinedAt)
 					}
@@ -838,8 +855,8 @@ func (pm *PartitionManager) getAllPartitions() map[PartitionID]*PartitionInfo {
 			}
 		}
 
-		result[PartitionID(partitionID)] = &PartitionInfo{
-			ID:           PartitionID(partitionID),
+		result[types.PartitionID(partitionID)] = &PartitionInfo{
+			ID:           types.PartitionID(partitionID),
 			Version:      PartitionVersion(maxTimestamp),
 			LastModified: maxTimestamp,
 			FileCount:    totalFiles,
@@ -928,7 +945,7 @@ type PartitionSyncEntry struct {
 
 // PartitionSnapshot represents a consistent point-in-time view of a partition
 type PartitionSnapshot struct {
-	PartitionID PartitionID          `json:"partition_id"`
+	PartitionID types.PartitionID    `json:"partition_id"`
 	Timestamp   int64                `json:"timestamp"`
 	Version     int64                `json:"version"`
 	Entries     []PartitionSyncEntry `json:"entries"`
@@ -944,7 +961,7 @@ func (pm *PartitionManager) calculateEntryChecksum(metadata, content []byte) str
 }
 
 // calculatePartitionChecksum computes a checksum for all files in a partition
-func (pm *PartitionManager) calculatePartitionChecksum(ctx context.Context, partitionID PartitionID) string {
+func (pm *PartitionManager) calculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) string {
 	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
 	checksum, err := pm.deps.FileStore.CalculatePartitionChecksum(ctx, prefix)
 	if err != nil {
@@ -996,7 +1013,7 @@ func (pm *PartitionManager) getPartitionSyncPaused() bool {
 	return paused
 }
 
-func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID PartitionID, throttle chan struct{}, holders []types.NodeID) {
+func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID types.PartitionID, throttle chan struct{}, holders []types.NodeID) {
 	defer func() {
 		if r := recover(); r != nil {
 			pm.debugf("[PARTITION] Panic in partition sync for %s:  %v", partitionID, r)
@@ -1077,7 +1094,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 }
 
 // findNextPartitionToSyncWithHolders finds a single partition that needs syncing and returns all available holders
-func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Context) (PartitionID, []types.NodeID) {
+func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Context) (types.PartitionID, []types.NodeID) {
 	// If in no-store mode, don't sync any partitions
 	if pm.deps.NoStore {
 		//FIXME panic here
@@ -1116,7 +1133,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 	}
 	pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
-	partitionKeys := make([]PartitionID, 0, len(allPartitions))
+	partitionKeys := make([]types.PartitionID, 0, len(allPartitions))
 	for partitionID := range allPartitions {
 		partitionKeys = append(partitionKeys, partitionID)
 	}

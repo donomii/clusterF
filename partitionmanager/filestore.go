@@ -19,8 +19,6 @@ import (
 	ensemblekv "github.com/donomii/ensemblekv"
 )
 
-type PartitionStore string
-
 // FileStore provides atomic access to file metadata and content with per-partition locking
 type FileStore struct {
 	baseDir        string
@@ -137,13 +135,13 @@ func (fs *FileStore) debugf(format string, args ...interface{}) {
 }
 
 // getPartitionLock gets or creates a lock for a specific partition
-func (fs *FileStore) getPartitionLock(partitionID PartitionStore) *sync.RWMutex {
+func (fs *FileStore) getPartitionLock(partitionID types.PartitionStore) *sync.RWMutex {
 	lock, _ := fs.partitionLocks.LoadOrStore(string(partitionID), &sync.RWMutex{})
 	return lock
 }
 
 // openPartitionStores opens both metadata and content stores for a partition
-func (fs *FileStore) openPartitionStores(partitionStoreID PartitionStore) (ensemblekv.KvLike, ensemblekv.KvLike, error) {
+func (fs *FileStore) openPartitionStores(partitionStoreID types.PartitionStore) (ensemblekv.KvLike, ensemblekv.KvLike, error) {
 	fs.handleMutex.Lock()
 	defer fs.handleMutex.Unlock()
 
@@ -193,32 +191,9 @@ func (fs *FileStore) closePartitionStores(metadataKV, contentKV ensemblekv.KvLik
 	// Handles are now cached and not closed after each operation
 }
 
-// extractPartitionStoreID extracts the partition ID from a key
-func extractPartitionStoreID(key string) PartitionStore {
-	// Key format: partition:p12345:file:/path/to/file
-	parts := strings.Split(key, ":")
-	if len(parts) >= 2 && parts[0] == "partition" {
-		if len(parts[1]) >= 3 {
-			partId := parts[1][0:3] // Extract partition ID (first 3 characters)
-			return PartitionStore(partId)
-		}
-	}
-	return ""
-}
-
-func extractFilePath(key string) string {
-	// Key format: partition:p12345:file:/path/to/file
-	parts := strings.Split(key, ":file:")
-	if len(parts) > 1 {
-		return parts[1]
-	}
-
-	panic("no")
-}
-
 // Get retrieves both metadata and content atomically
 func (fs *FileStore) Get(key string) (*FileData, error) {
-	partitionID := extractPartitionStoreID(key)
+	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
 		return &FileData{Key: key, Exists: false}, nil
 	}
@@ -268,7 +243,7 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 	fs.debugf("Starting FileStore.GetMetadata for key %v", key)
 	defer fs.debugf("Leaving FileStore.GetMetadata for key %v", key)
 
-	partitionID := extractPartitionStoreID(key)
+	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
 		return nil, fmt.Errorf("invalid key format")
 	}
@@ -304,7 +279,7 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 
 // GetContent retrieves only content
 func (fs *FileStore) GetContent(key string) ([]byte, error) {
-	partitionID := extractPartitionStoreID(key)
+	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
 		return nil, fmt.Errorf("invalid key format")
 	}
@@ -335,7 +310,7 @@ func (fs *FileStore) GetContent(key string) ([]byte, error) {
 // Put stores both metadata and content atomically
 func (fs *FileStore) Put(key string, metadata, content []byte) error {
 
-	partitionID := extractPartitionStoreID(key)
+	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
 		return fmt.Errorf("invalid key format")
 	}
@@ -376,7 +351,7 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 
 // PutMetadata stores only metadata
 func (fs *FileStore) PutMetadata(key string, metadata []byte) error {
-	partitionID := extractPartitionStoreID(key)
+	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
 		return fmt.Errorf("invalid key format")
 	}
@@ -414,7 +389,7 @@ func (fs *FileStore) PutMetadata(key string, metadata []byte) error {
 func (fs *FileStore) Delete(key string) error {
 	checkForRecursiveScan()
 
-	partitionID := extractPartitionStoreID(key)
+	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
 		return fmt.Errorf("invalid key format")
 	}
@@ -544,7 +519,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 			keyStr := string(k)
 			if prefix == "" || strings.HasPrefix(keyStr, prefix) {
 				// Extract file path from composite key
-				filePath := extractFilePath(keyStr)
+				filePath := types.ExtractFilePath(keyStr)
 				keys = append(keys, filePath)
 				metaCopy := make([]byte, len(v))
 				copy(metaCopy, v)
@@ -589,9 +564,8 @@ func makeKey(path string) string {
 	return key
 }
 
-func (fs *FileStore) ScanPartitionMetaData(partitionId PartitionStore, fn func(key []byte, metadata []byte) error) error {
+func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, fn func(key []byte, metadata []byte) error) error {
 	start := time.Now()
-	partitionStore := PartitionStore(partitionId[0:3])
 	fmt.Printf("[FILESTORE] Opening partitionStore %v", partitionStore)
 	metadataKV, contentKV, err := fs.openPartitionStores(partitionStore)
 	defer fs.closePartitionStores(metadataKV, contentKV)
@@ -607,26 +581,26 @@ func (fs *FileStore) ScanPartitionMetaData(partitionId PartitionStore, fn func(k
 }
 
 // getAllPartitionStores determines which partition directories to scan
-func (fs *FileStore) getAllPartitionStores(prefix string) ([]PartitionStore, error) {
+func (fs *FileStore) getAllPartitionStores(prefix string) ([]types.PartitionStore, error) {
 	// If prefix specifies a specific partition, only scan that one
-	partitionID := extractPartitionStoreID(prefix)
+	partitionID := types.ExtractPartitionStoreID(prefix)
 	if partitionID != "" {
-		return []PartitionStore{partitionID}, nil
+		return []types.PartitionStore{partitionID}, nil
 	}
 
 	// Otherwise scan all partition directories
 	entries, err := os.ReadDir(fs.baseDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []PartitionStore{}, nil
+			return []types.PartitionStore{}, nil
 		}
 		return nil, err
 	}
 
-	var partitions []PartitionStore
+	var partitions []types.PartitionStore
 	for _, entry := range entries {
 		if entry.IsDir() && strings.HasPrefix(entry.Name(), "p") {
-			partitions = append(partitions, PartitionStore(entry.Name()))
+			partitions = append(partitions, types.PartitionStore(entry.Name()))
 		}
 	}
 

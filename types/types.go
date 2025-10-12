@@ -251,3 +251,46 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 		resultMap[normPath] = newResult
 	}
 }
+
+type PartitionStore string
+
+// ExtractPartitionStoreID extracts the combined partition store name e.g. p12
+// Partitions are grouped together in files to avoid having 65k open files during operation
+func ExtractPartitionStoreID(key string) PartitionStore {
+	// Key format: partition:p12345:file:/path/to/file
+	parts := strings.Split(key, ":")
+	if len(parts) >= 2 && parts[0] == "partition" {
+		if len(parts[1]) >= 3 {
+			partId := parts[1][0:3] // Extract partition ID (first 3 characters)
+			return PartitionStore(partId)
+		}
+	}
+	return ""
+}
+
+// ExtractFilePath extracts the cluster file path e.g. /Desktop/
+func ExtractFilePath(key string) string {
+	// Key format: partition:p12345:file:/path/to/file
+	parts := strings.Split(key, ":file:")
+	if len(parts) > 1 {
+		return parts[1]
+	}
+
+	panic("no")
+}
+
+type PartitionID string
+
+// ExtractPartitionStoreID extracts the partition ID from a key e.g. p12345
+func ExtractPartitionID(key string) PartitionID {
+	parts := strings.Split(key, ":")
+	if len(parts) >= 2 && parts[0] == "partition" {
+		if len(parts[1]) >= 3 {
+			partId := parts[1]
+			return PartitionID(partId)
+		} else {
+			panic("no")
+		}
+	}
+	panic("no")
+}
