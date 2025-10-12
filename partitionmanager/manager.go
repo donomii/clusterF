@@ -637,7 +637,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			hasher = sha256.New()
 		}
 		hasher.Write(metadata)
-
+		partitionsChecksum[partitionID] = hasher
 		return nil
 	})
 
