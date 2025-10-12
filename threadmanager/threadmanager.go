@@ -184,6 +184,11 @@ func (tm *ThreadManager) StartThread(name string, fn func(ctx context.Context)) 
 	return tm.StartThreadWithRestart(name, fn, true, nil)
 }
 
+// StartThreadOnce starts a managed goroutine that runs once and does not restart
+func (tm *ThreadManager) StartThreadOnce(name string, fn func(ctx context.Context)) error {
+	return tm.StartThreadWithRestart(name, fn, false, nil)
+}
+
 // StartThreadWithRestart starts a managed goroutine with restart control
 func (tm *ThreadManager) StartThreadWithRestart(name string, fn func(ctx context.Context), shouldRestart bool, cleanup func()) error {
 	// Check if thread with this name already exists and is running

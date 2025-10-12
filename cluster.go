@@ -725,7 +725,7 @@ func (c *Cluster) Start() {
 	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
 
 	// Start all threads using ThreadManager
-	c.threadManager.StartThread("indexer-import", c.runIndexerImport)
+	c.threadManager.StartThreadOnce("indexer-import", c.runIndexerImport)
 	c.threadManager.StartThread("filesync", c.runFilesync)
 	c.threadManager.StartThread("periodic-peer-sync", c.periodicPeerSync)
 	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
