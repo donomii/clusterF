@@ -16,7 +16,6 @@ import (
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	ensemblekv "github.com/donomii/ensemblekv"
-	"github.com/tchap/go-patricia/patricia"
 )
 
 type PartitionStore string
@@ -30,10 +29,9 @@ type FileStore struct {
 	storageMajor   string // storage format major (ensemble or bolt)
 	storageMinor   string // storage format minor (ensemble or bolt)
 	// Handle caches
-	metadataHandles sync.Map      // map[string]ensemblekv.KvLike - cached metadata handles
-	contentHandles  sync.Map      // map[string]ensemblekv.KvLike - cached content handles
-	handleMutex     sync.Mutex    // protects handle opening/closing
-	trie            patricia.Trie // Indexed by file path *ONLY*, not composite key.  Use makeKey/extractPath to work with composite keys
+	metadataHandles sync.Map // map[string]ensemblekv.KvLike - cached metadata handles
+	contentHandles  sync.Map // map[string]ensemblekv.KvLike - cached content handles
+	handleMutex     sync.Mutex // protects handle opening/closing
 }
 
 // checkForRecursiveScan panics if we detect a recursive scan call
@@ -68,7 +66,6 @@ func NewFileStore(baseDir string, debug bool, storageMajor, storageMinor string)
 		debugLog:     debug,
 		storageMajor: storageMajor,
 		storageMinor: storageMinor,
-		trie:         *patricia.NewTrie(),
 	}
 }
 
@@ -187,23 +184,7 @@ func (fs *FileStore) openPartitionStores(partitionStoreID PartitionStore) (ensem
 	fs.metadataHandles.Store(partitionStoreID, metadataKV)
 	fs.contentHandles.Store(partitionStoreID, contentKV)
 
-	//Build the trie
-	metadataKV.MapFunc(func(k, v []byte) error {
-		path := []byte(extractFilePath(string(k)))
-		partitionID := extractPartitionStoreID(string(k))
-		fmt.Printf("[FILESTORE] Storing %v, %v in trie\n", string(path), partitionID)
-		fs.trie.Insert(path, partitionID)
-
-		//FIXME errors?
-
-		return nil
-	})
-
 	return metadataKV, contentKV, nil
-}
-
-func (fs *FileStore) Exists(key string) bool {
-	return fs.trie.Match(patricia.Prefix(key))
 }
 
 // closePartitionStores does nothing now - handles are cached
@@ -236,9 +217,6 @@ func extractFilePath(key string) string {
 
 // Get retrieves both metadata and content atomically
 func (fs *FileStore) Get(key string) (*FileData, error) {
-	if !fs.Exists(extractFilePath(key)) {
-		return &FileData{Key: key, Exists: false}, nil
-	}
 	partitionID := extractPartitionStoreID(key)
 	if partitionID == "" {
 		return &FileData{Key: key, Exists: false}, nil
@@ -289,9 +267,6 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 	fs.debugf("Starting FileStore.GetMetadata for key %v", key)
 	defer fs.debugf("Leaving FileStore.GetMetadata for key %v", key)
 
-	if !fs.Exists(extractFilePath(key)) {
-		return nil, fmt.Errorf("Not found")
-	}
 	partitionID := extractPartitionStoreID(key)
 	if partitionID == "" {
 		return nil, fmt.Errorf("invalid key format")
@@ -328,9 +303,6 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 
 // GetContent retrieves only content
 func (fs *FileStore) GetContent(key string) ([]byte, error) {
-	if !fs.Exists(extractFilePath(key)) {
-		return nil, fmt.Errorf("Not found")
-	}
 	partitionID := extractPartitionStoreID(key)
 	if partitionID == "" {
 		return nil, fmt.Errorf("invalid key format")
@@ -397,7 +369,7 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 		metadataKV.Delete(keyBytes)
 		return fmt.Errorf("failed to store content: %v", err)
 	}
-	fs.trie.Insert([]byte(extractFilePath(key)), partitionID)
+
 	return nil
 }
 
@@ -433,7 +405,7 @@ func (fs *FileStore) PutMetadata(key string, metadata []byte) error {
 	if err != nil {
 		return err
 	}
-	fs.trie.Insert([]byte(extractFilePath(key)), partitionID)
+
 	return err
 }
 
@@ -467,7 +439,7 @@ func (fs *FileStore) Delete(key string) error {
 	// Delete from both stores - ignore individual errors
 	metadataKV.Delete(keyBytes)
 	contentKV.Delete(keyBytes)
-	fs.trie.Delete([]byte(extractFilePath(key)))
+
 	return nil
 }
 
@@ -544,44 +516,70 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 	start := time.Now()
 	checkForRecursiveScan()
 
-	wg := &sync.WaitGroup{}
-	countKeys := 0
-	res := fs.trie.VisitSubtree([]byte(prefix), func(path_b patricia.Prefix, partitionID_b patricia.Item) error {
-		wg.Add(1)
-		go func(path_b patricia.Prefix, partitionID_b patricia.Item) {
-			defer wg.Done()
-			partitionStore := partitionID_b.(PartitionStore)
-			fmt.Printf("[FILESTORE] Opening partitionStore %v", partitionStore)
-			metadataKV, contentKV, err := fs.openPartitionStores(partitionStore)
-			defer fs.closePartitionStores(metadataKV, contentKV)
-			if err != nil {
-				fmt.Printf("Warn: skipping partition %v in search\n", partitionStore)
-				return // Skip this partition if it can't be opened
-			}
-			fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
+	// Determine which partitions to scan based on prefix
+	partitions, err := fs.getAllPartitionStores(prefix)
+	if err != nil {
+		return err
+	}
 
-			fmt.Printf("[FILESTORE] Examining key %v in partition %v after %v\n", string(path_b), partitionStore, time.Since(start))
-			countKeys = countKeys + 1
-			kvkey := makeKey(string(path_b))
-			fmt.Printf("[FILESTORE] KV key %v\n", kvkey)
+	fs.debugf("ScanMetadata: scanning %d partitions for prefix %s", len(partitions), prefix)
 
-			v, err := metadataKV.Get([]byte(kvkey))
-			if err != nil {
-				fmt.Printf("[FILESTORE] Failed to retrieve metadata for key %v\n", makeKey(string(path_b)))
-				return
+	for _, partitionID := range partitions {
+		fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
+		lock := fs.getPartitionLock(partitionID)
+		lock.RLock()
+
+		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+		if err != nil {
+			lock.RUnlock()
+			continue // Skip this partition if it can't be opened
+		}
+
+		// Collect keys and metadata from this partition
+		var keys []string
+		var metadataValues [][]byte
+
+		_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
+			keyStr := string(k)
+			if prefix == "" || strings.HasPrefix(keyStr, prefix) {
+				// Extract file path from composite key
+				filePath := extractFilePath(keyStr)
+				keys = append(keys, filePath)
+				metaCopy := make([]byte, len(v))
+				copy(metaCopy, v)
+				metadataValues = append(metadataValues, metaCopy)
 			}
+			return nil
+		})
+
+		if mapErr != nil {
+			fs.closePartitionStores(metadataKV, contentKV)
+			lock.RUnlock()
+			return mapErr
+		}
+
+		// Call fn for each key
+		for i, key := range keys {
 			// Decrypt metadata before passing to callback
-			decMetadata := v
+			decMetadata := metadataValues[i]
 			if len(fs.encryptionKey) > 0 {
-				decMetadata = fs.xorEncrypt(v)
+				decMetadata = fs.xorEncrypt(metadataValues[i])
 			}
-			fn(string(path_b), decMetadata)
-		}(path_b, partitionID_b)
-		return nil
-	})
-	wg.Wait()
-	fmt.Printf("Finished ScanMetadata for for prefix %v for %v keys in %v seconds\n", prefix, countKeys, time.Since(start))
-	return res
+
+			if err := fn(key, decMetadata); err != nil {
+				fs.closePartitionStores(metadataKV, contentKV)
+				lock.RUnlock()
+				return err
+			}
+		}
+
+		fs.closePartitionStores(metadataKV, contentKV)
+		lock.RUnlock()
+		fs.debugf("ScanMetadata: released read lock for partition %s", partitionID)
+	}
+
+	fs.debugf("Finished ScanMetadata for prefix %v in %v seconds", prefix, time.Since(start).Seconds())
+	return nil
 }
 
 func makeKey(path string) string {

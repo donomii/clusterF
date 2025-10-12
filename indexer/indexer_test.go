@@ -10,9 +10,17 @@ import (
 	"github.com/donomii/clusterF/types"
 )
 
-func TestIndexerBasics(t *testing.T) {
+func TestIndexerBasics_Trie(t *testing.T) {
+	testIndexerBasics(t, IndexTypeTrie)
+}
+
+func TestIndexerBasics_Flat(t *testing.T) {
+	testIndexerBasics(t, IndexTypeFlat)
+}
+
+func testIndexerBasics(t *testing.T, indexType IndexType) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-	idx := NewIndexer(logger)
+	idx := NewIndexerWithType(logger, indexType)
 
 	// Test adding files
 	metadata1 := types.FileMetadata{
@@ -48,30 +56,38 @@ func TestIndexerBasics(t *testing.T) {
 	// Test prefix search
 	results := idx.PrefixSearch("/docs/")
 	if len(results) != 2 {
-		t.Errorf("Expected 2 results for /docs/ prefix, got %d", len(results))
+		t.Errorf("[%s] Expected 2 results for /docs/ prefix, got %d", indexType, len(results))
 	}
 
 	results = idx.PrefixSearch("/other/")
 	if len(results) != 1 {
-		t.Errorf("Expected 1 result for /other/ prefix, got %d", len(results))
+		t.Errorf("[%s] Expected 1 result for /other/ prefix, got %d", indexType, len(results))
 	}
 
 	results = idx.PrefixSearch("/")
 	if len(results) != 3 {
-		t.Errorf("Expected 3 results for / prefix, got %d", len(results))
+		t.Errorf("[%s] Expected 3 results for / prefix, got %d", indexType, len(results))
 	}
 
 	// Test delete
 	idx.DeleteFile("/docs/test1.txt")
 	results = idx.PrefixSearch("/docs/")
 	if len(results) != 1 {
-		t.Errorf("Expected 1 result after delete, got %d", len(results))
+		t.Errorf("[%s] Expected 1 result after delete, got %d", indexType, len(results))
 	}
 }
 
-func TestIndexerUpdate(t *testing.T) {
+func TestIndexerUpdate_Trie(t *testing.T) {
+	testIndexerUpdate(t, IndexTypeTrie)
+}
+
+func TestIndexerUpdate_Flat(t *testing.T) {
+	testIndexerUpdate(t, IndexTypeFlat)
+}
+
+func testIndexerUpdate(t *testing.T, indexType IndexType) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-	idx := NewIndexer(logger)
+	idx := NewIndexerWithType(logger, indexType)
 
 	// Add a file
 	metadata := types.FileMetadata{
@@ -98,18 +114,26 @@ func TestIndexerUpdate(t *testing.T) {
 	// Should still have only one result
 	results := idx.PrefixSearch("/")
 	if len(results) != 1 {
-		t.Errorf("Expected 1 result after update, got %d", len(results))
+		t.Errorf("[%s] Expected 1 result after update, got %d", indexType, len(results))
 	}
 
 	// Check that size was updated
 	if results[0].Size != 200 {
-		t.Errorf("Expected size 200 after update, got %d", results[0].Size)
+		t.Errorf("[%s] Expected size 200 after update, got %d", indexType, results[0].Size)
 	}
 }
 
-func TestIndexerDeletedFiles(t *testing.T) {
+func TestIndexerDeletedFiles_Trie(t *testing.T) {
+	testIndexerDeletedFiles(t, IndexTypeTrie)
+}
+
+func TestIndexerDeletedFiles_Flat(t *testing.T) {
+	testIndexerDeletedFiles(t, IndexTypeFlat)
+}
+
+func testIndexerDeletedFiles(t *testing.T, indexType IndexType) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-	idx := NewIndexer(logger)
+	idx := NewIndexerWithType(logger, indexType)
 
 	// Add a file
 	metadata := types.FileMetadata{
@@ -139,10 +163,63 @@ func TestIndexerDeletedFiles(t *testing.T) {
 	// Search should not return deleted files
 	results := idx.PrefixSearch("/")
 	if len(results) != 1 {
-		t.Errorf("Expected 1 result (deleted files filtered), got %d", len(results))
+		t.Errorf("[%s] Expected 1 result (deleted files filtered), got %d", indexType, len(results))
 	}
 
 	if results[0].Path != "/test.txt" {
-		t.Errorf("Expected /test.txt, got %s", results[0].Path)
+		t.Errorf("[%s] Expected /test.txt, got %s", indexType, results[0].Path)
+	}
+}
+
+func TestIndexType(t *testing.T) {
+	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
+
+	// Test default (should be trie)
+	idx := NewIndexer(logger)
+	if idx.GetIndexType() != IndexTypeTrie {
+		t.Errorf("Expected default index type to be trie, got %s", idx.GetIndexType())
+	}
+
+	// Test explicit trie
+	idxTrie := NewIndexerWithType(logger, IndexTypeTrie)
+	if idxTrie.GetIndexType() != IndexTypeTrie {
+		t.Errorf("Expected trie index type, got %s", idxTrie.GetIndexType())
+	}
+
+	// Test explicit flat
+	idxFlat := NewIndexerWithType(logger, IndexTypeFlat)
+	if idxFlat.GetIndexType() != IndexTypeFlat {
+		t.Errorf("Expected flat index type, got %s", idxFlat.GetIndexType())
+	}
+}
+
+func BenchmarkPrefixSearch_Trie(b *testing.B) {
+	benchmarkPrefixSearch(b, IndexTypeTrie)
+}
+
+func BenchmarkPrefixSearch_Flat(b *testing.B) {
+	benchmarkPrefixSearch(b, IndexTypeFlat)
+}
+
+func benchmarkPrefixSearch(b *testing.B, indexType IndexType) {
+	logger := log.New(os.Stdout, "[BENCH] ", log.LstdFlags)
+	idx := NewIndexerWithType(logger, indexType)
+
+	// Add 1000 files
+	for i := 0; i < 1000; i++ {
+		metadata := types.FileMetadata{
+			Name:        "test.txt",
+			Path:        "/docs/subdir/test.txt",
+			Size:        100,
+			ContentType: "text/plain",
+			ModifiedAt:  time.Now(),
+			Checksum:    "abc123",
+		}
+		idx.AddFile(metadata.Path, metadata)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		idx.PrefixSearch("/docs/")
 	}
 }
