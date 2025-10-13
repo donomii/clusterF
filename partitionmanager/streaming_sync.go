@@ -213,7 +213,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 			}
 
 			partitionKey := HashToPartition(metadata.Path)
-			holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
+			holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionKey, pm.deps.NodeID)
 
 			// Get existing partitiontime
 			dataPoint := pm.deps.Frogpond.GetDataPoint(holderKey)
