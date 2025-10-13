@@ -1016,17 +1016,22 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 }
 
 func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
+	/*
+		// Get partition stats without holding the main mutex
+		var partitionStats types.PartitionStatistics
+		if c.partitionManager != nil {
+			c.debugf("[STATUS] Getting partition stats")
 
-	// Get partition stats without holding the main mutex
-	var partitionStats types.PartitionStatistics
-	if c.partitionManager != nil {
-		c.debugf("[STATUS] Getting partition stats")
-		partitionStats = c.partitionManager.GetPartitionStats()
-		c.debugf("[STATUS] Got partition stats: %+v", partitionStats)
-	} else {
-		c.debugf("[STATUS] PartitionManager is nil")
-		partitionStats = types.PartitionStatistics{}
-	}
+			fmt.Printf("!!!\n")
+			partitionStats = c.partitionManager.GetPartitionStats()
+
+			fmt.Printf("Got partition stats: %+v\n", partitionStats)
+			c.debugf("[STATUS] Got partition stats: %+v", partitionStats)
+		} else {
+			c.debugf("[STATUS] PartitionManager is nil")
+			partitionStats = types.PartitionStatistics{}
+		}
+	*/
 
 	// Get replication factor safely
 	var rf interface{} = DefaultRF
@@ -1048,12 +1053,12 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Data_dir:           c.DataDir,
 		Http_port:          c.HTTPDataPort,
 		Replication_factor: rf.(int),
-		Partition_stats:    partitionStats,
-		Current_file:       currentFile,
+		//Partition_stats:    partitionStats,
+		Current_file: currentFile,
 	}
 
 	// Debug: log what we're sending
-	c.debugf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.NodeId, status.Replication_factor, partitionStats)
+	//c.debugf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.NodeId, status.Replication_factor, partitionStats)
 
 	w.Header().Set("Content-Type", "application/json")
 	c.debugf("[STATUS] Set headers")

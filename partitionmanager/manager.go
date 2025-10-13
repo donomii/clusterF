@@ -757,7 +757,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 	if !pm.hasFrogpond() {
 		return nil
 	}
-
+	
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 
 	// Get all holder entries for this partition
@@ -779,6 +779,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 		nodeID := strings.TrimPrefix(string(dp.Key), holderPrefix)
 		holder := types.NodeID(nodeID)
 
+		/* FIXME
 		// Check if the node is active in nodes/ section
 		if !pm.isNodeActive(holder) {
 			pm.debugf("[PARTITION] Holder %s for partition %s not in active nodes, removing from holders list", holder, partitionID)
@@ -787,6 +788,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 			pm.sendUpdates(updates)
 			continue
 		}
+		*/
 
 		holders = append(holders, holder)
 
@@ -826,14 +828,14 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 
 // getAllPartitions returns all known partitions from CRDT using individual holder keys
 func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionInfo {
+
 	if !pm.hasFrogpond() {
 		return map[types.PartitionID]*PartitionInfo{}
 	}
 
 	// Get all partition holder entries
 	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("partitions/")
-	partitionMap := make(map[types.PartitionID]bool) // partitionID -> nodeID -> data
-
+	result := make(map[types.PartitionID]*PartitionInfo)
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
@@ -847,15 +849,7 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionI
 
 		partitionID := types.PartitionID(parts[1])
 
-		partitionMap[partitionID] = true
-	}
-
-	// Convert to PartitionInfo objects
-	result := make(map[types.PartitionID]*PartitionInfo)
-	for partitionID, _ := range partitionMap {
-
 		result[types.PartitionID(partitionID)] = pm.getPartitionInfo(partitionID)
-
 	}
 
 	return result
@@ -1272,14 +1266,17 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 
 		// Check that all holders are active nodes
 
-		for _, holder := range info.Holders {
-			if !pm.isNodeActive(holder) {
-				// Remove inactive holder from CRDT
-				pm.debugf("[PARTITION] Removing inactive holder %s from partition %s", holder, info.ID)
-				updates := pm.deps.Frogpond.DeleteDataPoint(fmt.Sprintf("partitions/%s/holders/%s", info.ID, holder))
-				pm.sendUpdates(updates)
+		//FIXME
+		/*
+			for _, holder := range info.Holders {
+				if !pm.isNodeActive(holder) {
+					// Remove inactive holder from CRDT
+					pm.debugf("[PARTITION] Removing inactive holder %s from partition %s", holder, info.ID)
+					updates := pm.deps.Frogpond.DeleteDataPoint(fmt.Sprintf("partitions/%s/holders/%s", info.ID, holder))
+					pm.sendUpdates(updates)
+				}
 			}
-		}
+		*/
 		if len(info.Holders) < currentRF {
 			underReplicated++
 			// Check if we need to sync this partition (we don't have it but should)

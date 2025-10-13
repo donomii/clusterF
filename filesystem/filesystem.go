@@ -108,9 +108,6 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 
 // StoreFileWithModTime stores a file using an explicit modification time
 func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) error {
-	if err := fs.validatePath(path); err != nil {
-		return err
-	}
 
 	// Calculate checksum for file integrity
 	checksum := calculateChecksum(content)
@@ -314,24 +311,6 @@ func (fs *ClusterFileSystem) DeleteFile(ctx context.Context, path string) error 
 		return fmt.Errorf("failed to delete file: %v", err)
 	}
 
-	return nil
-}
-
-// Helper functions
-func (fs *ClusterFileSystem) validatePath(path string) error {
-	if len(path) > MaxPathLen {
-		return fmt.Errorf("path too long")
-	}
-	if strings.Contains(path, "..") {
-		return fmt.Errorf("invalid path")
-	}
-	if !strings.HasPrefix(path, "/") {
-		return fmt.Errorf("path must be absolute")
-	}
-	name := filepath.Base(path)
-	if len(name) > MaxFileNameLen {
-		return fmt.Errorf("filename too long")
-	}
 	return nil
 }
 
