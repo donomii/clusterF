@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/donomii/clusterF/syncmap"
 )
 
 // Shared sentinel errors for filesystem operations.
@@ -50,6 +52,8 @@ type DiscoveryManagerLike interface {
 
 	// GetPeers returns a list of all known peers
 	GetPeers() []*PeerInfo
+	GetPeerMap() *syncmap.SyncMap[string, *PeerInfo]
+	// AddPeer adds a new peer to the discovery manager. It will not add if it
 
 	SetTimings(broadcastInterval, peerTimeout time.Duration)
 

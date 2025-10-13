@@ -64,7 +64,7 @@ func NewDiscoveryManager(nodeID string, httpPort int, discoveryPort int, tm *thr
 		logger:            logger,
 		peers:             syncmap.NewSyncMap[string, *types.PeerInfo](),
 		broadcastInterval: 5 * time.Second,
-		peerTimeout:       15 * time.Second,
+		peerTimeout:       30 * time.Second, // The peer timeout must be larger than the peer rebroadcast
 		threadManager:     tm,
 		debug:             false,
 	}
@@ -169,6 +169,10 @@ func (dm *DiscoveryManager) GetPeers() []*types.PeerInfo {
 		return true
 	})
 	return peers
+}
+
+func (dm *DiscoveryManager) GetPeerMap() *syncmap.SyncMap[string, *types.PeerInfo] {
+	return dm.peers
 }
 
 // GetPeerCount returns the number of active peers (excluding ourselves)
@@ -292,13 +296,10 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 		LastSeen: time.Now(),
 	}
 
-	_, isNew := dm.peers.LoadOrStore(nodeID, peer)
-	if !isNew {
-		dm.peers.Store(nodeID, peer)
-	}
-	isNew = !isNew
+	_, isKnown := dm.peers.Load(nodeID)
+	dm.peers.Store(nodeID, peer)
 
-	if isNew {
+	if !isKnown {
 		dm.Debugf("Discovered new peer: %s at %s:%d (seen by %s)", nodeID, peer.Address, httpPort, dm.nodeID)
 	}
 }

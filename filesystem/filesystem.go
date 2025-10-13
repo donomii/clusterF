@@ -187,11 +187,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	}
 
 	// Get discovery peers to match nodeIDs to addresses
-	peers := fs.cluster.DiscoveryManager().GetPeers()
-	peerMap := make(map[string]*types.PeerInfo)
-	for _, peer := range peers {
-		peerMap[peer.NodeID] = peer
-	}
+	peerMap := fs.cluster.DiscoveryManager().GetPeerMap()
 
 	// Try forwarding to target nodes until one succeeds
 	var lastErr error
@@ -200,18 +196,23 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 	modTime, size, metaErr := decodeForwardedMetadata(metadataJSON)
 
+	fs.debugf("Uploading %v to %v nodes", path, len(targetNodes))
 	for _, nodeID := range targetNodes {
-		peer, ok := peerMap[nodeID]
+		fs.debugf("Uploading %v to %v", path, nodeID)
+		peer, ok := peerMap.Load(nodeID)
 		if !ok {
 			fs.debugf("[FILES] Node %s not found in discovery peers", nodeID)
+			lastErr = fmt.Errorf("[FILES] Node %s not found in discovery peers", nodeID)
 			continue
 		}
 
 		if metaErr == nil {
 			upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size)
 			if err == nil && upToDate {
-				fs.debugf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
+				msg := fmt.Sprintf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
 				skippedPeers++
+				lastErr = fmt.Errorf(msg)
+				fs.debugf(msg)
 				continue
 			}
 			if err != nil {
@@ -247,8 +248,9 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 			forwarded = true
 			return nil // Success
 		}
+		respBody, _ := io.ReadAll(resp.Body)
+		lastErr = fmt.Errorf("peer (%v) store query returned %v(%v) '%v'", peer.NodeID, resp.StatusCode, resp.Status, respBody)
 
-		lastErr = fmt.Errorf("peer %s returned %d", peer.NodeID, resp.StatusCode)
 	}
 
 	if forwarded || skippedPeers == len(targetNodes) {
@@ -256,7 +258,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	}
 
 	if lastErr == nil {
-		lastErr = fmt.Errorf("no storage nodes accepted upload")
+		lastErr = fmt.Errorf("no storage nodes accepted upload(forwarded=%v, skipped=%v)", forwarded, skippedPeers)
 	}
 
 	return fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
