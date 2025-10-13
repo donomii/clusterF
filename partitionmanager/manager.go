@@ -1300,6 +1300,41 @@ func (pm *PartitionManager) FileStore() *FileStore {
 	return pm.deps.FileStore
 }
 
+// UpdateAllLocalPartitionsMetadata scans all local partitions and updates their metadata
+func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context) {
+	if pm.deps.NoStore {
+		pm.debugf("[PARTITION] No-store mode: skipping initial partition metadata update")
+		return
+	}
+
+	// Get all unique partition IDs from the local store
+	partitions := make(map[types.PartitionID]bool)
+	pm.deps.FileStore.ScanMetadata("", func(key string, metadata []byte) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		partitionID := types.ExtractPartitionID(key)
+		if partitionID != "" {
+			partitions[partitionID] = true
+		}
+		return nil
+	})
+
+	pm.logf("[PARTITION] Found %d local partitions to update metadata for", len(partitions))
+
+	// Update metadata for each partition
+	for partitionID := range partitions {
+		if ctx.Err() != nil {
+			pm.logf("[PARTITION] Context cancelled, stopping partition metadata update")
+			return
+		}
+		pm.updatePartitionMetadata(ctx, partitionID)
+	}
+
+	pm.logf("[PARTITION] Completed metadata update for %d partitions", len(partitions))
+}
+
 func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 	// Count local partitions by scanning metadata store
 	localPartitions := make(map[string]bool)

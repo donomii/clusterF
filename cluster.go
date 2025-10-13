@@ -1449,6 +1449,9 @@ func (c *Cluster) runInitialSyncCycle(ctx context.Context) {
 		c.debugf("[SYNC_RETRY] Attempting full sync with %s", peer.NodeID)
 		if c.requestFullStoreFromPeer(peer) {
 			c.Logger().Printf("[SYNC_RETRY] Successfully synced with %s", peer.NodeID)
+
+			// After CRDT sync completes, trigger initial partition metadata update
+			c.threadManager.StartThreadOnce("initial-partition-metadata-update", c.initialPartitionMetadataUpdate)
 			break
 		}
 
@@ -1533,4 +1536,11 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 
 	c.Logger().Printf("[INITIAL_SYNC] Successfully synced %d data points from %s", len(peerData), peer.NodeID)
 	return true
+}
+
+// initialPartitionMetadataUpdate updates metadata for all local partitions after CRDT sync
+func (c *Cluster) initialPartitionMetadataUpdate(ctx context.Context) {
+	c.Logger().Printf("[INITIAL_METADATA] Starting initial partition metadata update for all local partitions")
+	c.partitionManager.UpdateAllLocalPartitionsMetadata(ctx)
+	c.Logger().Printf("[INITIAL_METADATA] Completed initial partition metadata update")
 }
