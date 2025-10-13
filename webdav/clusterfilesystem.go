@@ -134,7 +134,7 @@ func (cfs *ClusterFileSystem) shouldServePath(clusterPath string) bool {
 		return true
 	}
 	// With filter - only serve paths within the cluster directory
-	return clusterPath == cfs.clusterDir || strings.HasPrefix(clusterPath, cfs.clusterDir+"/")
+	return clusterPath == cfs.clusterDir || strings.HasPrefix(clusterPath, cfs.clusterDir)
 }
 
 // Open opens a file for reading

@@ -1217,20 +1217,33 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 		}
 		//pm.debugf("[PARTITION] Partition %s has %d holders (need %d): %v", partitionID, len(info.Holders), currentRF, info.Holders)
 
-		// Check if we already have this partition by scanning metadata store
-		hasPartition := false
-		prefix := fmt.Sprintf("partition:%s:", partitionID)
-		pm.deps.FileStore.ScanMetadata(prefix, func(key string, meta []byte) error {
-			if strings.HasPrefix(string(key), prefix) {
-				hasPartition = true
-				return fmt.Errorf("stop") // Break the loop
-			}
-			return nil
-		})
+		/*
+				// Check if we already have this partition by scanning metadata store
+				hasPartition := false
+				prefix := fmt.Sprintf("partition:%s:", partitionID)
+				pm.deps.FileStore.ScanMetadata(prefix, func(key string, meta []byte) error {
+					if strings.HasPrefix(string(key), prefix) {
+						hasPartition = true
+						return fmt.Errorf("stop") // Break the loop
+					}
+					return nil
+				})
 
-		//pm.debugf("[PARTITION] Partition %s: hasPartition=%v (checked prefix %s)", partitionID, hasPartition, prefix)
-		if hasPartition {
-			continue // We already have it
+
+			//pm.debugf("[PARTITION] Partition %s: hasPartition=%v (checked prefix %s)", partitionID, hasPartition, prefix)
+			if hasPartition {
+				continue // We already have it
+			}
+		*/
+
+		// Check if we already have this parition by looking in the CRDT
+
+		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
+		holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
+		dps := frogpond.ThisNode.GetAllMatchingPrefix(holderKey)
+		if len(dps) > 0 {
+			// We are already registered as a holder
+			continue
 		}
 
 		// Find all available holders to sync from (must be different nodes and currently available)
