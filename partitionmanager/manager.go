@@ -757,7 +757,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 	if !pm.hasFrogpond() {
 		return nil
 	}
-	
+
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 
 	// Get all holder entries for this partition
@@ -779,7 +779,6 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 		nodeID := strings.TrimPrefix(string(dp.Key), holderPrefix)
 		holder := types.NodeID(nodeID)
 
-		/* FIXME
 		// Check if the node is active in nodes/ section
 		if !pm.isNodeActive(holder) {
 			pm.debugf("[PARTITION] Holder %s for partition %s not in active nodes, removing from holders list", holder, partitionID)
@@ -788,7 +787,6 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 			pm.sendUpdates(updates)
 			continue
 		}
-		*/
 
 		holders = append(holders, holder)
 
@@ -828,14 +826,14 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 
 // getAllPartitions returns all known partitions from CRDT using individual holder keys
 func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionInfo {
-
 	if !pm.hasFrogpond() {
 		return map[types.PartitionID]*PartitionInfo{}
 	}
 
 	// Get all partition holder entries
 	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("partitions/")
-	result := make(map[types.PartitionID]*PartitionInfo)
+	partitionMap := make(map[types.PartitionID]map[types.NodeID]types.HolderData) // partitionID -> nodeID -> data
+
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
@@ -848,8 +846,53 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionI
 		}
 
 		partitionID := types.PartitionID(parts[1])
+		nodeId := types.NodeID(parts[3])
+		var data types.HolderData
+		err := json.Unmarshal(dp.Value, &data)
+		if err != nil {
+			fmt.Printf("Error: cannot unmarshal holder data: %v", err)
+		}
 
-		result[types.PartitionID(partitionID)] = pm.getPartitionInfo(partitionID)
+		_, ok := partitionMap[partitionID]
+		if !ok {
+			partitionMap[partitionID] = make(map[types.NodeID]types.HolderData)
+		}
+
+		partitionMap[partitionID][nodeId] = data
+	}
+
+	// Convert to PartitionInfo objects
+
+	result := make(map[types.PartitionID]*PartitionInfo)
+	for partitionID, nodeData := range partitionMap {
+		var holders []types.NodeID
+		var totalFiles int
+		var maxTimestamp time.Time
+		checksums := make(map[types.NodeID]string)
+
+		for nodeID, data := range nodeData {
+			holders = append(holders, types.NodeID(nodeID))
+
+			if data.Last_update.After(maxTimestamp) {
+				maxTimestamp = data.Last_update
+			}
+
+			if data.File_count > totalFiles {
+				totalFiles = data.File_count
+			}
+
+			checksums[types.NodeID(nodeID)] = data.Checksum
+
+		}
+
+		result[types.PartitionID(partitionID)] = &PartitionInfo{
+			ID:           types.PartitionID(partitionID),
+			LastModified: maxTimestamp,
+			FileCount:    totalFiles,
+			Holders:      holders,
+			Checksums:    checksums,
+			HolderData:   nodeData,
+		}
 	}
 
 	return result
