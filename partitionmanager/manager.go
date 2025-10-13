@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 	"github.com/donomii/frogpond"
@@ -46,7 +47,8 @@ type Dependencies struct {
 }
 
 type PartitionManager struct {
-	deps Dependencies
+	deps        Dependencies
+	ReindexList syncmap.SyncMap[types.PartitionID, bool]
 }
 
 type PartitionVersion int64
@@ -64,6 +66,23 @@ type PeerLoader func(types.NodeID) (*types.PeerInfo, bool)
 
 func NewPartitionManager(deps Dependencies) *PartitionManager {
 	return &PartitionManager{deps: deps}
+}
+
+func (pm *PartitionManager) MarkForReindex(pId types.PartitionID) {
+	pm.ReindexList.Store(pId, true)
+}
+
+func (pm *PartitionManager) RunReindex(ctx context.Context) {
+	pm.ReindexList.Range(func(key types.PartitionID, value bool) bool {
+
+		if value {
+			pm.ReindexList.Store(key, false)
+			pm.deps.Logger.Printf("Starting reindex of partition %v", key)
+			pm.updatePartitionMetadata(ctx, key)
+		}
+		return true
+	})
+
 }
 
 func (pm *PartitionManager) debugf(format string, args ...interface{}) {
@@ -591,8 +610,8 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 
 	// Note: We don't delete the entry entirely, just mark as deleted
 
-	// Update partition metadata in CRDT
-	pm.updatePartitionMetadata(pm.deps.Cluster.AppContext(), partitionID)
+	// Mark the partition for re-scan
+	pm.MarkForReindex(partitionID)
 
 	pm.logf("[PARTITION] Marked file %s as deleted in partition %s", path, partitionID)
 	return nil

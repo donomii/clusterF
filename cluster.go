@@ -733,6 +733,7 @@ func (c *Cluster) Start() {
 	c.threadManager.StartThread("node-pruning", c.periodicNodePruning)
 	c.threadManager.StartThread("discovery-manager", c.runDiscoveryManager)
 	c.threadManager.StartThread("http-server", c.startHTTPServer)
+	c.threadManager.StartThread("partition-reindex", c.runPartitionReindex)
 	c.debugf("Started all threads")
 }
 
@@ -774,6 +775,20 @@ func (c *Cluster) runIndexerImport(ctx context.Context) {
 		c.Logger().Printf("[WARNING] Failed to import filestore into indexer: %v", err)
 	}
 	<-ctx.Done()
+}
+
+func (c *Cluster) runPartitionReindex(ctx context.Context) {
+	c.partitionManager.RunReindex(ctx)
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.partitionManager.RunReindex(ctx)
+		}
+	}
 }
 
 func (c *Cluster) AppContext() context.Context {
