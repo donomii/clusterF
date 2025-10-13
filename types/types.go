@@ -187,6 +187,12 @@ type TranscodeStatistics struct {
 	CacheDir     string `json:"cache_dir"`
 }
 
+type HolderData struct {
+	Last_update time.Time `json:"last_update"`
+	File_count  int       `json:"file_count"`
+	Checksum    string    `json:"checksum"`
+}
+
 func CollapseToDirectory(relPath, basePath string) string {
 	// Clip off the prefix path
 	relPath = strings.TrimPrefix(relPath, basePath)

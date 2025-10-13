@@ -54,12 +54,12 @@ type PartitionManager struct {
 type PartitionVersion int64
 
 type PartitionInfo struct {
-	ID           types.PartitionID       `json:"id"`
-	Version      PartitionVersion        `json:"version"`
-	LastModified int64                   `json:"last_modified"`
-	FileCount    int                     `json:"file_count"`
-	Holders      []types.NodeID          `json:"holders"`
-	Checksums    map[types.NodeID]string `json:"checksums"`
+	ID           types.PartitionID                 `json:"id"`
+	LastModified time.Time                         `json:"last_modified"`
+	FileCount    int                               `json:"file_count"`
+	Holders      []types.NodeID                    `json:"holders"`
+	Checksums    map[types.NodeID]string           `json:"checksums"`
+	HolderData   map[types.NodeID]types.HolderData `json:"holder_data"`
 }
 
 type PeerLoader func(types.NodeID) (*types.PeerInfo, bool)
@@ -220,7 +220,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	}
 
 	// Update partition metadata in CRDT
-	pm.updatePartitionMetadata(pm.deps.Cluster.AppContext(), partitionID)
+	pm.MarkForReindex(partitionID)
 
 	pm.logf("[PARTITION] Stored file %s  (%d bytes)", fileKey, len(fileContent))
 
@@ -766,9 +766,10 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 
 	var holders []types.NodeID
 	var totalFiles int
-	maxTimestamp := int64(0)
+	var maxTimestamp time.Time
 	checksums := make(map[types.NodeID]string)
 
+	holderMap := make(map[types.NodeID]types.HolderData)
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
@@ -790,24 +791,23 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 		holders = append(holders, holder)
 
 		// Parse holder data
-		var holderData map[string]interface{}
+		var holderData types.HolderData
 		if err := json.Unmarshal(dp.Value, &holderData); err != nil {
 			pm.errorf(dp.Value, "corrupt holder data")
 			continue
 		}
-		if joinedAt, ok := holderData["last_update"].(float64); ok {
-			if int64(joinedAt) > maxTimestamp {
-				maxTimestamp = int64(joinedAt)
-			}
+
+		if holderData.Last_update.After(maxTimestamp) {
+			maxTimestamp = holderData.Last_update
 		}
-		if fileCount, ok := holderData["file_count"].(float64); ok {
-			if int(fileCount) > totalFiles {
-				totalFiles = int(fileCount) // Use the highest file count
-			}
+
+		fileCount := holderData.File_count
+		if int(fileCount) > totalFiles {
+			totalFiles = int(fileCount) // Use the highest file count
 		}
-		if checksum, ok := holderData["checksum"].(string); ok {
-			checksums[holder] = checksum
-		}
+
+		checksums[holder] = holderData.Checksum
+
 	}
 
 	if len(holders) == 0 {
@@ -816,11 +816,11 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 
 	return &PartitionInfo{
 		ID:           partitionID,
-		Version:      PartitionVersion(maxTimestamp),
 		LastModified: maxTimestamp,
 		FileCount:    totalFiles,
 		Holders:      holders,
 		Checksums:    checksums,
+		HolderData:   holderMap,
 	}
 }
 
@@ -832,7 +832,7 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionI
 
 	// Get all partition holder entries
 	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("partitions/")
-	partitionMap := make(map[string]map[string]interface{}) // partitionID -> nodeID -> data
+	partitionMap := make(map[types.PartitionID]bool) // partitionID -> nodeID -> data
 
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
@@ -845,55 +845,17 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionI
 			continue
 		}
 
-		partitionID := parts[1]
-		nodeID := parts[3]
+		partitionID := types.PartitionID(parts[1])
 
-		if partitionMap[partitionID] == nil {
-			partitionMap[partitionID] = make(map[string]interface{})
-		}
-
-		var holderData map[string]interface{}
-		if err := json.Unmarshal(dp.Value, &holderData); err != nil {
-			pm.errorf(dp.Value, "corrupt holder data in getAllPartitions")
-			continue
-		}
-		partitionMap[partitionID][nodeID] = holderData
+		partitionMap[partitionID] = true
 	}
 
 	// Convert to PartitionInfo objects
 	result := make(map[types.PartitionID]*PartitionInfo)
-	for partitionID, nodeData := range partitionMap {
-		var holders []types.NodeID
-		var totalFiles int
-		maxTimestamp := int64(0)
-		checksums := make(map[types.NodeID]string)
+	for partitionID, _ := range partitionMap {
 
-		for nodeID, data := range nodeData {
-			holders = append(holders, types.NodeID(nodeID))
+		result[types.PartitionID(partitionID)] = pm.getPartitionInfo(partitionID)
 
-			if holderData, ok := data.(map[string]interface{}); ok {
-				if joinedAt, ok := holderData["last_update"].(float64); ok {
-					if int64(joinedAt) > maxTimestamp {
-						maxTimestamp = int64(joinedAt)
-					}
-				}
-				if fileCount, ok := holderData["file_count"].(float64); ok {
-					totalFiles = int(fileCount)
-				}
-				if checksum, ok := holderData["checksum"].(string); ok {
-					checksums[types.NodeID(nodeID)] = checksum
-				}
-			}
-		}
-
-		result[types.PartitionID(partitionID)] = &PartitionInfo{
-			ID:           types.PartitionID(partitionID),
-			Version:      PartitionVersion(maxTimestamp),
-			LastModified: maxTimestamp,
-			FileCount:    totalFiles,
-			Holders:      holders,
-			Checksums:    checksums,
-		}
 	}
 
 	return result
@@ -1173,29 +1135,28 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 		partitionKeys[i], partitionKeys[j] = partitionKeys[j], partitionKeys[i]
 	})
 
+	ourNodeId := pm.deps.NodeID
+
 	// Find partitions that are under-replicated or need syncing
 	for _, partitionID := range partitionKeys {
 		info := allPartitions[partitionID]
 		if len(info.Holders) >= currentRF {
-			// Check if we have this partition and if our checksum matches other holders
+			// Check if we have this partition and if our modifiedAt timestamp matches other holders
 			hasPartition := false
-			var ourChecksum string
-			holderPrefix := fmt.Sprintf("partitions/%s/holders/%s", partitionID, pm.deps.NodeID)
-			holders := pm.deps.Frogpond.GetAllMatchingPrefix(holderPrefix)
-			if len(holders) > 0 && !holders[0].Deleted {
+			ourHolderData, ok := info.HolderData[ourNodeId]
+
+			if ok {
 				hasPartition = true
 			}
 
 			if hasPartition {
-				// Calculate our checksum
-				ourChecksum = pm.calculatePartitionChecksum(ctx, partitionID)
 
-				// Compare with other holders' checksums
+				// Compare with other holders' last modified
 				needSync := false
 				for holderID, holderChecksum := range info.Checksums {
-					if holderID != pm.deps.NodeID && holderChecksum != "" && holderChecksum != ourChecksum {
-						pm.debugf("[PARTITION] Checksum mismatch for %s: ours=%s, %s=%s",
-							partitionID, ourChecksum, holderID, holderChecksum)
+					if holderID != ourNodeId && !info.LastModified.Equal(ourHolderData.Last_update) {
+						pm.debugf("[PARTITION] Timestamp mismatch for %s: ours=%s, %s=%s",
+							partitionID, ourHolderData.Last_update, holderID, holderChecksum)
 						needSync = true
 						break
 					}

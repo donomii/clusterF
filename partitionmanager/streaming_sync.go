@@ -103,7 +103,7 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 		flusher.Flush()
 	}
 
-	pm.updatePartitionMetadata(pm.deps.Cluster.AppContext(), partitionID)
+	pm.MarkForReindex(partitionID)
 
 	pm.debugf("[PARTITION] Completed streaming %d entries for partition %s", entriesStreamed, partitionID)
 }
@@ -206,6 +206,34 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 			}
 			syncCount++
 
+			var metadata types.FileMetadata
+			err := json.Unmarshal(entry.Metadata, &metadata)
+			if err != nil {
+				pm.logf("corrupt metadata in transfer: %v", string(entry.Metadata))
+			}
+
+			partitionKey := HashToPartition(metadata.Path)
+			holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
+
+			// Get existing partitiontime
+			dataPoint := pm.deps.Frogpond.GetDataPoint(holderKey)
+			data := dataPoint.Value
+
+			var currentHolderData types.HolderData
+			json.Unmarshal(data, &currentHolderData)
+
+			if metadata.ModifiedAt.After(currentHolderData.Last_update) {
+				holderData := types.HolderData{
+					Last_update: metadata.ModifiedAt,
+					File_count:  currentHolderData.File_count, //FIXME detect if we're updating or inserting for the first time
+					Checksum:    "",
+				}
+				holderJSON, _ := json.Marshal(holderData)
+
+				// Send  updates to CRDT
+				pm.sendUpdates(pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON))
+			}
+
 			if syncCount%100 == 0 {
 				pm.debugf("[PARTITION] Applied %d entries for partition %s", syncCount, partitionID)
 			}
@@ -213,7 +241,7 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 	}
 
 	// Update our partition metadata
-	pm.updatePartitionMetadata(pm.deps.Cluster.AppContext(), partitionID)
+	pm.MarkForReindex(partitionID)
 
 	pm.debugf("[PARTITION] Completed sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
 
@@ -288,9 +316,9 @@ func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bo
 		return true
 	}
 
-	// Same timestamp, use version to break tie
-	if remoteTime == localTime {
-		return true
+	// Same timestamp, use alphabetical path name
+	if remoteTime.Equal(localTime) {
+		return localMetadata.Path < remoteMetadata.Path
 	}
 
 	// Local is newer or same
