@@ -264,6 +264,12 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
+	// Exists can be significantly faster depending on the store, so check that first
+	exists := metadataKV.Exists([]byte(key))
+	if !exists {
+		return nil, fmt.Errorf("not found: %v", key)
+	}
+
 	metadata, err := metadataKV.Get([]byte(key))
 	if err != nil {
 		return nil, err
