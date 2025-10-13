@@ -1240,7 +1240,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 		holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-		dps := frogpond.ThisNode.GetAllMatchingPrefix(holderKey)
+		dps := pm.deps.Frogpond.GetAllMatchingPrefix(holderKey)
 		if len(dps) > 0 {
 			// We are already registered as a holder
 			continue
