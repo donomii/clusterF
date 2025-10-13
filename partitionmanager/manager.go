@@ -690,10 +690,10 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		} else {
 			// Add ourselves as a holder
 			holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-			holderData := map[string]interface{}{
-				"last_update": time.Now().Unix(),
-				"file_count":  partitionsCount[partitionID],
-				"checksum":    hex.EncodeToString(hasher.Sum(nil)),
+			holderData := types.HolderData{
+				Last_update: time.Now(),
+				File_count:  partitionsCount[partitionID],
+				Checksum:    hex.EncodeToString(hasher.Sum(nil)),
 			}
 			holderJSON, _ := json.Marshal(holderData)
 
@@ -1075,7 +1075,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			} else {
 				// Nothing to sync, wait a bit before checking again
 				syncInterval := pm.getPartitionSyncInterval()
-				fmt.Printf("Waiting syncInterval %v", syncInterval)
+				pm.debugf("Waiting syncInterval %v", syncInterval)
 				select {
 				case <-ctx.Done():
 					return
