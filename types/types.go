@@ -302,5 +302,6 @@ func ExtractPartitionID(key string) PartitionID {
 			panic("no")
 		}
 	}
+	log.Panicf("attempted to extract partition from something that isn't a key: %v", key)
 	panic("no")
 }
