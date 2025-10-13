@@ -76,7 +76,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	pm.ReindexList.Range(func(key types.PartitionID, value bool) bool {
 
 		if value {
-			pm.ReindexList.Store(key, false)
+			pm.ReindexList.Store(key, false) // Clear the flag before re-indexing, as new items will not necessarily be caught during
 			pm.deps.Logger.Printf("Starting reindex of partition %v", key)
 			pm.updatePartitionMetadata(ctx, key)
 		}
