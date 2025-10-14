@@ -19,21 +19,21 @@ import (
 // handleTranscodeAPI handles transcoding requests for media files
 func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, fmt.Sprintf("Method %s not allowed for transcode API (only GET supported)", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
 
 	// Extract file path from URL
 	path := strings.TrimPrefix(r.URL.Path, "/api/transcode/")
 	if path == "" {
-		http.Error(w, "missing file path", http.StatusBadRequest)
+		http.Error(w, "Missing file path in transcode request - format: /api/transcode/path/to/file", http.StatusBadRequest)
 		return
 	}
 
 	// URL decode the path
 	decodedPath, err := url.PathUnescape(path)
 	if err != nil {
-		http.Error(w, "invalid file path", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Invalid URL-encoded file path: %v", err), http.StatusBadRequest)
 		return
 	}
 
@@ -49,7 +49,7 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if transcodeFormat != "web" {
-		http.Error(w, "only 'web' format supported", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Unsupported transcode format '%s' - only 'web' format is supported", transcodeFormat), http.StatusBadRequest)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 	fileData, contentType, err := c.FileSystem.GetFileWithContentType(decodedPath)
 	if err != nil {
 		c.Logger().Printf("[TRANSCODE_API] Failed to get file %s: %v", decodedPath, err)
-		http.Error(w, "file not found", http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("File not found for transcoding: %s", decodedPath), http.StatusNotFound)
 		return
 	}
 	defer fileData.Close()
@@ -104,7 +104,7 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 	transcodedFile, err := os.Open(outputPath)
 	if err != nil {
 		c.Logger().Printf("[TRANSCODE_API] Failed to open transcoded file %s: %v", outputPath, err)
-		http.Error(w, "failed to open transcoded file", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to open transcoded file: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer transcodedFile.Close()
@@ -142,7 +142,7 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 	// Get file info for proper serving
 	stat, err := transcodedFile.Stat()
 	if err != nil {
-		http.Error(w, "failed to stat transcoded file", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to get transcoded file info: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -229,7 +229,7 @@ func (c *Cluster) serveFileWithSeeker(w http.ResponseWriter, r *http.Request, fi
 		ranges, err := parseRange(rangeHeader, size)
 		if err != nil || len(ranges) != 1 {
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
-			http.Error(w, "invalid range", http.StatusRequestedRangeNotSatisfiable)
+			http.Error(w, fmt.Sprintf("Invalid HTTP Range header (size=%d): %s", size, rangeHeader), http.StatusRequestedRangeNotSatisfiable)
 			return
 		}
 
@@ -342,7 +342,7 @@ func (c *Cluster) serveFile(w http.ResponseWriter, r *http.Request, reader io.Re
 // handleTranscodeStats returns transcoder cache statistics
 func (c *Cluster) handleTranscodeStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, fmt.Sprintf("Method %s not allowed for transcode stats API (only GET supported)", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
 

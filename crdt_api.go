@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
@@ -16,7 +17,7 @@ import (
 // handleCRDTListAPI lists immediate children (dirs and keys) under a prefix, with pagination.
 func (c *Cluster) handleCRDTListAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, fmt.Sprintf("Method %s not allowed for CRDT list API (only GET supported)", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
 	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
@@ -107,12 +108,12 @@ func longestCommonPrefix(a, b string) string {
 // handleCRDTGetAPI returns the value for a specific CRDT key in multiple representations.
 func (c *Cluster) handleCRDTGetAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, fmt.Sprintf("Method %s not allowed for CRDT get API (only GET supported)", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
 	key := r.URL.Query().Get("key")
 	if key == "" {
-		http.Error(w, "missing key", http.StatusBadRequest)
+		http.Error(w, "Missing required 'key' parameter in CRDT get request", http.StatusBadRequest)
 		return
 	}
 	dp := c.frogpond.GetDataPoint(key)
@@ -155,13 +156,13 @@ func (c *Cluster) countCRDTKeys(prefix string) int {
 // handleCRDTSearchAPI searches for keys containing a substring within a prefix.
 func (c *Cluster) handleCRDTSearchAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, fmt.Sprintf("Method %s not allowed for CRDT search API (only GET supported)", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
 	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
 	q := r.URL.Query().Get("q")
 	if q == "" {
-		http.Error(w, "missing q", http.StatusBadRequest)
+		http.Error(w, "Missing required 'q' (query) parameter in CRDT search request", http.StatusBadRequest)
 		return
 	}
 	limit := 100

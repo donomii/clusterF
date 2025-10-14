@@ -195,7 +195,7 @@ func (fs *FileStore) closePartitionStores(metadataKV, contentKV ensemblekv.KvLik
 func (fs *FileStore) Get(key string) (*FileData, error) {
 	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
-		return &FileData{Key: key, Exists: false}, nil
+		return &FileData{Key: key, Exists: false}, fmt.Errorf("Unable to locate storage for partition '%v'", partitionID)
 	}
 
 	fs.debugf("Get: acquiring read lock for partition %s, key %s", partitionID, key)
@@ -210,7 +210,7 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 
 	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
 	if err != nil {
-		return &FileData{Key: key, Exists: false}, nil
+		return &FileData{Key: key, Exists: false}, err
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
@@ -224,7 +224,7 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 		return &FileData{
 			Key:    key,
 			Exists: false,
-		}, nil
+		}, fmt.Errorf("File not found in store: %v, %v", metaErr, contentErr)
 	}
 
 	// Decrypt data

@@ -36,7 +36,7 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		c.handleFilePost(w, r, path)
 	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, fmt.Sprintf("Method %s not allowed for /api/files (supported: GET, HEAD, PUT, DELETE, POST)", r.Method), http.StatusMethodNotAllowed)
 	}
 }
 
@@ -48,7 +48,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		entries, err := c.FileSystem.ListDirectory(path)
 		if err != nil {
 			c.debugf("[FILES] Failed to list directory %s: %v", path, err)
-			http.Error(w, "Not found", http.StatusNotFound)
+			http.Error(w, fmt.Sprintf("Directory not found or listing failed: %s", path), http.StatusNotFound)
 			return
 		}
 
@@ -74,7 +74,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			return
 		case errors.Is(err, types.ErrFileNotFound):
 			c.debugf("[FILES] File %s not found", path)
-			http.Error(w, "Not found", http.StatusNotFound)
+			http.Error(w, fmt.Sprintf("File not found: %s", path), http.StatusNotFound)
 			return
 		default:
 			c.debugf("[FILES] Failed to retrieve %s: %v", path, err)
@@ -123,11 +123,11 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 			return
 		case errors.Is(err, types.ErrFileNotFound):
 			c.debugf("[FILES] HEAD metadata not found for %s", path)
-			http.Error(w, "Not found", http.StatusNotFound)
+			http.Error(w, fmt.Sprintf("File metadata not found: %s", path), http.StatusNotFound)
 			return
 		default:
 			c.debugf("[FILES] Failed HEAD metadata %s: %v", path, err)
-			http.Error(w, "Failed to retrieve metadata", http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("Failed to retrieve metadata for %s: %v", path, err), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -173,7 +173,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 
 	content, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Failed to read request body for %s: %v", path, err), http.StatusBadRequest)
 		return
 	}
 
@@ -196,22 +196,22 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	if isForwarded {
 		metaHeader := r.Header.Get("X-ClusterF-Metadata")
 		if metaHeader == "" {
-			http.Error(w, "Missing forwarded metadata", http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Missing forwarded metadata for file upload: %s", path), http.StatusBadRequest)
 			return
 		}
 		decoded, err := base64.StdEncoding.DecodeString(metaHeader)
 		if err != nil {
-			http.Error(w, "Invalid forwarded metadata encoding", http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Invalid forwarded metadata encoding for %s: %v", path, err), http.StatusBadRequest)
 			return
 		}
 		if err := json.Unmarshal(decoded, &metadata); err != nil {
-			http.Error(w, "Invalid forwarded metadata payload", http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Invalid forwarded metadata payload for %s: %v", path, err), http.StatusBadRequest)
 			return
 		}
 
 		if metadata.ModifiedAt.IsZero() {
 			panic("no")
-			http.Error(w, "ModifiedAt is zero", http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("ModifiedAt timestamp is zero in forwarded metadata for %s", path), http.StatusBadRequest)
 			return
 		}
 	}
@@ -234,7 +234,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	} else {
 		modHeader := r.Header.Get("X-ClusterF-Modified-At")
 		if modHeader == "" {
-			http.Error(w, "Missing X-ClusterF-Modified-At header", http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Missing X-ClusterF-Modified-At header for file upload: %s", path), http.StatusBadRequest)
 			return
 		}
 		localModTime, err := parseHeaderTimestamp(modHeader)
@@ -272,7 +272,7 @@ func parseHeaderTimestamp(value string) (time.Time, error) {
 func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path string) {
 	if err := c.FileSystem.DeleteFile(c.AppContext(), path); err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
-			http.Error(w, "Not found", http.StatusNotFound)
+			http.Error(w, fmt.Sprintf("File not found for deletion: %s", path), http.StatusNotFound)
 			return
 		}
 		http.Error(w, fmt.Sprintf("Failed to delete file: %v", err), http.StatusInternalServerError)
@@ -286,7 +286,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 func (c *Cluster) handleFilePost(w http.ResponseWriter, r *http.Request, path string) {
 	createDir := strings.EqualFold(r.Header.Get("X-Create-Directory"), "true")
 	if !createDir {
-		http.Error(w, "unsupported operation", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Unsupported POST operation for %s (only directory creation supported via X-Create-Directory header)", path), http.StatusBadRequest)
 		return
 	}
 

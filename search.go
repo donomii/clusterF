@@ -167,7 +167,7 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, fmt.Sprintf("Method %s not allowed for search API (only POST supported)", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -178,7 +178,7 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Query == "" {
-		http.Error(w, "query cannot be empty", http.StatusBadRequest)
+		http.Error(w, "Search query cannot be empty - please provide a search term", http.StatusBadRequest)
 		return
 	}
 
