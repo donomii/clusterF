@@ -88,7 +88,7 @@ func setupSearchTest(t *testing.T) (*filesystem.ClusterFileSystem, string) {
 		Debugf:                func(format string, args ...interface{}) { logger.Printf(format, args...) },
 		MetadataKV:            metadataKV,
 		ContentKV:             contentKV,
-		HTTPDataClient:        &http.Client{},
+		HttpDataClient:        &http.Client{},
 		Discovery:             nil,
 		LoadPeer:              func(types.NodeID) (*types.PeerInfo, bool) { return nil, false },
 		Frogpond:              frogpond,

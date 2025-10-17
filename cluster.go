@@ -112,7 +112,7 @@ type Cluster struct {
 
 	// HTTP clients for reuse (prevents goroutine leaks)
 	httpClient     *http.Client // short-lived control traffic
-	httpDataClient *http.Client // long-running data transfers
+	HttpDataClient *http.Client // long-running data transfers
 
 	// File list change notification system
 	fileListSubs map[chan struct{}]bool
@@ -390,7 +390,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		TLSHandshakeTimeout: 10 * time.Second,
 		DisableKeepAlives:   false,
 	}
-	c.httpDataClient = &http.Client{
+	c.HttpDataClient = &http.Client{
 		Timeout:   5 * time.Minute,
 		Transport: dataTransport,
 	}
@@ -467,7 +467,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		Logger:         c.Logger(),
 		Debugf:         c.debugf,
 		FileStore:      fileStore,
-		HTTPDataClient: c.httpDataClient,
+		HttpDataClient: c.HttpDataClient,
 		Discovery:      c.discoveryManager,
 		Cluster:        c,
 		LoadPeer: func(id types.NodeID) (*types.PeerInfo, bool) {
@@ -716,7 +716,7 @@ func storeNodeIDInDataDir(dataDir, nodeID string) error {
 }
 
 func (c *Cluster) DataClient() *http.Client {
-	return c.httpDataClient
+	return c.HttpDataClient
 }
 
 // ---------- Lifecycle ----------
@@ -818,9 +818,9 @@ func (c *Cluster) Stop() {
 			transport.CloseIdleConnections()
 		}
 	}
-	if c.httpDataClient != nil && c.httpDataClient.Transport != nil {
+	if c.HttpDataClient != nil && c.HttpDataClient.Transport != nil {
 		c.debugf("Closing HTTP data client transport")
-		if transport, ok := c.httpDataClient.Transport.(*http.Transport); ok {
+		if transport, ok := c.HttpDataClient.Transport.(*http.Transport); ok {
 			transport.CloseIdleConnections()
 		}
 	}
@@ -1085,7 +1085,7 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debug: log what we're sending
-	c.debugf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.NodeId, len(peerList), stats.Replication_factor)
+	//c.debugf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.NodeId, len(peerList), stats.Replication_factor)
 
 	json.NewEncoder(w).Encode(stats)
 }

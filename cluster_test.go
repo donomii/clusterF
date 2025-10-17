@@ -45,6 +45,13 @@ func waitForAllNodesReady(nodes []*Cluster, timeoutMs int) {
 				baseURL := fmt.Sprintf("http://localhost:%d", n.HTTPDataPort)
 				resp, err := client.Get(baseURL + "/status")
 				if err != nil {
+					fmt.Printf("Node %d (%s) HTTP server not ready: %v (URL: %s)\n", idx, n.NodeId, err, baseURL+"/status")
+					results <- nodeResult{idx, false}
+					return
+				}
+				if resp.StatusCode != http.StatusOK {
+					fmt.Printf("Node %d (%s) HTTP server returned status %d, expected 200 (URL: %s)\n", idx, n.NodeId, resp.StatusCode, baseURL+"/status")
+					clearResponseBody(resp)
 					results <- nodeResult{idx, false}
 					return
 				}
@@ -396,10 +403,16 @@ func waitForClusterReady(t *testing.T, nodes []*Cluster, timeoutMs int) {
 			baseURL := fmt.Sprintf("http://localhost:%d", node.HTTPDataPort)
 			resp, err := client.Get(baseURL + "/status")
 			if err != nil {
+				t.Logf("Node %d (%s) HTTP server connection failed: %v (URL: %s)", i, node.NodeId, err, baseURL+"/status")
+				return false
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Logf("Node %d (%s) HTTP server returned status %d, expected 200 (URL: %s)", i, node.NodeId, resp.StatusCode, baseURL+"/status")
+				clearResponseBody(resp)
 				return false
 			}
 			clearResponseBody(resp)
-			return resp.StatusCode == http.StatusOK
+			return true
 		}, 1000, timeoutMs)
 	}
 
@@ -545,7 +558,8 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 			}
 
 			if resp.StatusCode != http.StatusOK {
-				errCh <- fmt.Errorf("Expected 200, got %d", resp.StatusCode)
+				body, _ := io.ReadAll(resp.Body)
+				errCh <- fmt.Errorf("GET request for file %d (%s) returned %d, expected 200. Response body: %s", i, filePath, resp.StatusCode, string(body))
 				clearResponseBody(resp)
 				return
 			}
@@ -881,7 +895,8 @@ func TestCluster_BasicOperations(t *testing.T) {
 	WaitForConditionT(t, "File upload", func() bool {
 
 		uploadTime := time.Now()
-		req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/files/test-file.txt", bytes.NewReader(testData))
+		url := baseURL + "/api/files/test-file.txt"
+		req, _ := http.NewRequest(http.MethodPut, url, bytes.NewReader(testData))
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 		resp, err := client.Do(req)
@@ -891,20 +906,21 @@ func TestCluster_BasicOperations(t *testing.T) {
 		clearResponseBody(resp)
 
 		if resp.StatusCode != http.StatusCreated {
-			t.Fatalf("Expected 201, got %d", resp.StatusCode)
+			t.Fatalf("Testing file upload, expected StatusCreated, got %d.  File /test-file.txt, target url %v", resp.StatusCode, url)
 		}
 		return resp.StatusCode == http.StatusCreated
 	}, 1000, 10000) // Retry for up to 10 seconds
 
 	// Test GET operation
 	WaitForConditionT(t, "File availability", func() bool {
-		resp, err := client.Get(baseURL + "/api/files/test-file.txt")
+		url := baseURL + "/api/files/test-file.txt"
+		resp, err := client.Get(url)
 		if err != nil {
 			t.Fatalf("GET request failed: %v", err)
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("Expected 200, got %d", resp.StatusCode)
+			t.Fatalf("Testing file get, expected 200, got %d.  File /test-file.txt, target url %v", resp.StatusCode, url)
 		}
 
 		body, err := io.ReadAll(resp.Body)
@@ -923,14 +939,16 @@ func TestCluster_BasicOperations(t *testing.T) {
 	WaitForConditionT(t, "Status endpoint", func() bool {
 		resp, err := client.Get(baseURL + "/status")
 		if err != nil {
-			t.Fatalf("Status request failed: %v", err)
+			t.Logf("Status endpoint connection failed: %v (URL: %s)", err, baseURL+"/status")
+			return false
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Logf("Status endpoint returned status %d, expected 200 (URL: %s, Node: %s)", resp.StatusCode, baseURL+"/status", cluster.NodeId)
+			clearResponseBody(resp)
+			return false
 		}
 		clearResponseBody(resp)
-
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("Expected 200 for status, got %d", resp.StatusCode)
-		}
-		return resp.StatusCode == http.StatusOK
+		return true
 	}, 1000, 10000)
 
 	// Test DELETE operation

@@ -208,8 +208,8 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 			if err == nil && upToDate {
 				msg := fmt.Sprintf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
 				skippedPeers++
-				lastErr = fmt.Errorf(msg)
-				fs.debugf(msg)
+				lastErr = fmt.Errorf("%v", msg)
+				fs.debugf("%v", msg)
 				continue
 			}
 			if err != nil {

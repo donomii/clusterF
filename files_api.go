@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/types"
+	"github.com/donomii/clusterF/urlutil"
 )
 
 // handleFilesAPI handles file system API operations.
@@ -24,9 +25,16 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 		path = "/" + path
 	}
 
+	// Check if this is an internal peer-to-peer request
+	isInternal := r.Header.Get("X-ClusterF-Internal") != ""
+
 	switch r.Method {
 	case http.MethodGet:
-		c.handleFileGet(w, r, path)
+		if isInternal {
+			c.handleFileGetInternal(w, r, path)
+		} else {
+			c.handleFileGet(w, r, path)
+		}
 	case http.MethodHead:
 		c.handleFileHead(w, r, path)
 	case http.MethodPut:
@@ -40,11 +48,13 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path string) {
-	c.debugf("[FILES] GET request for path: %s", path)
+// handleFileGetInternal handles internal peer-to-peer file requests
+// Only queries local storage, never forwards to other peers
+func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, path string) {
+	c.debugf("[FILES] Internal GET request for path: %s", path)
 
 	serveDirectory := func() {
-		c.debugf("[FILES] Directory request for: %s", path)
+		c.debugf("[FILES] Internal directory request for: %s", path)
 		entries, err := c.FileSystem.ListDirectory(path)
 		if err != nil {
 			c.debugf("[FILES] Failed to list directory %s: %v", path, err)
@@ -66,6 +76,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
+	// Only check local storage, never forward to peers
 	content, metadata, err := c.FileSystem.GetFile(path)
 	if err != nil {
 		switch {
@@ -73,7 +84,11 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			serveDirectory()
 			return
 		case errors.Is(err, types.ErrFileNotFound):
-			c.debugf("[FILES] File %s not found", path)
+			c.debugf("[FILES] File %s not found locally", path)
+			http.Error(w, fmt.Sprintf("File not found: %s", path), http.StatusNotFound)
+			return
+		case strings.Contains(fmt.Sprintf("%v", err), "not found for file"): //FIXME better error string detection
+			c.debugf("[FILES] File %s not found locally", path)
 			http.Error(w, fmt.Sprintf("File not found: %s", path), http.StatusNotFound)
 			return
 		default:
@@ -108,6 +123,131 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 	}
 	w.WriteHeader(http.StatusOK)
 	w.Write(content)
+}
+
+// handleFileGet handles external client file requests
+// Queries only the nodes that hold the partition for this file
+func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path string) {
+	c.debugf("[FILES] External GET request for path: %s", path)
+
+	serveDirectory := func() {
+		c.debugf("[FILES] Directory request for: %s", path)
+		entries, err := c.FileSystem.ListDirectory(path)
+		if err != nil {
+			c.debugf("[FILES] Failed to list directory %s: %v", path, err)
+			http.Error(w, fmt.Sprintf("Directory not found or listing failed: %s", path), http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"path":    path,
+			"entries": entries,
+			"count":   len(entries),
+		}
+		json.NewEncoder(w).Encode(response)
+	}
+
+	if strings.HasSuffix(path, "/") {
+		serveDirectory()
+		return
+	}
+
+	// Get partition info to find which nodes hold this file
+	partitionID := c.PartitionManager().CalculatePartitionName(path)
+	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
+
+	if partitionInfo == nil {
+		c.debugf("[FILES] No partition info found for %s (partition %s)", path, partitionID)
+		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition holders)", path), http.StatusNotFound)
+		return
+	}
+
+	if len(partitionInfo.Holders) == 0 {
+		c.debugf("[FILES] No holders registered for partition %s (file %s)", partitionID, path)
+		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition holders)", path), http.StatusNotFound)
+		return
+	}
+
+	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
+
+	// Get peer info for all holders
+	peers := c.DiscoveryManager().GetPeers()
+	peerLookup := make(map[types.NodeID]*types.PeerInfo)
+	for _, peer := range peers {
+		peerLookup[types.NodeID(peer.NodeID)] = peer
+	}
+
+	// Try each holder until we find the file
+	for _, holderID := range partitionInfo.Holders {
+		c.debugf("[FILES] Trying holder %s for file %s", holderID, path)
+
+		// Get peer info for this holder
+		var peer *types.PeerInfo
+		if holderID == c.ID() {
+			// This is us
+			peer = &types.PeerInfo{
+				NodeID:   string(c.ID()),
+				Address:  c.DiscoveryManager().GetLocalAddress(),
+				HTTPPort: c.HTTPPort(),
+			}
+		} else if p, ok := peerLookup[holderID]; ok {
+			peer = p
+		} else {
+			c.debugf("[FILES] No peer info available for holder %s", holderID)
+			continue
+		}
+
+		// Build URL for this peer
+		fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, path)
+		if err != nil {
+			c.debugf("[FILES] Failed to build URL for peer %s: %v", peer.NodeID, err)
+			continue
+		}
+
+		// Create request with internal header
+		req, err := http.NewRequest(http.MethodGet, fileURL, nil)
+		if err != nil {
+			c.debugf("[FILES] Failed to create request for peer %s: %v", peer.NodeID, err)
+			continue
+		}
+		req.Header.Set("X-ClusterF-Internal", "1")
+
+		// Forward any download parameter
+		if r.URL.Query().Get("download") != "" {
+			q := req.URL.Query()
+			q.Set("download", r.URL.Query().Get("download"))
+			req.URL.RawQuery = q.Encode()
+		}
+
+		resp, err := c.HttpDataClient.Do(req)
+		if err != nil {
+			c.debugf("[FILES] Failed to get file from peer %s: %v", peer.NodeID, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			c.debugf("[FILES] Found file %s on holder %s", path, peer.NodeID)
+
+			// Copy all headers from peer response
+			for key, values := range resp.Header {
+				for _, value := range values {
+					w.Header().Add(key, value)
+				}
+			}
+
+			w.WriteHeader(http.StatusOK)
+			io.Copy(w, resp.Body)
+			return
+		}
+
+		c.debugf("[FILES] Holder %s returned status %d for file %s", peer.NodeID, resp.StatusCode, path)
+	}
+
+	// File not found on any registered holder
+	c.debugf("[FILES] File %s not found on any registered holder for partition %s", path, partitionID)
+	http.Error(w, fmt.Sprintf("File not found in cluster: %s", path), http.StatusNotFound)
 }
 
 func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path string) {

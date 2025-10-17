@@ -44,7 +44,18 @@ type PartitionManagerLike interface {
 	GetMetadataFromPartition(path string) (FileMetadata, error)                                           // Get file metadata from partition, including from other nodes
 	CalculatePartitionName(path string) string                                                            // Calculate partition name for a given path
 	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error                             // Scan all files in all partitions, calling fn for each file
+	GetPartitionInfo(partitionID PartitionID) *PartitionInfo
+	RunReindex(ctx context.Context)
+	MarkForReindex(pId PartitionID)
+}
 
+type PartitionInfo struct {
+	ID           PartitionID           `json:"id"`
+	LastModified time.Time             `json:"last_modified"`
+	FileCount    int                   `json:"file_count"`
+	Holders      []NodeID              `json:"holders"`
+	Checksums    map[NodeID]string     `json:"checksums"`
+	HolderData   map[NodeID]HolderData `json:"holder_data"`
 }
 
 // Handles discovering peers on the network
@@ -66,6 +77,8 @@ type DiscoveryManagerLike interface {
 	Stop()
 
 	GetPeerCount() int
+
+	GetLocalAddress() string
 }
 
 // Handles importing and exporting data files to/from disk

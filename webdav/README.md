@@ -1,49 +1,68 @@
-## WebDAV Implementation Summary
+# WebDAV Package - Technical Reference
 
-I have successfully implemented WebDAV support for the clusterF filesystem. Here's what was added:
+## What This Does
+WebDAV server that exposes the cluster filesystem using standard WebDAV protocol.
 
-### Files Created:
-1. `/webdav/clusterfilesystem.go` - WebDAV filesystem adapter for the cluster
-2. `/webdav/server.go` - WebDAV server implementation
-3. `/webdav/go.mod` - Module definition for the webdav package
+## Key Files
+- `server.go` - WebDAV protocol handler
+- `clusterfilesystem.go` - Adapter between WebDAV and cluster filesystem
 
-### Key Features:
-- **Command Line Option**: `--webdav /path/prefix` serves a specific cluster path over WebDAV
-- **Full WebDAV Interface**: Implements all required WebDAV operations:
-  - `Open` - Read files
-  - `Stat` - Get file/directory metadata
-  - `ReadDir` - List directory contents
-  - `Create` - Upload/create files
-  - `RemoveAll` - Delete files/directories
-  - `Mkdir` - Create directories
-  - `Copy` - Copy files/directories
-  - `Move` - Move/rename files/directories
-
-### Path Filtering:
-- When `--webdav /photos` is specified, only cluster files under `/photos` are served
-- Local WebDAV paths are mapped to cluster paths with the prefix
-- Example: WebDAV `/vacation/photo.jpg` → cluster `/photos/vacation/photo.jpg`
-
-### Integration:
-- Added WebDAV module to main go.mod with proper replace directive
-- Updated main.go to accept `--webdav` flag and start WebDAV server on port 8080
-- Updated status message to show WebDAV server information
-- Extended FileSystemLike interface to support additional methods needed by WebDAV
-
-### Usage:
-```bash
-# Serve entire cluster over WebDAV
-./clusterF --webdav ""
-
-# Serve only /photos path prefix over WebDAV  
-./clusterF --webdav "/photos"
-
-# Access via WebDAV client at http://localhost:8080
+## Architecture
+```
+WebDAV Client (Finder, Explorer, etc.)
+    ↓ WebDAV Protocol (RFC 4918)
+WebDAV Handler (golang.org/x/net/webdav)
+    ↓ FileSystem interface
+ClusterFileSystem adapter
+    ↓ Cluster filesystem API
+Partition Manager
 ```
 
-### WebDAV Client Support:
-- Works with any WebDAV client (macOS Finder, Windows Explorer, davfs2, etc.)
-- Supports file upload, download, directory creation, move/copy operations
-- Proper content-type detection and ETag support for caching
+## ClusterFileSystem Adapter
+Implements `webdav.FileSystem` interface:
+```go
+type FileSystem interface {
+    Mkdir(name string, perm os.FileMode) error
+    OpenFile(name string, flag int, perm os.FileMode) (File, error)
+    RemoveAll(name string) error
+    Rename(oldName, newName string) error
+    Stat(name string) (os.FileInfo, error)
+}
+```
 
-The implementation provides a clean bridge between the cluster's distributed filesystem and standard WebDAV clients, allowing seamless integration with existing file management tools.
+Maps to cluster operations:
+- `Mkdir()` → cluster.CreateDirectory()
+- `OpenFile()` → cluster.GetFile() / cluster.StoreFile()
+- `RemoveAll()` → cluster.DeleteFile()
+- `Stat()` → cluster.GetMetadata()
+- `Rename()` → Get + Store + Delete (atomic rename doesn't exist)
+
+## WebDAV Methods Supported
+- **PROPFIND** - Directory listing / file properties
+- **GET** - Download file
+- **PUT** - Upload file
+- **DELETE** - Delete file
+- **MKCOL** - Create directory
+- **MOVE** - Rename/move file
+
+## Important Notes
+- Reads go through partition manager (queries cluster if not local)
+- Writes always go to local node (replication happens separately)
+- Renames are NOT atomic (implemented as copy+delete)
+- No locking support (WebDAV LOCK/UNLOCK ignored)
+- Directory creation is synthetic (no actual directories stored)
+
+## Mount Points
+- macOS Finder: Connect to Server → `http://host:port/webdav/`
+- Windows Explorer: Map Network Drive → `http://host:port/webdav/`
+- Linux: `mount -t davfs http://host:port/webdav/ /mnt/point`
+
+## Notes for Me
+- WebDAV is STATELESS - each request independent
+- No session management
+- Authentication not implemented (add if needed)
+- Large file uploads are streamed (don't load all in memory)
+- Directory listings can be slow (synthesized from file paths)
+- Some WebDAV clients are buggy - test thoroughly
+- The golang.org/x/net/webdav package does most of the work
+- We just provide the FileSystem adapter

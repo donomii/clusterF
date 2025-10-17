@@ -38,7 +38,7 @@ func (sm *SyncMap[K, V]) Delete(key K) {
 	sm.m.Delete(key)
 }
 
-// Range calls fn for each key-value pair
+// Range calls fn for each key-value pair.  Returning false quits the iteration
 func (sm *SyncMap[K, V]) Range(fn func(key K, value V) bool) {
 	sm.m.Range(func(key, value any) bool {
 		return fn(key.(K), value.(V))

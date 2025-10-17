@@ -35,7 +35,7 @@ type Dependencies struct {
 	Logger                *log.Logger
 	Debugf                func(string, ...interface{})
 	FileStore             *FileStore
-	HTTPDataClient        *http.Client
+	HttpDataClient        *http.Client
 	Discovery             types.DiscoveryManagerLike
 	Cluster               types.ClusterLike
 	LoadPeer              PeerLoader
@@ -52,15 +52,6 @@ type PartitionManager struct {
 }
 
 type PartitionVersion int64
-
-type PartitionInfo struct {
-	ID           types.PartitionID                 `json:"id"`
-	LastModified time.Time                         `json:"last_modified"`
-	FileCount    int                               `json:"file_count"`
-	Holders      []types.NodeID                    `json:"holders"`
-	Checksums    map[types.NodeID]string           `json:"checksums"`
-	HolderData   map[types.NodeID]types.HolderData `json:"holder_data"`
-}
 
 type PeerLoader func(types.NodeID) (*types.PeerInfo, bool)
 
@@ -153,8 +144,8 @@ func (pm *PartitionManager) loadPeer(id types.NodeID) (*types.PeerInfo, bool) {
 }
 
 func (pm *PartitionManager) httpClient() *http.Client {
-	if pm.deps.HTTPDataClient != nil {
-		return pm.deps.HTTPDataClient
+	if pm.deps.HttpDataClient != nil {
+		return pm.deps.HttpDataClient
 	}
 	return http.DefaultClient
 }
@@ -254,7 +245,14 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename str
 		return nil, err
 	}
 
-	resp, err := pm.httpClient().Get(fileURL)
+	// Create request with internal header to prevent recursion
+	req, err := http.NewRequest(http.MethodGet, fileURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-ClusterF-Internal", "1")
+
+	resp, err := pm.httpClient().Do(req)
 	if err != nil {
 		pm.debugf("[PARTITION] Failed to get file %s from %s: %v", filename, peer.NodeID, err)
 		return nil, err
@@ -379,7 +377,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 // getFileFromPeers attempts to retrieve a file from peer nodes
 func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, types.FileMetadata, error) {
 	partitionID := HashToPartition(path)
-	partition := pm.getPartitionInfo(partitionID)
+	partition := pm.GetPartitionInfo(partitionID)
 	if partition == nil {
 		return nil, types.FileMetadata{}, fmt.Errorf("partition %s not found for file %s", partitionID, path)
 	}
@@ -388,11 +386,7 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, types.FileMet
 		return nil, types.FileMetadata{}, fmt.Errorf("no holders registered for partition %s", partitionID)
 	}
 
-	peers := pm.getPeers()
-	peerLookup := make(map[types.NodeID]*types.PeerInfo, len(peers))
-	for _, peer := range peers {
-		peerLookup[types.NodeID(peer.NodeID)] = peer
-	}
+	peerLookup := pm.deps.Discovery.GetPeerMap()
 
 	orderedPeers := make([]*types.PeerInfo, 0, len(partition.Holders))
 	seen := make(map[types.NodeID]bool)
@@ -415,7 +409,7 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, types.FileMet
 	}
 
 	for _, holder := range partition.Holders {
-		if peer, ok := peerLookup[holder]; ok {
+		if peer, ok := peerLookup.Load(string(holder)); ok {
 			addPeer(holder, peer)
 			continue
 		}
@@ -429,7 +423,7 @@ func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, types.FileMet
 	}
 
 	if len(orderedPeers) == 0 {
-		if len(peers) == 0 {
+		if peerLookup.Len() == 0 {
 			return nil, types.FileMetadata{}, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
 		}
 		return nil, types.FileMetadata{}, fmt.Errorf("no registered holders available for partition %s", partitionID)
@@ -498,7 +492,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 
 func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadata, error) {
 	partitionID := HashToPartition(path)
-	partition := pm.getPartitionInfo(partitionID)
+	partition := pm.GetPartitionInfo(partitionID)
 	if partition == nil {
 		return types.FileMetadata{}, fmt.Errorf("partition %s not found for file %s", partitionID, path)
 	}
@@ -752,8 +746,8 @@ func (pm *PartitionManager) isNodeActive(nodeID types.NodeID) bool {
 	return true
 }
 
-// getPartitionInfo retrieves partition info from CRDT using individual holder keys
-func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *PartitionInfo {
+// GetPartitionInfo retrieves partition info from CRDT using individual holder keys
+func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *types.PartitionInfo {
 	if !pm.hasFrogpond() {
 		return nil
 	}
@@ -814,7 +808,7 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 		return nil
 	}
 
-	return &PartitionInfo{
+	return &types.PartitionInfo{
 		ID:           partitionID,
 		LastModified: maxTimestamp,
 		FileCount:    totalFiles,
@@ -825,9 +819,9 @@ func (pm *PartitionManager) getPartitionInfo(partitionID types.PartitionID) *Par
 }
 
 // getAllPartitions returns all known partitions from CRDT using individual holder keys
-func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionInfo {
+func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.PartitionInfo {
 	if !pm.hasFrogpond() {
-		return map[types.PartitionID]*PartitionInfo{}
+		return map[types.PartitionID]*types.PartitionInfo{}
 	}
 
 	// Get all partition holder entries
@@ -863,7 +857,7 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionI
 
 	// Convert to PartitionInfo objects
 
-	result := make(map[types.PartitionID]*PartitionInfo)
+	result := make(map[types.PartitionID]*types.PartitionInfo)
 	for partitionID, nodeData := range partitionMap {
 		var holders []types.NodeID
 		var totalFiles int
@@ -885,7 +879,7 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*PartitionI
 
 		}
 
-		result[types.PartitionID(partitionID)] = &PartitionInfo{
+		result[types.PartitionID(partitionID)] = &types.PartitionInfo{
 			ID:           types.PartitionID(partitionID),
 			LastModified: maxTimestamp,
 			FileCount:    totalFiles,

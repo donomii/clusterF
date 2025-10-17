@@ -369,3 +369,30 @@ func (dm *DiscoveryManager) GetDiscoveryStatus() map[string]interface{} {
 		"peer_timeout_ms":       dm.peerTimeout.Milliseconds(),
 	}
 }
+
+// GetLocalAddress returns this node's IP address
+func (dm *DiscoveryManager) GetLocalAddress() string {
+	// Try to get address from our peers map (we store ourselves there)
+	if peer, ok := dm.peers.Load(dm.nodeID); ok {
+		return peer.Address
+	}
+
+	// Fallback: detect local IP by checking network interfaces
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		dm.logger.Printf("Failed to get network interfaces: %v", err)
+		return "127.0.0.1"
+	}
+
+	// Find first non-loopback IPv4 address
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+
+	// Last resort: return loopback
+	return "127.0.0.1"
+}
