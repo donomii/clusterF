@@ -1184,10 +1184,10 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 				// Compare with other holders' last modified
 				needSync := false
-				for holderID, holderChecksum := range info.Checksums {
+				for _, holderID := range info.Holders {
 					if holderID != ourNodeId && !info.LastModified.Equal(ourHolderData.Last_update) {
-						pm.debugf("[PARTITION] Timestamp mismatch for %s: ours=%s, %s=%s",
-							partitionID, ourHolderData.Last_update, holderID, holderChecksum)
+						pm.debugf("[PARTITION] Timestamp mismatch for %s: ours %s=%s, theirs %s=%s",
+							partitionID, ourNodeId, ourHolderData.Last_update, holderID, info.LastModified)
 						needSync = true
 						break
 					}
