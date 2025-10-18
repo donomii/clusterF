@@ -103,6 +103,8 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 	// Build partition counts and checksums for all partitions by scanning the entire store
 	partitionsCount := make(map[types.PartitionID]int)
 	partitionsChecksum := make(map[types.PartitionID]hash.Hash)
+	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
+	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
 	processedFiles := 0
 
 	// Get all partition stores
@@ -142,6 +144,11 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 			if !parsedMetadata.Deleted {
 				// File is not deleted, count it
 				partitionsCount[partitionID] = partitionsCount[partitionID] + 1
+
+				// Track most recent modification time for this partition
+				if parsedMetadata.ModifiedAt.After(partitionsLastUpdate[partitionID]) {
+					partitionsLastUpdate[partitionID] = parsedMetadata.ModifiedAt
+				}
 			}
 
 			// Add to checksum
@@ -189,22 +196,29 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 
 		// Add ourselves as a holder
 		holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-		holderData := types.HolderData{
-			Last_update: time.Now(),
-			File_count:  count,
-			Checksum:    hex.EncodeToString(hasher.Sum(nil)),
+		lastUpdate := partitionsLastUpdate[partitionID]
+		// If we have files but no modification time, that's data corruption
+		if count > 0 && lastUpdate.IsZero() {
+			panic(fmt.Sprintf("Partition %s has %d files but no modification time - data corruption detected", partitionID, count))
 		}
-		holderJSON, _ := json.Marshal(holderData)
+		if count > 0 {
+			holderData := types.HolderData{
+				Last_update: lastUpdate,
+				File_count:  count,
+				Checksum:    hex.EncodeToString(hasher.Sum(nil)),
+			}
+			holderJSON, _ := json.Marshal(holderData)
 
-		// Update file count metadata
-		metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
-		fileCountJSON, _ := json.Marshal(count)
+			// Update file count metadata
+			metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
+			fileCountJSON, _ := json.Marshal(count)
 
-		// Add both updates to the list
-		allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
-		allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
+			// Add both updates to the list
+			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
+			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
 
-		pm.debugf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
+			pm.debugf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
+		}
 	}
 
 	// Publish all updates to peers in one batch
@@ -779,6 +793,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 	partitionsCount := make(map[types.PartitionID]int)
 	partitionsChecksum := make(map[types.PartitionID]hash.Hash)
+	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
 
 	// Use FileStore to scan files
 	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(key_b []byte, metadata []byte) error {
@@ -797,6 +812,11 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		if !parsedMetadata.Deleted {
 			// File is not deleted, count it
 			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
+
+			// Track most recent modification time for this partition
+			if parsedMetadata.ModifiedAt.After(partitionsLastUpdate[partitionID]) {
+				partitionsLastUpdate[partitionID] = parsedMetadata.ModifiedAt
+			}
 		}
 
 		hasher, ok := partitionsChecksum[partitionID]
@@ -831,22 +851,29 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		} else {
 			// Add ourselves as a holder
 			holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-			holderData := types.HolderData{
-				Last_update: time.Now(),
-				File_count:  partitionsCount[partitionID],
-				Checksum:    hex.EncodeToString(hasher.Sum(nil)),
+			lastUpdate := partitionsLastUpdate[partitionID]
+			// If we have files but no modification time, that's data corruption
+			if partitionsCount[partitionID] > 0 && lastUpdate.IsZero() {
+				panic(fmt.Sprintf("Partition %s has %d files but no modification time - data corruption detected", partitionID, partitionsCount[partitionID]))
 			}
-			holderJSON, _ := json.Marshal(holderData)
+			if partitionsCount[partitionID] > 0 {
+				holderData := types.HolderData{
+					Last_update: lastUpdate,
+					File_count:  partitionsCount[partitionID],
+					Checksum:    hex.EncodeToString(hasher.Sum(nil)),
+				}
+				holderJSON, _ := json.Marshal(holderData)
 
-			// Update file count metadata
-			metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
-			fileCountJSON, _ := json.Marshal(partitionsCount[partitionID])
+				// Update file count metadata
+				metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
+				fileCountJSON, _ := json.Marshal(partitionsCount[partitionID])
 
-			// Send both updates to CRDT
-			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
-			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
+				// Send both updates to CRDT
+				allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
+				allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
 
-			pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, partitionsCount[partitionID])
+				pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, partitionsCount[partitionID])
+			}
 
 		}
 	}
