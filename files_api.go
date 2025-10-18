@@ -159,17 +159,15 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 
 	if partitionInfo == nil {
 		c.debugf("[FILES] No partition info found for %s (partition %s)", path, partitionID)
-		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition holders)", path), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition info found for partition %s)", path, partitionID), http.StatusNotFound)
 		return
 	}
 
 	if len(partitionInfo.Holders) == 0 {
 		c.debugf("[FILES] No holders registered for partition %s (file %s)", partitionID, path)
-		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition holders)", path), http.StatusNotFound)
+		http.Error(w, fmt.Sprintf("File not found in cluster: %s (partition %s has no holders registered)", path, partitionID), http.StatusNotFound)
 		return
 	}
-
-	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
 
 	// Get peer info for all holders
 	peers := c.DiscoveryManager().GetPeers()
@@ -178,13 +176,17 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		peerLookup[types.NodeID(peer.NodeID)] = peer
 	}
 
+	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
+
 	// Try each holder until we find the file
+	var holderErrors []string
 	for _, holderID := range partitionInfo.Holders {
 		c.debugf("[FILES] Trying holder %s for file %s", holderID, path)
 
 		// Get peer info for this holder
 		var peer *types.PeerInfo
 		if holderID == c.ID() {
+			c.debugf("[FILES] Fetching file from localhost")
 			// This is us
 			peer = &types.PeerInfo{
 				NodeID:   string(c.ID()),
@@ -192,9 +194,11 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 				HTTPPort: c.HTTPPort(),
 			}
 		} else if p, ok := peerLookup[holderID]; ok {
+			c.debugf("Fetching file from peer %+v", p)
 			peer = p
 		} else {
 			c.debugf("[FILES] No peer info available for holder %s", holderID)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: no peer info", holderID))
 			continue
 		}
 
@@ -202,6 +206,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, path)
 		if err != nil {
 			c.debugf("[FILES] Failed to build URL for peer %s: %v", peer.NodeID, err)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: URL build failed: %v", peer.NodeID, err))
 			continue
 		}
 
@@ -209,6 +214,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		req, err := http.NewRequest(http.MethodGet, fileURL, nil)
 		if err != nil {
 			c.debugf("[FILES] Failed to create request for peer %s: %v", peer.NodeID, err)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: request creation failed: %v", peer.NodeID, err))
 			continue
 		}
 		req.Header.Set("X-ClusterF-Internal", "1")
@@ -223,6 +229,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		resp, err := c.HttpDataClient.Do(req)
 		if err != nil {
 			c.debugf("[FILES] Failed to get file from peer %s: %v", peer.NodeID, err)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
 		}
 		defer resp.Body.Close()
@@ -242,12 +249,23 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			return
 		}
 
-		c.debugf("[FILES] Holder %s returned status %d for file %s", peer.NodeID, resp.StatusCode, path)
+		// Read error response body for more detailed error information
+		errorBody, _ := io.ReadAll(resp.Body)
+		errorMsg := fmt.Sprintf("Expected 200, got %d", resp.StatusCode)
+		if len(errorBody) > 0 {
+			errorMsg += fmt.Sprintf(": %s", string(errorBody))
+		}
+		holderErrors = append(holderErrors, fmt.Sprintf("%s: %s", peer.NodeID, errorMsg))
+		c.debugf("[FILES] Holder %s returned status %d for file %s: %s", peer.NodeID, resp.StatusCode, path, string(errorBody))
 	}
 
 	// File not found on any registered holder
 	c.debugf("[FILES] File %s not found on any registered holder for partition %s", path, partitionID)
-	http.Error(w, fmt.Sprintf("File not found in cluster: %s", path), http.StatusNotFound)
+	errorSummary := fmt.Sprintf("File not found in cluster: %s", path)
+	if len(holderErrors) > 0 {
+		errorSummary += fmt.Sprintf(" (tried holders: %s)", strings.Join(holderErrors, ", "))
+	}
+	http.Error(w, errorSummary, http.StatusNotFound)
 }
 
 func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path string) {

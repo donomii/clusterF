@@ -58,7 +58,7 @@ type FileData struct {
 // NewFileStore creates a new FileStore with per-partition storage
 func NewFileStore(baseDir string, debug bool, storageMajor, storageMinor string) *FileStore {
 	if storageMajor == "" {
-		storageMajor = "extent"
+		storageMajor = "extentmmap"
 	}
 	return &FileStore{
 		baseDir:      baseDir,
@@ -316,22 +316,23 @@ func (fs *FileStore) GetContent(key string) ([]byte, error) {
 // Put stores both metadata and content atomically
 func (fs *FileStore) Put(key string, metadata, content []byte) error {
 
-	partitionID := types.ExtractPartitionStoreID(key)
-	if partitionID == "" {
+	partitionStoreName := types.ExtractPartitionStoreID(key)
+	if partitionStoreName == "" {
 		return fmt.Errorf("invalid key format")
 	}
+	partitionId := types.ExtractPartitionID(key)
 
-	fs.debugf("Put: acquiring write lock for partition %s, key %s", partitionID, key)
+	fs.debugf("Put: acquiring write lock for partition %s, key %s", partitionStoreName, key)
 	start := time.Now()
-	lock := fs.getPartitionLock(partitionID)
+	lock := fs.getPartitionLock(partitionStoreName)
 	lock.Lock()
-	fs.debugf("Put: acquired write lock for partition %s after %v", partitionID, time.Since(start))
+	fs.debugf("Put: acquired write lock for partition %s after %v", partitionStoreName, time.Since(start))
 	defer func() {
 		lock.Unlock()
-		fs.debugf("Put: released write lock for partition %s", partitionID)
+		fs.debugf("Put: released write lock for partition %s", partitionStoreName)
 	}()
 
-	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+	metadataKV, contentKV, err := fs.openPartitionStores(partitionStoreName)
 	if err != nil {
 		return err
 	}
@@ -345,12 +346,14 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 	if err := metadataKV.Put(keyBytes, encMetadata); err != nil {
 		return fmt.Errorf("failed to store metadata: %v", err)
 	}
+	fs.debugf("Wrote file metadata %v to partition %v", key, partitionId)
 
 	if err := contentKV.Put(keyBytes, encContent); err != nil {
 		// Try to rollback metadata
 		metadataKV.Delete(keyBytes)
 		return fmt.Errorf("failed to store content: %v", err)
 	}
+	fs.debugf("Wrote file %v to partition %v", key, partitionId)
 
 	return nil
 }

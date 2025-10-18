@@ -148,6 +148,13 @@ type Cluster struct {
 
 	// Current file being processed (for monitoring)
 	currentFile atomic.Value // stores string
+
+	partitionReIndexInterval time.Duration // time in between scans for partitions to re-index
+}
+
+func (c *Cluster) SetTimings(partitionSyncInterval, partitionReIndexInterval time.Duration) {
+	c.partitionReIndexInterval = partitionReIndexInterval
+	c.SetPartitionSyncInterval(int(partitionSyncInterval.Seconds()))
 }
 
 func (c *Cluster) Logger() *log.Logger {
@@ -300,7 +307,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 	// Set default storage options if not specified
 	if opts.StorageMajor == "" {
-		opts.StorageMajor = "extent"
+		opts.StorageMajor = "extentmmap"
 	}
 	if opts.StorageMinor == "" {
 		opts.StorageMinor = ""
@@ -778,15 +785,21 @@ func (c *Cluster) runIndexerImport(ctx context.Context) {
 }
 
 func (c *Cluster) runPartitionReindex(ctx context.Context) {
-	c.partitionManager.RunReindex(ctx)
-	ticker := time.NewTicker(15 * time.Minute)
+	pm := c.PartitionManager()
+	pm.RunReindex(ctx)
+	if c.partitionReIndexInterval.Seconds() == 0 {
+		c.partitionReIndexInterval = 1 * time.Second
+	}
+	ticker := time.NewTicker(c.partitionReIndexInterval)
+
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.partitionManager.RunReindex(ctx)
+			pm.RunReindex(ctx)
+			ticker.Reset(c.partitionReIndexInterval)
 		}
 	}
 }

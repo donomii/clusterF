@@ -374,6 +374,7 @@ func setupTestCluster(t *testing.T, config TestConfig, name string) ([]*Cluster,
 	for i := 0; i < config.NodeCount; i++ {
 		// Set very fast timings for testing to speed up discovery
 		nodes[i].DiscoveryManager().SetTimings(100*time.Millisecond, 2*time.Second)
+		nodes[i].SetTimings(1*time.Second, 1*time.Second)
 	}
 
 	// Cleanup function using parallel shutdown
@@ -890,54 +891,57 @@ func TestCluster_BasicOperations(t *testing.T) {
 	baseURL := fmt.Sprintf("http://localhost:%d", cluster.HTTPDataPort)
 
 	testData := []byte("Hello, test world!")
-
+	var resp *http.Response
+	var url string
+	var err error
+	var req *http.Request
 	// Test PUT operation (using file system API)
 	WaitForConditionT(t, "File upload", func() bool {
 
 		uploadTime := time.Now()
-		url := baseURL + "/api/files/test-file.txt"
-		req, _ := http.NewRequest(http.MethodPut, url, bytes.NewReader(testData))
+		url = baseURL + "/api/files/test-file.txt"
+		req, err = http.NewRequest(http.MethodPut, url, bytes.NewReader(testData))
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
-		resp, err := client.Do(req)
+		resp, err = client.Do(req)
 		if err != nil {
 			t.Fatalf("PUT request failed: %v", err)
 		}
 		clearResponseBody(resp)
 
-		if resp.StatusCode != http.StatusCreated {
-			t.Fatalf("Testing file upload, expected StatusCreated, got %d.  File /test-file.txt, target url %v", resp.StatusCode, url)
-		}
 		return resp.StatusCode == http.StatusCreated
 	}, 1000, 10000) // Retry for up to 10 seconds
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Testing file upload, expected StatusCreated, got %d.  File /test-file.txt, target url %v", resp.StatusCode, url)
+	}
+
+	var body []byte
 
 	// Test GET operation
 	WaitForConditionT(t, "File availability", func() bool {
-		url := baseURL + "/api/files/test-file.txt"
-		resp, err := client.Get(url)
+		url = baseURL + "/api/files/test-file.txt"
+		resp, err = client.Get(url)
 		if err != nil {
 			t.Fatalf("GET request failed: %v", err)
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("Testing file get, expected 200, got %d.  File /test-file.txt, target url %v", resp.StatusCode, url)
-		}
-
-		body, err := io.ReadAll(resp.Body)
+		body, err = io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatalf("Failed to read response: %v", err)
 		}
 
-		if !bytes.Equal(body, testData) {
-			t.Fatalf("Data mismatch: expected %q, got %q", testData, body)
-		}
 		clearResponseBody(resp)
 		return resp.StatusCode == http.StatusOK
 	}, 1000, 10000) // Retry for up to 10 seconds
-
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Testing file get, expected 200, got %d.  File /test-file.txt, target url %v", resp.StatusCode, url)
+	}
+	if !bytes.Equal(body, testData) {
+		t.Fatalf("Data mismatch: expected %q, got %q", testData, body)
+	}
 	// Test status endpoint
 	WaitForConditionT(t, "Status endpoint", func() bool {
-		resp, err := client.Get(baseURL + "/status")
+		resp, err = client.Get(baseURL + "/status")
 		if err != nil {
 			t.Logf("Status endpoint connection failed: %v (URL: %s)", err, baseURL+"/status")
 			return false

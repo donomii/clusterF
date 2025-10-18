@@ -48,7 +48,7 @@ type Dependencies struct {
 
 type PartitionManager struct {
 	deps        Dependencies
-	ReindexList syncmap.SyncMap[types.PartitionID, bool]
+	ReindexList *syncmap.SyncMap[types.PartitionID, bool]
 }
 
 type PartitionVersion int64
@@ -56,24 +56,27 @@ type PartitionVersion int64
 type PeerLoader func(types.NodeID) (*types.PeerInfo, bool)
 
 func NewPartitionManager(deps Dependencies) *PartitionManager {
-	return &PartitionManager{deps: deps}
+	return &PartitionManager{deps: deps, ReindexList: syncmap.NewSyncMap[types.PartitionID, bool]()}
 }
 
 func (pm *PartitionManager) MarkForReindex(pId types.PartitionID) {
 	pm.ReindexList.Store(pId, true)
+	pm.debugf("[MarkForReindex] Marked partition %v for reindex.  List is now %v", pId, pm.ReindexList.Keys())
 }
 
 func (pm *PartitionManager) RunReindex(ctx context.Context) {
+	start := time.Now()
+	pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
 	pm.ReindexList.Range(func(key types.PartitionID, value bool) bool {
 
 		if value {
 			pm.ReindexList.Store(key, false) // Clear the flag before re-indexing, as new items will not necessarily be caught during
-			pm.deps.Logger.Printf("Starting reindex of partition %v", key)
+			pm.deps.Logger.Printf("[REINDEX] Starting reindex of partition %v", key)
 			pm.updatePartitionMetadata(ctx, key)
 		}
 		return true
 	})
-
+	pm.debugf("[REINDEX] Completed reindex cycle in %v", time.Since(start))
 }
 
 func (pm *PartitionManager) debugf(format string, args ...interface{}) {
@@ -202,6 +205,8 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 		pm.deps.Logger.Panicf("failed to store file: %v", err)
 	}
 
+	pm.logf("[PARTITION] Stored file %s  (%d bytes)", fileKey, len(fileContent))
+
 	// Update indexer with new file
 	if pm.deps.Indexer != nil {
 		var metadata types.FileMetadata
@@ -210,10 +215,11 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 		}
 	}
 
+	pm.logf("[PARTITION] Updated indexer for %v", fileKey)
+
 	// Update partition metadata in CRDT
 	pm.MarkForReindex(partitionID)
-
-	pm.logf("[PARTITION] Stored file %s  (%d bytes)", fileKey, len(fileContent))
+	pm.logf("[PARTITION] Marked %v for reindex", partitionID)
 
 	// Debug: verify what we just stored
 	if storedData, err := pm.deps.FileStore.Get(fileKey); err == nil && storedData.Exists {
@@ -756,7 +762,9 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 
 	// Get all holder entries for this partition
 	holderPrefix := fmt.Sprintf("%s/holders/", partitionKey)
+	pm.debugf("Searching crdt for '%v'", holderPrefix)
 	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix(holderPrefix)
+	pm.debugf("Found %v matches", len(dataPoints))
 
 	var holders []types.NodeID
 	var totalFiles int

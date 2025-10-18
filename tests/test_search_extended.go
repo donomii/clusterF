@@ -4,11 +4,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -16,14 +18,39 @@ import (
 	"github.com/donomii/clusterF/filesystem"
 	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/types"
-	ensemblekv "github.com/donomii/ensemblekv"
 	"github.com/donomii/frogpond"
 )
 
 // MockClusterSearch implements the ClusterLike interface for testing
 type MockClusterSearch struct {
-	pm     *partitionmanager.PartitionManager
-	logger *log.Logger
+	pm         *partitionmanager.PartitionManager
+	logger     *log.Logger
+	ctx        context.Context
+	httpClient *http.Client
+	nodeData   types.NodeData
+}
+
+func (m *MockClusterSearch) AppContext() context.Context {
+	if m.ctx != nil {
+		return m.ctx
+	}
+	return context.Background()
+}
+
+func (m *MockClusterSearch) GetAllNodes() map[types.NodeID]*types.NodeData {
+	nodes := make(map[types.NodeID]*types.NodeData, 1)
+	nodeID := types.NodeID(m.nodeData.NodeID)
+	if nodeID != "" {
+		nodes[nodeID] = &m.nodeData
+	}
+	return nodes
+}
+
+func (m *MockClusterSearch) GetNodeInfo(nodeID types.NodeID) *types.NodeData {
+	if string(nodeID) == m.nodeData.NodeID {
+		return &m.nodeData
+	}
+	return nil
 }
 
 func (m *MockClusterSearch) PartitionManager() types.PartitionManagerLike {
@@ -46,16 +73,91 @@ func (m *MockClusterSearch) NoStore() bool {
 	return false
 }
 
-func (m *MockClusterSearch) ListDirectoryUsingSearch(path string) ([]types.FileMetadata, error) {
-	return []types.FileMetadata{}, nil
+func (m *MockClusterSearch) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, error) {
+	if m.pm == nil {
+		return nil, fmt.Errorf("partition manager not initialized")
+	}
+
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		return nil, fmt.Errorf("path must start with /")
+	}
+
+	basePath := path
+	if basePath != "/" && strings.HasSuffix(basePath, "/") {
+		basePath = strings.TrimSuffix(basePath, "/")
+	}
+
+	prefix := "/"
+	if basePath != "/" {
+		prefix = basePath + "/"
+	}
+
+	var results []*types.FileMetadata
+	err := m.pm.ScanAllFiles(func(filePath string, metadata types.FileMetadata) error {
+		if metadata.Deleted {
+			return nil
+		}
+
+		metaPath := metadata.Path
+		if metaPath == "" {
+			metaPath = filePath
+		}
+
+		if basePath == "/" {
+			if !strings.HasPrefix(metaPath, "/") {
+				return nil
+			}
+		} else if metaPath != basePath && !strings.HasPrefix(metaPath, prefix) {
+			return nil
+		}
+
+		metaCopy := metadata
+		if metaCopy.Name == "" {
+			metaCopy.Name = filepath.Base(metaPath)
+		}
+		if metaCopy.Path == "" {
+			metaCopy.Path = metaPath
+		}
+		metaCopy.IsDirectory = false
+
+		results = append(results, &metaCopy)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Path < results[j].Path
+	})
+
+	return results, nil
 }
 
 func (m *MockClusterSearch) DataClient() *http.Client {
-	return &http.Client{}
+	if m.httpClient == nil {
+		m.httpClient = &http.Client{}
+	}
+	return m.httpClient
 }
 
 func (m *MockClusterSearch) ID() types.NodeID {
-	return types.NodeID("test-node-search")
+	return types.NodeID(m.nodeData.NodeID)
+}
+
+func (m *MockClusterSearch) GetNodesForPartition(partitionName string) []types.NodeID {
+	nodeID := m.ID()
+	if nodeID == "" {
+		return nil
+	}
+	return []types.NodeID{nodeID}
+}
+
+func (m *MockClusterSearch) GetPartitionSyncPaused() bool {
+	return false
 }
 
 func setupSearchTest(t *testing.T) (*filesystem.ClusterFileSystem, string) {
@@ -66,32 +168,37 @@ func setupSearchTest(t *testing.T) (*filesystem.ClusterFileSystem, string) {
 
 	logger := log.New(os.Stdout, "[SEARCH_TEST] ", log.LstdFlags)
 
-	metadataKVPath := filepath.Join(tmpDir, "metadata")
-	contentKVPath := filepath.Join(tmpDir, "content")
-
-	metadataKV := ensemblekv.SimpleEnsembleCreator("extent", "", metadataKVPath, 8*1024*1024, 32, 256*1024*1024)
-	contentKV := ensemblekv.SimpleEnsembleCreator("extent", "", contentKVPath, 2*1024*1024, 16, 64*1024*1024)
-
-	if metadataKV == nil {
-		t.Fatalf("Failed to create metadata KV store")
+	nodeID := types.NodeID("test-node-search")
+	cluster := &MockClusterSearch{
+		logger:     logger,
+		ctx:        context.Background(),
+		httpClient: &http.Client{},
+		nodeData: types.NodeData{
+			NodeID:    string(nodeID),
+			Available: true,
+			IsStorage: true,
+		},
 	}
-	if contentKV == nil {
-		t.Fatalf("Failed to create content KV store")
-	}
 
-	frogpond := frogpond.NewNode()
+	fileStorePath := filepath.Join(tmpDir, "filestore")
+	if err := os.MkdirAll(fileStorePath, 0o755); err != nil {
+		t.Fatalf("Failed to create filestore directory: %v", err)
+	}
+	fileStore := partitionmanager.NewFileStore(fileStorePath, false, "extentmmap", "")
+
+	fp := frogpond.NewNode()
 
 	deps := partitionmanager.Dependencies{
-		NodeID:                types.NodeID("test-node-search"),
+		NodeID:                nodeID,
 		NoStore:               false,
 		Logger:                logger,
 		Debugf:                func(format string, args ...interface{}) { logger.Printf(format, args...) },
-		MetadataKV:            metadataKV,
-		ContentKV:             contentKV,
-		HttpDataClient:        &http.Client{},
+		FileStore:             fileStore,
+		HttpDataClient:        cluster.httpClient,
 		Discovery:             nil,
+		Cluster:               cluster,
 		LoadPeer:              func(types.NodeID) (*types.PeerInfo, bool) { return nil, false },
-		Frogpond:              frogpond,
+		Frogpond:              fp,
 		SendUpdatesToPeers:    func([]frogpond.DataPoint) {},
 		NotifyFileListChanged: func() {},
 		GetCurrentRF:          func() int { return 3 },
@@ -99,12 +206,9 @@ func setupSearchTest(t *testing.T) (*filesystem.ClusterFileSystem, string) {
 
 	pm := partitionmanager.NewPartitionManager(deps)
 
-	cluster := &MockClusterSearch{
-		pm:     pm,
-		logger: logger,
-	}
+	cluster.pm = pm
 
-	fs := filesystem.NewClusterFileSystem(cluster)
+	fs := filesystem.NewClusterFileSystem(cluster, false)
 
 	return fs, tmpDir
 }
@@ -130,7 +234,7 @@ func TestDeepDirectorySearch(t *testing.T) {
 
 	t.Log("Creating deep directory structure...")
 	for _, tf := range testFiles {
-		err := fs.StoreFileWithModTime(tf.path, []byte(tf.content), "text/plain", time.Now())
+		err := fs.StoreFileWithModTime(context.TODO(), tf.path, []byte(tf.content), "text/plain", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store %s: %v", tf.path, err)
 		}
@@ -176,7 +280,7 @@ func TestLargeDirectoryListing(t *testing.T) {
 	for i := 0; i < numFiles; i++ {
 		path := fmt.Sprintf("/large/file%04d.dat", i)
 		content := fmt.Sprintf("File number %d", i)
-		err := fs.StoreFileWithModTime(path, []byte(content), "application/octet-stream", time.Now())
+		err := fs.StoreFileWithModTime(context.TODO(), path, []byte(content), "application/octet-stream", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store file %d: %v", i, err)
 		}
@@ -232,7 +336,7 @@ func TestFunnyFileNames(t *testing.T) {
 
 	t.Log("Creating files with funny names...")
 	for _, path := range testFiles {
-		err := fs.StoreFileWithModTime(path, []byte("test content"), "text/plain", time.Now())
+		err := fs.StoreFileWithModTime(context.TODO(), path, []byte("test content"), "text/plain", time.Now())
 		if err != nil {
 			t.Logf("Warning: Failed to store %s: %v", path, err)
 			continue
@@ -272,7 +376,7 @@ func TestSearchPatterns(t *testing.T) {
 
 	t.Log("Creating search test files...")
 	for _, tf := range testFiles {
-		err := fs.StoreFileWithModTime(tf.path, []byte(tf.content), "application/octet-stream", time.Now())
+		err := fs.StoreFileWithModTime(context.TODO(), tf.path, []byte(tf.content), "application/octet-stream", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store %s: %v", tf.path, err)
 		}
@@ -325,13 +429,13 @@ func TestEmptyDirectories(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create one file to establish a directory structure
-	err := fs.StoreFileWithModTime("/empty/sub/file.txt", []byte("only file"), "text/plain", time.Now())
+	err := fs.StoreFileWithModTime(context.TODO(), "/empty/sub/file.txt", []byte("only file"), "text/plain", time.Now())
 	if err != nil {
 		t.Fatalf("Failed to store file: %v", err)
 	}
 
 	// Now delete it to make the directory "empty" (in terms of having no files)
-	err = fs.DeleteFile("/empty/sub/file.txt")
+	err = fs.DeleteFile(context.TODO(), "/empty/sub/file.txt")
 	if err != nil {
 		t.Fatalf("Failed to delete file: %v", err)
 	}
@@ -361,7 +465,7 @@ func TestListDirectoryRootPath(t *testing.T) {
 
 	t.Log("Creating root-level test files...")
 	for _, path := range testFiles {
-		err := fs.StoreFileWithModTime(path, []byte("content"), "text/plain", time.Now())
+		err := fs.StoreFileWithModTime(context.TODO(), path, []byte("content"), "text/plain", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store %s: %v", path, err)
 		}
@@ -397,7 +501,7 @@ func TestConcurrentDirectoryOperations(t *testing.T) {
 			for i := 0; i < filesPerGoroutine; i++ {
 				path := fmt.Sprintf("/concurrent/g%d/file%d.txt", id, i)
 				content := fmt.Sprintf("goroutine %d file %d", id, i)
-				err := fs.StoreFileWithModTime(path, []byte(content), "text/plain", time.Now())
+				err := fs.StoreFileWithModTime(context.TODO(), path, []byte(content), "text/plain", time.Now())
 				if err != nil {
 					t.Errorf("Goroutine %d failed to store file %d: %v", id, i, err)
 				}
