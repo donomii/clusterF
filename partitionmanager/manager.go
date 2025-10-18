@@ -133,7 +133,7 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 
 			var parsedMetadata types.FileMetadata
 			if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-				pm.errorf(metadata, "corrupt metadata in full startup reindex")
+				pm.errorf(metadata, fmt.Sprintf("corrupt metadata in full startup reindex for key %s", string(key_b)))
 				// Parse error - count as existing file
 				partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 				return nil
@@ -802,7 +802,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		partitionID := types.ExtractPartitionID(string(key_b))
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-			pm.errorf(metadata, "corrupt metadata in ScanPartitionMetaData")
+			pm.errorf(metadata, fmt.Sprintf("corrupt metadata in ScanPartitionMetaData for key %s", string(key_b)))
 			// Parse error - count as existing file
 			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 			return nil
@@ -1362,7 +1362,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 				for _, holderID := range info.Holders {
 					if holderID != ourNodeId && !info.LastModified.Equal(ourHolderData.MostRecentModifiedTime) {
 						pm.debugf("[PARTITION] Timestamp mismatch for %s: ours %s=%s, theirs %s=%s",
-							partitionID, ourNodeId, ourHolderData.MostRecentModifiedTime, holderID, info.LastModified)
+						 partitionID, ourNodeId, ourHolderData.MostRecentModifiedTime, holderID, info.LastModified)
 						needSync = true
 						break
 					}

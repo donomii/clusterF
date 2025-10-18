@@ -1040,14 +1040,13 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// Get partition stats without holding the main mutex
 	var partitionStats types.PartitionStatistics
 	if c.partitionManager != nil {
-		c.debugf("[STATUS] Getting partition stats")
+		//c.debugf("[STATUS] Getting partition stats")
 
 		partitionStats = c.partitionManager.GetPartitionStats()
-		fmt.Printf("!!!\n")
-		fmt.Printf("Got partition stats: %+v\n", partitionStats)
-		c.debugf("[STATUS] Got partition stats: %+v", partitionStats)
+
+		//c.debugf("[STATUS] Got partition stats: %+v", partitionStats)
 	} else {
-		c.debugf("[STATUS] PartitionManager is nil")
+		c.debugf("[STATUS] PartitionManager is nil, initialisation may have failed")
 		partitionStats = types.PartitionStatistics{}
 	}
 
@@ -1055,9 +1054,9 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var rf interface{} = DefaultRF
 	if c.frogpond != nil {
 		rf = c.getCurrentRF()
-		c.debugf("[STATUS] Got RF: %v", rf)
+		//c.debugf("[STATUS] Got RF: %v", rf)
 	} else {
-		c.debugf("[STATUS] frogpond is nil")
+		c.debugf("[STATUS] frogpond is nil, initialisation may have failed")
 	}
 
 	// Read basic fields without mutex - they're set once at startup
@@ -1066,9 +1065,12 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 		currentFile = cf.(string)
 	}
 
+	// Get absolute path for data directory
+	absDataDir, _ := filepath.Abs(c.DataDir)
+
 	status := types.NodeStatus{
 		Node_id:            string(c.NodeId),
-		Data_dir:           c.DataDir,
+		Data_dir:           absDataDir,
 		Http_port:          c.HTTPDataPort,
 		Replication_factor: rf.(int),
 		Partition_stats:    partitionStats,
@@ -1092,12 +1094,15 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	// Get absolute path for data directory
+	absDataDir, _ := filepath.Abs(c.DataDir)
+
 	peerList := c.getPeerList()
 	stats := types.NodeStatus{
 		Node_id:            string(c.NodeId),
 		Http_port:          c.HTTPDataPort,
 		Discovery_port:     c.DiscoveryPort,
-		Data_dir:           c.DataDir,
+		Data_dir:           absDataDir,
 		Timestamp:          time.Now(),
 		Replication_factor: c.getCurrentRF(),
 		Peer_list:          peerList,
