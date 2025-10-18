@@ -222,11 +222,11 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 			var currentHolderData types.HolderData
 			json.Unmarshal(data, &currentHolderData)
 
-			if metadata.ModifiedAt.After(currentHolderData.Last_update) {
+			if metadata.ModifiedAt.After(currentHolderData.MostRecentModifiedTime) {
 				holderData := types.HolderData{
-					Last_update: metadata.ModifiedAt,
-					File_count:  currentHolderData.File_count, //FIXME detect if we're updating or inserting for the first time
-					Checksum:    "",
+					MostRecentModifiedTime: metadata.ModifiedAt,
+					File_count:             currentHolderData.File_count, //FIXME detect if we're updating or inserting for the first time
+					Checksum:               "",
 				}
 				holderJSON, _ := json.Marshal(holderData)
 

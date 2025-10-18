@@ -104,7 +104,6 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 	partitionsCount := make(map[types.PartitionID]int)
 	partitionsChecksum := make(map[types.PartitionID]hash.Hash)
 	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
-	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
 	processedFiles := 0
 
 	// Get all partition stores
@@ -168,7 +167,7 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 		}
 	}
 
-	pm.deps.Logger.Printf("[FULL_REINDEX] Processed %d files across %d partitions in %v", 
+	pm.deps.Logger.Printf("[FULL_REINDEX] Processed %d files across %d partitions in %v",
 		processedFiles, len(partitionsCount), time.Since(start))
 
 	// Build all CRDT updates for publication
@@ -203,9 +202,9 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 		}
 		if count > 0 {
 			holderData := types.HolderData{
-				Last_update: lastUpdate,
-				File_count:  count,
-				Checksum:    hex.EncodeToString(hasher.Sum(nil)),
+				MostRecentModifiedTime: lastUpdate,
+				File_count:             count,
+				Checksum:               hex.EncodeToString(hasher.Sum(nil)),
 			}
 			holderJSON, _ := json.Marshal(holderData)
 
@@ -225,7 +224,7 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 	pm.sendUpdates(allUpdates)
 
 	elapsed := time.Since(start)
-	pm.deps.Logger.Printf("[FULL_REINDEX] Completed full startup reindex: %d partitions, %d files, %d CRDT updates in %v", 
+	pm.deps.Logger.Printf("[FULL_REINDEX] Completed full startup reindex: %d partitions, %d files, %d CRDT updates in %v",
 		len(partitionsCount), processedFiles, len(allUpdates), elapsed)
 }
 
@@ -858,9 +857,9 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			}
 			if partitionsCount[partitionID] > 0 {
 				holderData := types.HolderData{
-					Last_update: lastUpdate,
-					File_count:  partitionsCount[partitionID],
-					Checksum:    hex.EncodeToString(hasher.Sum(nil)),
+					MostRecentModifiedTime: lastUpdate,
+					File_count:             partitionsCount[partitionID],
+					Checksum:               hex.EncodeToString(hasher.Sum(nil)),
 				}
 				holderJSON, _ := json.Marshal(holderData)
 
@@ -967,8 +966,8 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 			continue
 		}
 
-		if holderData.Last_update.After(maxTimestamp) {
-			maxTimestamp = holderData.Last_update
+		if holderData.MostRecentModifiedTime.After(maxTimestamp) {
+			maxTimestamp = holderData.MostRecentModifiedTime
 		}
 
 		fileCount := holderData.File_count
@@ -1043,8 +1042,8 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.Part
 		for nodeID, data := range nodeData {
 			holders = append(holders, types.NodeID(nodeID))
 
-			if data.Last_update.After(maxTimestamp) {
-				maxTimestamp = data.Last_update
+			if data.MostRecentModifiedTime.After(maxTimestamp) {
+				maxTimestamp = data.MostRecentModifiedTime
 			}
 
 			if data.File_count > totalFiles {
@@ -1361,9 +1360,9 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 				// Compare with other holders' last modified
 				needSync := false
 				for _, holderID := range info.Holders {
-					if holderID != ourNodeId && !info.LastModified.Equal(ourHolderData.Last_update) {
+					if holderID != ourNodeId && !info.LastModified.Equal(ourHolderData.MostRecentModifiedTime) {
 						pm.debugf("[PARTITION] Timestamp mismatch for %s: ours %s=%s, theirs %s=%s",
-							partitionID, ourNodeId, ourHolderData.Last_update, holderID, info.LastModified)
+							partitionID, ourNodeId, ourHolderData.MostRecentModifiedTime, holderID, info.LastModified)
 						needSync = true
 						break
 					}

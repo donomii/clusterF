@@ -46,7 +46,7 @@ type PartitionManagerLike interface {
 	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error                             // Scan all files in all partitions, calling fn for each file
 	GetPartitionInfo(partitionID PartitionID) *PartitionInfo
 	RunReindex(ctx context.Context)
-	RunFullReindexAtStartup(ctx context.Context)                                                          // Run full reindex at startup, scanning entire store and publishing updates
+	RunFullReindexAtStartup(ctx context.Context) // Run full reindex at startup, scanning entire store and publishing updates
 	MarkForReindex(pId PartitionID)
 }
 
@@ -228,9 +228,9 @@ type TranscodeStatistics struct {
 }
 
 type HolderData struct {
-	Last_update time.Time `json:"last_update"`
-	File_count  int       `json:"file_count"`
-	Checksum    string    `json:"checksum"`
+	MostRecentModifiedTime time.Time `json:"most_recent_modified_time"`
+	File_count             int       `json:"file_count"`
+	Checksum               string    `json:"checksum"`
 }
 
 func CollapseToDirectory(relPath, basePath string) string {
