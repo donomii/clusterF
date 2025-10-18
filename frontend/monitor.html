@@ -81,7 +81,7 @@
     </div>
     
     <div class="info">
-        <h3>Node Information</h3>
+        <h3>Current Node Information</h3>
         <div>ID: <span id="nodeIdInfo"></span></div>
         <div>HTTP Port: <span id="httpPortInfo"></span></div>
         <div>Discovery Port: <span id="discoveryPort"></span></div>
@@ -100,6 +100,11 @@
             <div>Partition Stats: <a href="/api/partition-stats" style="color: #06b6d4;">/api/partition-stats</a></div>
             <div>Visualizer: <a href="/cluster-visualizer.html" style="color: #06b6d4;">cluster-visualizer.html</a></div>
         </div>
+    </div>
+    
+    <div class="info" style="margin-top: 20px;">
+        <h3>All Cluster Nodes</h3>
+        <div id="all-nodes-info">Loading node information...</div>
     </div>
     
     <script src="/monitor.js"></script>

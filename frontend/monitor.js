@@ -158,6 +158,9 @@ async function refreshStats() {
         // Update sync status display
         updateSyncStatusDisplay(isPaused);
         
+        // Update all nodes information
+        updateAllNodesInfo(clusterStats);
+        
         debugDiv.textContent = 'API OK - Last update: ' + new Date().toLocaleTimeString();
         
     } catch (error) {
@@ -179,6 +182,9 @@ async function refreshStats() {
         document.getElementById('node_bytes_stored').textContent = 'ERR';
         document.getElementById('node_disk_usage').textContent = 'ERR';
         document.getElementById('node_disk_free').textContent = 'ERR';
+        
+        // Update all nodes info with error
+        document.getElementById('all-nodes-info').innerHTML = '<div style="color: #ef4444;">Error loading node information</div>';
     }
 }
 
@@ -249,6 +255,85 @@ function updateSyncStatusDisplay(isPaused) {
         statusSpan.style.color = '#22c55e';
         pauseBtn.textContent = '⏸️ Pause Sync';
     }
+}
+
+function updateAllNodesInfo(clusterStats) {
+    const allNodesDiv = document.getElementById('all-nodes-info');
+    
+    if (!clusterStats || !clusterStats.peer_list || clusterStats.peer_list.length === 0) {
+        allNodesDiv.innerHTML = '<div style="color: #94a3b8;">No other nodes discovered in cluster</div>';
+        return;
+    }
+    
+    // Sort nodes by node_id for consistent display
+    const sortedNodes = [...clusterStats.peer_list].sort((a, b) => a.node_id.localeCompare(b.node_id));
+    
+    let html = '';
+    sortedNodes.forEach(node => {
+        const isCurrentNode = node.node_id === clusterStats.node_id;
+        const nodeClass = isCurrentNode ? 'current-node' : 'remote-node';
+        const nodeIndicator = isCurrentNode ? ' (current)' : '';
+        const availableStatus = node.available ? 'Available' : 'Unavailable';
+        const availableColor = node.available ? '#22c55e' : '#ef4444';
+        const storageType = node.is_storage ? 'Storage Node' : 'Client Node';
+        
+        // Calculate disk usage percentage
+        let diskUsagePercent = 'N/A';
+        if (node.disk_size && node.disk_size > 0) {
+            const used = node.disk_size - node.disk_free;
+            diskUsagePercent = Math.round((used / node.disk_size) * 100) + '%';
+        }
+        
+        // Format last seen time
+        let lastSeenText = 'Never';
+        if (node.last_seen) {
+            const lastSeen = new Date(node.last_seen);
+            const now = new Date();
+            const diffSeconds = Math.floor((now - lastSeen) / 1000);
+            if (diffSeconds < 60) {
+                lastSeenText = `${diffSeconds}s ago`;
+            } else if (diffSeconds < 3600) {
+                lastSeenText = `${Math.floor(diffSeconds / 60)}m ago`;
+            } else {
+                lastSeenText = lastSeen.toLocaleString();
+            }
+        }
+        
+        html += `
+            <div class="${nodeClass}" style="margin: 10px 0; padding: 10px; border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 6px; background: rgba(59, 130, 246, 0.05);">
+                <div style="font-weight: bold; color: #06b6d4; margin-bottom: 5px;">
+                    ${node.node_id}${nodeIndicator}
+                    <span style="margin-left: 10px; color: ${availableColor}; font-size: 12px;">${availableStatus}</span>
+                    <span style="margin-left: 10px; color: #94a3b8; font-size: 12px;">${storageType}</span>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px; color: #94a3b8;">
+                    <div>
+                        <div><strong>Address:</strong> ${node.address || 'Unknown'}:${node.http_port || 'N/A'}</div>
+                        <div><strong>Discovery Port:</strong> ${node.discovery_port || 'N/A'}</div>
+                        <div><strong>Data Directory:</strong> ${node.data_dir || 'N/A'}</div>
+                        <div><strong>Storage Format:</strong> ${node.storage_format || 'N/A'}</div>
+                        <div><strong>Storage Minor:</strong> ${node.storage_minor || 'N/A'}</div>
+                        <div><strong>Program:</strong> ${node.program || 'N/A'}</div>
+                        <div><strong>Version:</strong> ${node.version || 'N/A'}</div>
+                    </div>
+                    <div>
+                        <div><strong>Bytes Stored:</strong> ${formatBytes(node.bytes_stored || 0)}</div>
+                        <div><strong>Disk Size:</strong> ${formatBytes(node.disk_size || 0)}</div>
+                        <div><strong>Disk Free:</strong> ${formatBytes(node.disk_free || 0)}</div>
+                        <div><strong>Disk Usage:</strong> ${diskUsagePercent}</div>
+                        <div><strong>Last Seen:</strong> ${lastSeenText}</div>
+                        <div><strong>Export Dir:</strong> ${node.export_dir || 'None'}</div>
+                        <div><strong>Cluster Dir:</strong> ${node.cluster_dir || 'None'}</div>
+                        <div><strong>Import Dir:</strong> ${node.import_dir || 'None'}</div>
+                        <div><strong>Debug Mode:</strong> ${node.debug ? 'Enabled' : 'Disabled'}</div>
+                    </div>
+                </div>
+                ${node.url ? `<div style="margin-top: 5px;"><strong>URL:</strong> <a href="${node.url}" target="_blank" style="color: #06b6d4;">${node.url}</a></div>` : ''}
+            </div>
+        `;
+    });
+    
+    allNodesDiv.innerHTML = html;
 }
 
 async function togglePartitionSyncPause() {

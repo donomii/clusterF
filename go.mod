@@ -5,7 +5,7 @@ go 1.25.1
 require (
 	github.com/donomii/clusterF/frontend v0.0.0-20250923003059-d35f4c0bb184
 	github.com/donomii/clusterF/syncmap v0.0.0
-	github.com/donomii/frogpond v0.0.0-20250913173135-4515c9c7f901
+	github.com/donomii/frogpond v0.0.0-20251018170253-f2571ed50b51
 	github.com/donomii/go-webdav v0.0.0-20240304173232-8e8f80405603
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	golang.org/x/sys v0.30.0

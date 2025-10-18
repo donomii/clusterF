@@ -46,6 +46,7 @@ type PartitionManagerLike interface {
 	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error                             // Scan all files in all partitions, calling fn for each file
 	GetPartitionInfo(partitionID PartitionID) *PartitionInfo
 	RunReindex(ctx context.Context)
+	RunFullReindexAtStartup(ctx context.Context)                                                          // Run full reindex at startup, scanning entire store and publishing updates
 	MarkForReindex(pId PartitionID)
 }
 
@@ -115,15 +116,26 @@ type FileSystemLike interface {
 
 // PeerInfo represents information about a discovered peer
 type PeerInfo struct {
-	NodeID      string    `json:"node_id"`
-	HTTPPort    int       `json:"http_port"`
-	Address     string    `json:"address"`
-	LastSeen    time.Time `json:"last_seen"`
-	BytesStored int64     `json:"bytes_stored,omitempty"`
-	DiskSize    int64     `json:"disk_size,omitempty"`
-	DiskFree    int64     `json:"disk_free,omitempty"`
-	Available   bool      `json:"available,omitempty"`
-	IsStorage   bool      `json:"is_storage,omitempty"`
+	NodeID        string    `json:"node_id"`
+	HTTPPort      int       `json:"http_port"`
+	Address       string    `json:"address"`
+	LastSeen      time.Time `json:"last_seen"`
+	BytesStored   int64     `json:"bytes_stored,omitempty"`
+	DiskSize      int64     `json:"disk_size,omitempty"`
+	DiskFree      int64     `json:"disk_free,omitempty"`
+	Available     bool      `json:"available,omitempty"`
+	IsStorage     bool      `json:"is_storage,omitempty"`
+	DiscoveryPort int       `json:"discovery_port,omitempty"`
+	DataDir       string    `json:"data_dir,omitempty"`
+	StorageFormat string    `json:"storage_format,omitempty"`
+	StorageMinor  string    `json:"storage_minor,omitempty"`
+	Program       string    `json:"program,omitempty"`
+	Version       string    `json:"version,omitempty"`
+	URL           string    `json:"url,omitempty"`
+	ExportDir     string    `json:"export_dir,omitempty"`
+	ClusterDir    string    `json:"cluster_dir,omitempty"`
+	ImportDir     string    `json:"import_dir,omitempty"`
+	Debug         bool      `json:"debug,omitempty"`
 }
 
 type NodeInfo struct {
@@ -147,15 +159,26 @@ type FileMetadata struct {
 }
 
 type NodeData struct {
-	NodeID      string    `json:"node_id"`
-	Address     string    `json:"address"`
-	HTTPPort    int       `json:"http_port"`
-	LastSeen    time.Time `json:"last_seen"`
-	Available   bool      `json:"available"`
-	BytesStored int64     `json:"bytes_stored"`
-	DiskSize    int64     `json:"disk_size"`
-	DiskFree    int64     `json:"disk_free"`
-	IsStorage   bool      `json:"is_storage"`
+	NodeID        string    `json:"node_id"`
+	Address       string    `json:"address"`
+	HTTPPort      int       `json:"http_port"`
+	DiscoveryPort int       `json:"discovery_port"`
+	LastSeen      time.Time `json:"last_seen"`
+	Available     bool      `json:"available"`
+	BytesStored   int64     `json:"bytes_stored"`
+	DiskSize      int64     `json:"disk_size"`
+	DiskFree      int64     `json:"disk_free"`
+	IsStorage     bool      `json:"is_storage"`
+	DataDir       string    `json:"data_dir"`
+	StorageFormat string    `json:"storage_format"`
+	StorageMinor  string    `json:"storage_minor"`
+	Program       string    `json:"program"`
+	Version       string    `json:"version"`
+	URL           string    `json:"url"`
+	ExportDir     string    `json:"export_dir"`
+	ClusterDir    string    `json:"cluster_dir"`
+	ImportDir     string    `json:"import_dir"`
+	Debug         bool      `json:"debug"`
 }
 
 type NodeID string

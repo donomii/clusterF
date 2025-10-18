@@ -62,15 +62,26 @@ func (c *Cluster) getPeerList() []types.PeerInfo {
 		}
 
 		peer := types.PeerInfo{
-			NodeID:      nodeData.NodeID,
-			Address:     nodeData.Address,
-			HTTPPort:    nodeData.HTTPPort,
-			LastSeen:    nodeData.LastSeen,
-			Available:   nodeData.Available,
-			BytesStored: nodeData.BytesStored,
-			DiskSize:    nodeData.DiskSize,
-			DiskFree:    nodeData.DiskFree,
-			IsStorage:   nodeData.IsStorage,
+			NodeID:        nodeData.NodeID,
+			Address:       nodeData.Address,
+			HTTPPort:      nodeData.HTTPPort,
+			DiscoveryPort: nodeData.DiscoveryPort,
+			LastSeen:      nodeData.LastSeen,
+			Available:     nodeData.Available,
+			BytesStored:   nodeData.BytesStored,
+			DiskSize:      nodeData.DiskSize,
+			DiskFree:      nodeData.DiskFree,
+			IsStorage:     nodeData.IsStorage,
+			DataDir:       nodeData.DataDir,
+			StorageFormat: nodeData.StorageFormat,
+			StorageMinor:  nodeData.StorageMinor,
+			Program:       nodeData.Program,
+			Version:       nodeData.Version,
+			URL:           nodeData.URL,
+			ExportDir:     nodeData.ExportDir,
+			ClusterDir:    nodeData.ClusterDir,
+			ImportDir:     nodeData.ImportDir,
+			Debug:         nodeData.Debug,
 		}
 
 		peerList = append(peerList, peer)
@@ -301,16 +312,42 @@ func (c *Cluster) updateNodeMetadata() {
 		}
 	}
 
+	// Load storage settings for enhanced metadata
+	storageSettings, _ := loadStorageSettings(c.DataDir)
+	storageFormat := "unknown"
+	storageMinor := ""
+	program := "clusterF"
+	version := "unknown"
+	url := "https://github.com/donomii/clusterF"
+	if storageSettings != nil {
+		storageFormat = storageSettings.StorageMajor
+		storageMinor = storageSettings.StorageMinor
+		program = storageSettings.Program
+		version = storageSettings.Version
+		url = storageSettings.URL
+	}
+
 	nodeData := types.NodeData{
-		NodeID:      string(c.NodeId),
-		Address:     address,
-		HTTPPort:    c.HTTPDataPort,
-		LastSeen:    time.Now(),
-		Available:   true,
-		BytesStored: bytesStored,
-		DiskSize:    diskSize,
-		DiskFree:    diskFree,
-		IsStorage:   !c.noStore,
+		NodeID:        string(c.NodeId),
+		Address:       address,
+		HTTPPort:      c.HTTPDataPort,
+		DiscoveryPort: c.DiscoveryPort,
+		LastSeen:      time.Now(),
+		Available:     true,
+		BytesStored:   bytesStored,
+		DiskSize:      diskSize,
+		DiskFree:      diskFree,
+		IsStorage:     !c.noStore,
+		DataDir:       c.DataDir,
+		StorageFormat: storageFormat,
+		StorageMinor:  storageMinor,
+		Program:       program,
+		Version:       version,
+		URL:           url,
+		ExportDir:     c.ExportDir,
+		ClusterDir:    c.ClusterDir,
+		ImportDir:     c.ImportDir,
+		Debug:         c.Debug,
 	}
 	nodeJSON, _ := json.Marshal(nodeData)
 	updates := c.frogpond.SetDataPoint(nodeKey, nodeJSON)

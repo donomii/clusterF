@@ -193,9 +193,9 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 	modTime, size, metaErr := decodeForwardedMetadata(metadataJSON)
 
-	fs.debugf("Uploading %v to %v nodes", path, len(targetNodes))
+	//fs.debugf("Uploading %v to one of %v nodes(%v)", path, len(targetNodes), targetNodes)
 	for _, nodeID := range targetNodes {
-		fs.debugf("Uploading %v to %v", path, nodeID)
+		//fs.debugf("Uploading %v to %v", path, nodeID)
 		peer, ok := peerMap.Load(nodeID)
 		if !ok {
 			fs.debugf("[FILES] Node %s not found in discovery peers", nodeID)
@@ -315,8 +315,8 @@ func (fs *ClusterFileSystem) DeleteFile(ctx context.Context, path string) error 
 }
 
 func (fs *ClusterFileSystem) GetMetadata(path string) (types.FileMetadata, error) {
-	fs.debugf("Starting GetMetadata for path %v", path)
-	defer fs.debugf("Leaving GetMetadata for path %v", path)
+	//fs.debugf("Starting GetMetadata for path %v", path)
+	//defer fs.debugf("Leaving GetMetadata for path %v", path)
 	// Try to get metadata from partition system
 	metadata, err := fs.cluster.PartitionManager().GetMetadataFromPartition(path)
 	if err != nil {

@@ -732,6 +732,7 @@ func (c *Cluster) Start() {
 	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
 
 	// Start all threads using ThreadManager
+	c.threadManager.StartThreadOnce("full-startup-reindex", c.runFullStartupReindex)
 	c.threadManager.StartThreadOnce("indexer-import", c.runIndexerImport)
 	c.threadManager.StartThread("filesync", c.runFilesync)
 	c.threadManager.StartThread("periodic-peer-sync", c.periodicPeerSync)
@@ -775,6 +776,11 @@ func (c *Cluster) runFilesync(ctx context.Context) {
 			c.Logger().Printf("[FILESYNC] File sync thread exiting; restarting")
 		}
 	}
+}
+
+func (c *Cluster) runFullStartupReindex(ctx context.Context) {
+	c.partitionManager.RunFullReindexAtStartup(ctx)
+	<-ctx.Done()
 }
 
 func (c *Cluster) runIndexerImport(ctx context.Context) {
@@ -1029,8 +1035,8 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 }
 
 func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("Entering handleStatus\n")
-	defer func() { fmt.Printf("Leaving handleStatus\n") }()
+	//fmt.Printf("Entering handleStatus\n")
+	//defer func() { fmt.Printf("Leaving handleStatus\n") }()
 	// Get partition stats without holding the main mutex
 	var partitionStats types.PartitionStatistics
 	if c.partitionManager != nil {
