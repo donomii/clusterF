@@ -1070,15 +1070,15 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Debug: log what we're sending
-	c.debugf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.NodeId, status.Replication_factor, partitionStats)
+	//c.debugf("[STATUS] Returning status: node_id=%s, rf=%v, partition_stats=%+v", c.NodeId, status.Replication_factor, partitionStats)
 
 	w.Header().Set("Content-Type", "application/json")
-	c.debugf("[STATUS] Set headers")
+	//c.debugf("[STATUS] Set headers")
 
 	if err := json.NewEncoder(w).Encode(status); err != nil {
-		c.debugf("[STATUS] JSON encode error: %v", err)
+		//c.debugf("[STATUS] JSON encode error: %v", err)
 	} else {
-		c.debugf("[STATUS] Response sent successfully")
+		//c.debugf("[STATUS] Response sent successfully")
 	}
 }
 

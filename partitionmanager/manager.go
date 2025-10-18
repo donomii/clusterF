@@ -66,17 +66,19 @@ func (pm *PartitionManager) MarkForReindex(pId types.PartitionID) {
 
 func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	start := time.Now()
-	pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
+	//pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
+	count := 0
 	pm.ReindexList.Range(func(key types.PartitionID, value bool) bool {
 
 		if value {
 			pm.ReindexList.Store(key, false) // Clear the flag before re-indexing, as new items will not necessarily be caught during
 			pm.deps.Logger.Printf("[REINDEX] Starting reindex of partition %v", key)
 			pm.updatePartitionMetadata(ctx, key)
+			count++
 		}
 		return true
 	})
-	pm.debugf("[REINDEX] Completed reindex cycle in %v", time.Since(start))
+	pm.debugf("[REINDEX] Completed reindex cycle in %v for %v partitions", time.Since(start), count)
 }
 
 func (pm *PartitionManager) debugf(format string, args ...interface{}) {
@@ -762,9 +764,9 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 
 	// Get all holder entries for this partition
 	holderPrefix := fmt.Sprintf("%s/holders/", partitionKey)
-	pm.debugf("Searching crdt for '%v'", holderPrefix)
+	//pm.debugf("Searching crdt for '%v'", holderPrefix)
 	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix(holderPrefix)
-	pm.debugf("Found %v matches", len(dataPoints))
+	//pm.debugf("Found %v matches", len(dataPoints))
 
 	var holders []types.NodeID
 	var totalFiles int
@@ -1149,9 +1151,9 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 	// Also add all active nodes from CRDT
 	if pm.hasFrogpond() {
 		nodeDataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("nodes/")
-		pm.debugf("[PARTITION] Found %d node entries in CRDT", len(nodeDataPoints))
+		//pm.debugf("[PARTITION] Found %d node entries in CRDT", len(nodeDataPoints))
 		for _, dp := range nodeDataPoints {
-			pm.debugf("[PARTITION] CRDT node key=%s deleted=%v valuelen=%d", string(dp.Key), dp.Deleted, len(dp.Value))
+			//pm.debugf("[PARTITION] CRDT node key=%s deleted=%v valuelen=%d", string(dp.Key), dp.Deleted, len(dp.Value))
 			if dp.Deleted || len(dp.Value) == 0 {
 				continue
 			}
@@ -1159,11 +1161,11 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 			parts := strings.Split(string(dp.Key), "/")
 			if len(parts) >= 2 {
 				availablePeerIDs[parts[1]] = true
-				pm.debugf("[PARTITION] Added CRDT node: %s", parts[1])
+				//pm.debugf("[PARTITION] Added CRDT node: %s", parts[1])
 			}
 		}
 	}
-	pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
+	//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
 	partitionKeys := make([]types.PartitionID, 0, len(allPartitions))
 	for partitionID := range allPartitions {
