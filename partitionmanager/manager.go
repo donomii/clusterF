@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,7 +77,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 
 		if value {
 			pm.ReindexList.Store(key, false) // Clear the flag before re-indexing, as new items will not necessarily be caught during
-			pm.deps.Logger.Printf("[REINDEX] Starting reindex of partition %v", key)
+			//pm.deps.Logger.Printf("[REINDEX] Starting reindex of partition %v", key)
 			pm.updatePartitionMetadata(ctx, key)
 			count = count + 1
 		}
@@ -791,7 +792,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	partitionStore := types.PartitionStore(StartPartitionID[0:3])
 
 	partitionsCount := make(map[types.PartitionID]int)
-	partitionsChecksum := make(map[types.PartitionID]hash.Hash)
+	partitionsChecksums := make(map[types.PartitionID][]string)
 	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
 
 	// Use FileStore to scan files
@@ -800,6 +801,9 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))
 		}
 		partitionID := types.ExtractPartitionID(string(key_b))
+		checksum := sha256.Sum256(metadata)
+		partitionsChecksums[partitionID] = append(partitionsChecksums[partitionID], hex.EncodeToString(checksum[:]))
+
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
 			pm.errorf(metadata, fmt.Sprintf("corrupt metadata in ScanPartitionMetaData for key %s", string(key_b)))
@@ -818,12 +822,6 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			}
 		}
 
-		hasher, ok := partitionsChecksum[partitionID]
-		if !ok {
-			hasher = sha256.New()
-		}
-		hasher.Write(metadata)
-		partitionsChecksum[partitionID] = hasher
 		return nil
 	})
 
@@ -834,7 +832,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		// If we have no files for this partition, remove ourselves as a holder
 		if count == 0 {
 			pm.removePartitionHolder(partitionID)
-			return
+			continue
 		}
 
 		// Update partition metadata in CRDT using individual keys per holder
@@ -844,10 +842,15 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		// Calculate partition checksum
 		//partitionChecksum := pm.calculatePartitionChecksum(ctx, partitionID)
 
-		hasher, ok := partitionsChecksum[partitionID]
-		if !ok {
+		checksums, ok := partitionsChecksums[partitionID]
+		if !ok || len(checksums) == 0 {
 			pm.deps.Logger.Printf("ERROR: Unable to calculate checksum for partition %v\n", partitionID)
 		} else {
+			sort.Strings(checksums)
+			hasher := sha256.New()
+			for _, cs := range checksums {
+				hasher.Write([]byte(cs))
+			}
 			// Add ourselves as a holder
 			holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
 			lastUpdate := partitionsLastUpdate[partitionID]
@@ -875,6 +878,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			}
 
 		}
+		pm.logf("Updated CRDT metadata for partition %v", partitionID)
 	}
 	// Send updates to peers
 
