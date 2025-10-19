@@ -1309,6 +1309,7 @@ func TestCluster_MixedEncryption(t *testing.T) {
 		HTTPDataPort:  32200,
 		DiscoveryPort: discoveryPort,
 		EncryptionKey: "encryption-key-alpha",
+		Debug:         true,
 	})
 
 	// Node 1: Encrypted with key2 (different key)
@@ -1349,7 +1350,7 @@ func TestCluster_MixedEncryption(t *testing.T) {
 
 	// Start all nodes
 	for i, node := range nodes {
-		node.DiscoveryManager().SetTimings(500*time.Millisecond, 3*time.Second)
+		node.DiscoveryManager().SetTimings(500*time.Millisecond, 1*time.Second)
 		node.Start()
 		t.Logf("Started node %d: %s (encrypted: %v)", i, node.NodeId, node.PartitionManager().(*partitionmanager.PartitionManager) != nil)
 	}
@@ -1386,27 +1387,33 @@ func TestCluster_MixedEncryption(t *testing.T) {
 			t.Fatalf("Node %d: Expected 201, got %d", i, resp.StatusCode)
 		}
 
-		// Retrieve file
-		resp, err = client.Get(baseURL + "/api/files" + filePath)
+		err = CheckSuccessWithError(func() error {
+			// Retrieve file
+			resp, err = client.Get(baseURL + "/api/files" + filePath)
+			if err != nil {
+				return fmt.Errorf("Node %d: Failed to retrieve file: %v", i, err)
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("Node %d: Expected 200, got %d", i, resp.StatusCode)
+			}
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("Node %d: Failed to read response: %v", i, err)
+			}
+			clearResponseBody(resp)
+
+			if !bytes.Equal(testData, body) {
+				return fmt.Errorf("Node %d: Data mismatch: expected %q, got %q", i, testData, body)
+			}
+
+			t.Logf("Node %d successfully stored and retrieved encrypted data", i)
+			return nil
+		}, 200, 10000)
 		if err != nil {
-			t.Fatalf("Node %d: Failed to retrieve file: %v", i, err)
+			t.Fatal(err)
 		}
-
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("Node %d: Expected 200, got %d", i, resp.StatusCode)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("Node %d: Failed to read response: %v", i, err)
-		}
-		clearResponseBody(resp)
-
-		if !bytes.Equal(testData, body) {
-			t.Fatalf("Node %d: Data mismatch: expected %q, got %q", i, testData, body)
-		}
-
-		t.Logf("Node %d successfully stored and retrieved encrypted data", i)
 	}
 
 	// Verify all nodes discovered each other

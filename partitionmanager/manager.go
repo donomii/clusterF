@@ -135,7 +135,7 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 
 			var parsedMetadata types.FileMetadata
 			if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-				pm.errorf(metadata, fmt.Sprintf("corrupt metadata in full startup reindex for key %s", string(key_b)))
+				pm.errorf(metadata, "corrupt metadata for file: "+string(key_b))
 				// Parse error - count as existing file
 				partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 				return nil
@@ -801,12 +801,16 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))
 		}
 		partitionID := types.ExtractPartitionID(string(key_b))
+		_, exists := partitionsChecksums[partitionID]
+		if !exists {
+			pm.ReindexList.Store(partitionID, false) // Cancel pending reindexes for any partitions we index here
+		}
 		checksum := sha256.Sum256(metadata)
 		partitionsChecksums[partitionID] = append(partitionsChecksums[partitionID], hex.EncodeToString(checksum[:]))
 
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-			pm.errorf(metadata, fmt.Sprintf("corrupt metadata in ScanPartitionMetaData for key %s", string(key_b)))
+			pm.errorf(metadata, "corrupt metadata for file: "+string(key_b))
 			// Parse error - count as existing file
 			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 			return nil

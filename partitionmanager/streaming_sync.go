@@ -309,7 +309,7 @@ func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID
 
 	var metadata types.FileMetadata
 	if err := json.Unmarshal(entry.Metadata, &metadata); err != nil {
-		return true, fmt.Errorf("corrupt metadata for entry %s: %w", entry.Key, err)
+		return true, pm.errorf(entry.Metadata, fmt.Sprintf("corrupt metadata for entry %s: %v", entry.Key, err))
 	}
 
 	partitionKey := HashToPartition(metadata.Path)

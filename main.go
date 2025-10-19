@@ -398,6 +398,29 @@ func CheckSuccessWithTimeout(f func() bool, checkIntervalMs int, timeoutMs int) 
 	}
 }
 
+// CheckSuccessWithErr polls a condition function until it returns nil or times out.
+// Returns nil if the condition succeeded, error if it timed out.
+func CheckSuccessWithError(f func() error, checkIntervalMs int, timeoutMs int) error {
+	timeout := time.After(time.Duration(timeoutMs) * time.Millisecond)
+	ticker := time.NewTicker(time.Duration(checkIntervalMs) * time.Millisecond)
+	defer ticker.Stop()
+	var lastError error
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("Timed out, last error was: %v", lastError)
+		case <-ticker.C:
+			err := f()
+			if err == nil {
+				return nil
+			} else {
+				lastError = err
+			}
+		}
+	}
+}
+
 // WaitForConditionT is a test helper that waits for a condition with better error reporting.
 // It fails the test if the condition isn't met within the timeout.
 func WaitForConditionT(t *testing.T, description string, condition func() bool, checkIntervalMs int, timeoutMs int) {
