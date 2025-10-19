@@ -310,7 +310,6 @@ function updateAllNodesInfo(clusterStats) {
                     <div>
                         <div><strong>Address:</strong> ${node.address || 'Unknown'}:${node.http_port || 'N/A'}</div>
                         <div><strong>Discovery Port:</strong> ${node.discovery_port || 'N/A'}</div>
-                        <div><strong>Data Directory:</strong> ${node.data_dir || 'N/A'}</div>
                         <div><strong>Storage Format:</strong> ${node.storage_format || 'N/A'}</div>
                         <div><strong>Storage Minor:</strong> ${node.storage_minor || 'N/A'}</div>
                         <div><strong>Program:</strong> ${node.program || 'N/A'}</div>
@@ -327,6 +326,10 @@ function updateAllNodesInfo(clusterStats) {
                         <div><strong>Import Dir:</strong> ${node.import_dir || 'None'}</div>
                         <div><strong>Debug Mode:</strong> ${node.debug ? 'Enabled' : 'Disabled'}</div>
                     </div>
+                </div>
+                <div style="margin-top: 8px; border-top: 1px solid rgba(59, 130, 246, 0.2); padding-top: 8px;">
+                    <div><strong>Data Directory:</strong></div>
+                    <div style="font-family: monospace; word-break: break-all; margin-left: 20px; color: #06b6d4;">${node.data_dir || 'N/A'}</div>
                 </div>
                 ${node.url ? `<div style="margin-top: 5px;"><strong>URL:</strong> <a href="${node.url}" target="_blank" style="color: #06b6d4;">${node.url}</a></div>` : ''}
             </div>
