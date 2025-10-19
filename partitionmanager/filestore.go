@@ -603,9 +603,11 @@ func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, 
 // getAllPartitionStores determines which partition directories to scan
 func (fs *FileStore) getAllPartitionStores(prefix string) ([]types.PartitionStore, error) {
 	// If prefix specifies a specific partition, only scan that one
-	partitionID := types.ExtractPartitionStoreID(prefix)
-	if partitionID != "" {
-		return []types.PartitionStore{partitionID}, nil
+	if prefix != "" {
+		partitionID := types.ExtractPartitionStoreID(prefix)
+		if partitionID != "" {
+			return []types.PartitionStore{partitionID}, nil
+		}
 	}
 
 	// Otherwise scan all partition directories
