@@ -179,11 +179,6 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 		return cfs.fakeStatIfNotFound(clusterPath)
 	}
 
-	if meta == nil {
-		cfs.debugf("[WEBDAV] Stat: metadata is nil")
-		return cfs.fakeStatIfNotFound(clusterPath)
-	}
-
 	cfs.debugf("[WEBDAV] Stat: found metadata - size=%d, isDir=%t", meta.Size, meta.IsDirectory)
 
 	// Convert cluster metadata to WebDAV FileInfo
@@ -196,6 +191,8 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 	etag := fmt.Sprintf("%x%x", modTime.UnixNano(), meta.Size)
 	if meta.Checksum != "" {
 		etag = fmt.Sprintf("\"%s\"", meta.Checksum)
+	} else {
+		panic("no")
 	}
 
 	// Determine content type
@@ -233,20 +230,27 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 }
 
 func (cfs *ClusterFileSystem) fakeStatIfNotFound(clusterPath string) (*webdav.FileInfo, error) {
+	if !strings.HasSuffix(clusterPath, "/") {
+		return nil, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("path not found"))
+	}
 	// If the path doesn't exist, we can fake a directory if it looks like one
-	dps, err := cfs.fs.ListDirectory(path.Dir(clusterPath))
+	dps, err := cfs.fs.ListDirectory(clusterPath)
 	if err != nil {
 		return nil, webdav.NewHTTPError(http.StatusNotFound, err)
+	}
+
+	if len(dps) == 0 {
+		return nil, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("path not found"))
 	}
 
 	if dps != nil {
 		return &webdav.FileInfo{
 			Path:     clusterPath,
 			Size:     0,
-			ModTime:  time.Now(),
+			ModTime:  dps[0].ModifiedAt,
 			IsDir:    true,
 			MIMEType: "application/directory",
-			ETag:     fmt.Sprintf("%x", time.Now().UnixNano()),
+			ETag:     fmt.Sprintf("%x", dps[0].ModifiedAt.UnixNano()),
 		}, nil
 
 	}

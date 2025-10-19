@@ -71,6 +71,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	start := time.Now()
 	//pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
 	count := 0
+	defer pm.debugf("[REINDEX] Completed reindex cycle in %v for %v partitions", time.Since(start), count)
 	pm.ReindexList.Range(func(key types.PartitionID, value bool) bool {
 
 		if value {
@@ -81,7 +82,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 		}
 		return true
 	})
-	pm.debugf("[REINDEX] Completed reindex cycle in %v for %v partitions", time.Since(start), count)
+
 }
 
 // RunFullReindexAtStartup runs a full reindex at startup, scanning through the entire store,
@@ -223,9 +224,8 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 	// Publish all updates to peers in one batch
 	pm.sendUpdates(allUpdates)
 
-	elapsed := time.Since(start)
 	pm.deps.Logger.Printf("[FULL_REINDEX] Completed full startup reindex: %d partitions, %d files, %d CRDT updates in %v",
-		len(partitionsCount), processedFiles, len(allUpdates), elapsed)
+		len(partitionsCount), processedFiles, len(allUpdates), time.Since(start))
 }
 
 // getAllPartitionStores returns all partition store names from the FileStore
@@ -1231,7 +1231,7 @@ func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID typ
 		nodeData := pm.deps.Cluster.GetNodeInfo(holderID)
 		if nodeData == nil {
 			//If we can't, then remove the peer as a holder, from the crdt
-			pm.removePeerHolder(partitionID, holderID, time.Now().Add(-30*time.Minute))
+			pm.removePeerHolder(partitionID, holderID, 30*time.Minute)
 		}
 		err := pm.syncPartitionFromPeer(ctx, partitionID, holderID)
 		if err != nil {

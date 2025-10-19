@@ -242,7 +242,7 @@ func (dm *DiscoveryManager) listenLoop(ctx context.Context) {
 			}
 
 			// Set read timeout to make this cancellable
-			dm.listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
+			dm.listenConn.SetReadDeadline(time.Now().Add(2 * time.Second))
 
 			n, addr, err := dm.listenConn.ReadFromUDP(buffer)
 			if err != nil {
@@ -300,7 +300,7 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 	dm.peers.Store(nodeID, peer)
 
 	if !isKnown {
-		dm.Debugf("Discovered new peer: %s at %s:%d (seen by %s)", nodeID, peer.Address, httpPort, dm.nodeID)
+		dm.logger.Printf("Discovered new peer: %s at %s:%d (seen by %s)", nodeID, peer.Address, httpPort, dm.nodeID)
 	}
 }
 
