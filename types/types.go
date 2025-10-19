@@ -3,7 +3,6 @@ package types
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -314,7 +313,7 @@ func ExtractPartitionStoreID(key string) PartitionStore {
 			return PartitionStore(partId)
 		}
 	}
-	log.Panicf("Invalid key provided to ExtractPartitionStoreID: %v", key))
+	log.Panicf("Invalid key provided to ExtractPartitionStoreID: %v", key)
 	return ""
 }
 
@@ -326,7 +325,7 @@ func ExtractFilePath(key string) string {
 		return parts[1]
 	}
 
-	log.Panicf("Invalid key provided to ExtractFilePath: %v", key))
+	log.Panicf("Invalid key provided to ExtractFilePath: %v", key)
 }
 
 type PartitionID string
