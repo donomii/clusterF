@@ -12,7 +12,7 @@ require (
 )
 
 require (
-	github.com/donomii/ensemblekv v0.0.0-20251018202937-37d3d95ea284
+	github.com/donomii/ensemblekv v0.0.0-20251019174700-e43bb5eb6ccf
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/tchap/go-patricia v1.0.1
 )
