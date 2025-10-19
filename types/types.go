@@ -313,6 +313,7 @@ func ExtractPartitionStoreID(key string) PartitionStore {
 			return PartitionStore(partId)
 		}
 	}
+	panic("no")
 	return ""
 }
 

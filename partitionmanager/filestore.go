@@ -318,7 +318,9 @@ func (fs *FileStore) GetContent(key string) ([]byte, error) {
 
 // Put stores both metadata and content atomically
 func (fs *FileStore) Put(key string, metadata, content []byte) error {
-
+	if strings.HasPrefix(key, "/") {
+		panic("no")
+	}
 	partitionStoreName := types.ExtractPartitionStoreID(key)
 	if partitionStoreName == "" {
 		panic("fuck ai")
@@ -364,6 +366,9 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 
 // PutMetadata stores only metadata
 func (fs *FileStore) PutMetadata(key string, metadata []byte) error {
+	if strings.HasPrefix(key, "/") {
+		panic("no")
+	}
 	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
 		panic("fuck ai")

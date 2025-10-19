@@ -1359,6 +1359,9 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 	// Find partitions that are under-replicated or need syncing
 	for _, partitionID := range partitionKeys {
+		if ctx.Err() != nil {
+			return "", []types.NodeID{}
+		}
 		info := allPartitions[partitionID]
 		if len(info.Holders) >= currentRF {
 			// Check if we have this partition and if our modifiedAt timestamp matches other holders
