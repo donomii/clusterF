@@ -1249,7 +1249,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 		return
 	}
 
-	throttle := make(chan struct{}, 2)
+	throttle := make(chan struct{}, 6)
 	defer close(throttle)
 
 	// Loop forever, checking for partitions to sync
@@ -1362,7 +1362,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 				for _, holderID := range info.Holders {
 					if holderID != ourNodeId && !info.LastModified.Equal(ourHolderData.MostRecentModifiedTime) {
 						pm.debugf("[PARTITION] Timestamp mismatch for %s: ours %s=%s, theirs %s=%s",
-						 partitionID, ourNodeId, ourHolderData.MostRecentModifiedTime, holderID, info.LastModified)
+							partitionID, ourNodeId, ourHolderData.MostRecentModifiedTime, holderID, info.LastModified)
 						needSync = true
 						break
 					}

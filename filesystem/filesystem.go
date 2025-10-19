@@ -57,10 +57,7 @@ func verifyChecksum(content []byte, expectedChecksum string) error {
 	return nil
 }
 
-// StoreFile requires explicit metadata; callers must provide modification time via StoreFileWithModTime.
-func (fs *ClusterFileSystem) StoreFile(path string, content []byte, contentType string) error {
-	return fmt.Errorf("StoreFile requires explicit modification time; use StoreFileWithModTime")
-}
+
 
 // debugf logs a debug message if Debug is enabled
 func (c *ClusterFileSystem) debugf(format string, v ...interface{}) {
@@ -106,9 +103,8 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 	return meta.ModifiedAt, meta.Size, nil
 }
 
-// StoreFileWithModTime stores a file using an explicit modification time
-func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) error {
-
+// StoreFileWithModTime stores a file using an explicit modification time and returns the node that handled the write.
+func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
 	// Calculate checksum for file integrity
 	checksum := calculateChecksum(content)
 	//fs.debugf("[CHECKSUM_DEBUG] Calculated checksum for %s: %s", path, checksum)
@@ -138,14 +134,14 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path stri
 	}
 
 	if err := fs.cluster.PartitionManager().StoreFileInPartition(ctx, path, metadataJSON, content); err != nil {
-		return logerrf("failed to store file: %v", err)
+		return "", logerrf("failed to store file: %v", err)
 	}
 
-	return nil
+	return fs.cluster.ID(), nil
 }
 
 // forwardUploadToStorageNode forwards file uploads from no-store clients to storage nodes
-func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSON []byte, content []byte, contentType string) error {
+func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSON []byte, content []byte, contentType string) (types.NodeID, error) {
 	// Calculate partition name for this file
 	partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
 
@@ -169,18 +165,77 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 				targetNodes = append(targetNodes, string(nodeID))
 			}
 		}
+	}
+	// Randomize the list
+	if len(targetNodes) > 1 {
+		for i := len(targetNodes) - 1; i > 0; i-- {
+			j := rand.Intn(i + 1)
+			targetNodes[i], targetNodes[j] = targetNodes[j], targetNodes[i]
+		}
+	}
+	// Select nodes based on rules
+	type nodeCandidate struct {
+		id       string
+		usage    float64
+		hasUsage bool
+	}
 
-		// Randomize the list
-		if len(targetNodes) > 1 {
-			for i := len(targetNodes) - 1; i > 0; i-- {
-				j := rand.Intn(i + 1)
-				targetNodes[i], targetNodes[j] = targetNodes[j], targetNodes[i]
+	candidates := make([]nodeCandidate, 0, len(targetNodes))
+	for _, id := range targetNodes {
+		info, ok := allNodes[types.NodeID(id)]
+		var usage float64
+		hasUsage := ok && info != nil && info.DiskSize > 0
+		if hasUsage {
+			used := info.DiskSize - info.DiskFree
+			if used < 0 {
+				used = 0
+			}
+			usage = float64(used) / float64(info.DiskSize)
+			if usage >= 0.9 {
+				continue // Drop nodes that are 90% full or higher
 			}
 		}
+		// Track candidate usage so we can prioritise low-usage nodes
+		candidates = append(candidates, nodeCandidate{
+			id:       id,
+			usage:    usage,
+			hasUsage: hasUsage,
+		})
+	}
+
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no storage nodes available to forward upload (after filtering)")
+	}
+
+	minIdx := -1
+	minUsage := 2.0 // Higher than any valid usage (which is <= 1.0)
+	for i, candidate := range candidates {
+		if !candidate.hasUsage {
+			continue
+		}
+		if candidate.usage < minUsage {
+			minUsage = candidate.usage
+			minIdx = i
+		}
+	}
+	if minIdx > 0 {
+		// Move the lowest-usage node to the front so it is tried first
+		lowest := candidates[minIdx]
+		copy(candidates[1:minIdx+1], candidates[0:minIdx])
+		candidates[0] = lowest
+	}
+	// Occasionally rotate the first two nodes to avoid hot-spotting on a single peer
+	if len(candidates) > 1 && rand.Float64() < 0.25 {
+		candidates[0], candidates[1] = candidates[1], candidates[0]
+	}
+
+	targetNodes = targetNodes[:0]
+	for _, candidate := range candidates {
+		targetNodes = append(targetNodes, candidate.id)
 	}
 
 	if len(targetNodes) == 0 {
-		return fmt.Errorf("no storage nodes available to forward upload")
+		return "", fmt.Errorf("no storage nodes available to forward upload")
 	}
 
 	// Get discovery peers to match nodeIDs to addresses
@@ -188,7 +243,6 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 	// Try forwarding to target nodes until one succeeds
 	var lastErr error
-	forwarded := false
 	skippedPeers := 0
 
 	modTime, size, metaErr := decodeForwardedMetadata(metadataJSON)
@@ -238,27 +292,28 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 			lastErr = err
 			continue
 		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == http.StatusCreated {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
 			fs.debugf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
-			forwarded = true
-			return nil // Success
+			return types.NodeID(nodeID), nil
 		}
 		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		lastErr = fmt.Errorf("peer (%v) store query returned %v(%v) '%v'", peer.NodeID, resp.StatusCode, resp.Status, respBody)
 
 	}
 
-	if forwarded || skippedPeers == len(targetNodes) {
-		return nil
+	if skippedPeers == len(targetNodes) {
+		fs.debugf("[FILES] All peers already had %s; nothing to forward", path)
+		return "", nil
 	}
 
 	if lastErr == nil {
-		lastErr = fmt.Errorf("no storage nodes accepted upload(forwarded=%v, skipped=%v)", forwarded, skippedPeers)
+		lastErr = fmt.Errorf("no storage nodes accepted upload (skipped=%v)", skippedPeers)
 	}
 
-	return fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
+	return "", fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
 }
 
 // GetFileWithContentType retrieves a file and returns an io.ReadCloser with content type

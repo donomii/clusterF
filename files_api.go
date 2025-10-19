@@ -385,7 +385,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 			contentType = metadata.ContentType
 		}
 
-		if err := c.FileSystem.StoreFileWithModTime(c.AppContext(), path, content, contentType, metadata.ModifiedAt); err != nil {
+		if _, err := c.FileSystem.StoreFileWithModTime(c.AppContext(), path, content, contentType, metadata.ModifiedAt); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -400,7 +400,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
 			return
 		}
-		if err := c.FileSystem.StoreFileWithModTime(c.AppContext(), path, content, contentType, localModTime); err != nil {
+		if _, err := c.FileSystem.StoreFileWithModTime(c.AppContext(), path, content, contentType, localModTime); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
 			return
 		}

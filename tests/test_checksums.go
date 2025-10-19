@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -111,7 +112,7 @@ func TestChecksumFunctionality(t *testing.T) {
 	}
 
 	// Initialize file system
-	fs := filesystem.NewClusterFileSystem(cluster)
+	fs := filesystem.NewClusterFileSystem(cluster, false)
 
 	// Test data
 	testPath := "/test/file.txt"
@@ -121,7 +122,7 @@ func TestChecksumFunctionality(t *testing.T) {
 
 	// Test 1: Store file with checksum
 	t.Log("Test 1: Storing file with checksum")
-	err = fs.StoreFileWithModTime(testPath, testContent, testContentType, testModTime)
+	_, err = fs.StoreFileWithModTime(context.TODO(), testPath, testContent, testContentType, testModTime)
 	if err != nil {
 		t.Fatalf("Failed to store file: %v", err)
 	}

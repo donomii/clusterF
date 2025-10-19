@@ -19,7 +19,7 @@ func TestStatusHandlerReturnsJSON(t *testing.T) {
 	})
 	defer cluster.Stop()
 
-	if err := cluster.FileSystem.StoreFileWithModTime(context.TODO(), "/test.txt", []byte("hello"), "text/plain", time.Now()); err != nil {
+	if _, err := cluster.FileSystem.StoreFileWithModTime(context.TODO(), "/test.txt", []byte("hello"), "text/plain", time.Now()); err != nil {
 		t.Fatalf("store file failed: %v", err)
 	}
 

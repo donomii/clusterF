@@ -65,7 +65,7 @@ func (w *clusterFileWriter) Close() error {
 	}
 
 	// FIXME context?
-	if err := w.cfs.fs.StoreFileWithModTime(context.Background(), w.clusterPath, data, contentType, time.Now()); err != nil {
+	if _, err := w.cfs.fs.StoreFileWithModTime(context.Background(), w.clusterPath, data, contentType, time.Now()); err != nil {
 		return webdav.NewHTTPError(http.StatusInternalServerError, err)
 	}
 
@@ -470,7 +470,7 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 					if err != nil {
 						continue // Skip files that can't be read
 					}
-					cfs.fs.StoreFileWithModTime(ctx, newDstPath, data, entry.ContentType, entry.ModifiedAt)
+					_, _ = cfs.fs.StoreFileWithModTime(ctx, newDstPath, data, entry.ContentType, entry.ModifiedAt)
 				}
 			}
 		}
@@ -489,7 +489,7 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 		if fullMeta.ModifiedAt.IsZero() {
 			panic("no")
 		}
-		if err := cfs.fs.StoreFileWithModTime(ctx, dstClusterPath, data, contentType, fullMeta.ModifiedAt); err != nil {
+		if _, err := cfs.fs.StoreFileWithModTime(ctx, dstClusterPath, data, contentType, fullMeta.ModifiedAt); err != nil {
 			return false, webdav.NewHTTPError(http.StatusInternalServerError, err)
 		}
 	}

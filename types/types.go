@@ -106,7 +106,7 @@ type IndexerLike interface {
 type FileSystemLike interface {
 	CreateDirectory(path string) error
 	CreateDirectoryWithModTime(path string, modTime time.Time) error
-	StoreFileWithModTime(ctx context.Context, path string, data []byte, contentType string, modTime time.Time) error
+	StoreFileWithModTime(ctx context.Context, path string, data []byte, contentType string, modTime time.Time) (NodeID, error)
 	DeleteFile(ctx context.Context, path string) error
 	MetadataForPath(path string) (FileMetadata, error)
 	// Additional methods for WebDAV support
