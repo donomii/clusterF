@@ -494,7 +494,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	// If in no-store mode, always try peers first
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path)
-		return pm.getFileFromPeers(path)
+		return pm.GetFileFromPeers(path)
 	}
 
 	partitionID := HashToPartition(path)
@@ -504,12 +504,12 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	fileData, err := pm.deps.FileStore.Get(fileKey)
 	if err != nil {
 		pm.debugf("[PARTITION] File %s not found locally (err: %v), trying peers", fileKey, err)
-		return pm.getFileFromPeers(path)
+		return pm.GetFileFromPeers(path)
 	}
 
 	if !fileData.Exists {
 		pm.debugf("[PARTITION] File %s not found locally, trying peers", fileKey)
-		return pm.getFileFromPeers(path)
+		return pm.GetFileFromPeers(path)
 	}
 
 	// Parse metadata
@@ -532,7 +532,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	if err := pm.verifyFileChecksum(fileData.Content, checksum, path, string(pm.deps.NodeID)); err != nil {
 		pm.logf("[PARTITION] Local file corruption detected for %s: %v", path, err)
 		// File is corrupted locally, try to get from peers
-		return pm.getFileFromPeers(path)
+		return pm.GetFileFromPeers(path)
 	}
 	pm.debugf("[PARTITION] Local checksum verified for %s", path)
 
@@ -541,8 +541,8 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	return fileData.Content, metadata, nil
 }
 
-// getFileFromPeers attempts to retrieve a file from peer nodes
-func (pm *PartitionManager) getFileFromPeers(path string) ([]byte, types.FileMetadata, error) {
+// GetFileFromPeers attempts to retrieve a file from peer nodes
+func (pm *PartitionManager) GetFileFromPeers(path string) ([]byte, types.FileMetadata, error) {
 	partitionID := HashToPartition(path)
 	partition := pm.GetPartitionInfo(partitionID)
 	if partition == nil {
@@ -630,7 +630,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 	//defer pm.debugf("Leaving GetMetadataFromPartition for path %v", path)
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: getting metadata %s from peers", path)
-		return pm.GetMetadataFromPeers(path)
+		return types.FileMetadata{}, fmt.Errorf("[PARTITION] No-store mode: getting metadata %s from peers", path)
 	}
 
 	partitionID := HashToPartition(path)
@@ -640,7 +640,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 	if err != nil {
 		// It's normal for a file not to be found locally
 		pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
-		return pm.GetMetadataFromPeers(path)
+		return types.FileMetadata{}, fmt.Errorf("[PARTITION] Metadata %s not found locally: %v", path, err)
 	}
 
 	var parsedMetadata types.FileMetadata

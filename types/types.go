@@ -41,9 +41,11 @@ type PartitionManagerLike interface {
 	StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
 	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)                                // Get file and metadata from partition, including from other nodes
 	DeleteFileFromPartition(ctx context.Context, path string) error                                       // Delete file from partition, does not send to network
-	GetMetadataFromPartition(path string) (FileMetadata, error)                                           // Get file metadata from partition, including from other nodes
-	CalculatePartitionName(path string) string                                                            // Calculate partition name for a given path
-	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error                             // Scan all files in all partitions, calling fn for each file
+	GetMetadataFromPartition(path string) (FileMetadata, error)                                           // Get file metadata from partition
+	GetMetadataFromPeers(path string) (FileMetadata, error)                                               // Get file metadata from other nodes
+	GetFileFromPeers(path string) ([]byte, FileMetadata, error)
+	CalculatePartitionName(path string) string                                // Calculate partition name for a given path
+	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error // Scan all files in all partitions, calling fn for each file
 	GetPartitionInfo(partitionID PartitionID) *PartitionInfo
 	RunReindex(ctx context.Context)
 	RunFullReindexAtStartup(ctx context.Context) // Run full reindex at startup, scanning entire store and publishing updates

@@ -57,8 +57,6 @@ func verifyChecksum(content []byte, expectedChecksum string) error {
 	return nil
 }
 
-
-
 // debugf logs a debug message if Debug is enabled
 func (c *ClusterFileSystem) debugf(format string, v ...interface{}) {
 	if !c.Debug {
@@ -332,14 +330,14 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, types.FileMetadata, e
 	content, metadata, err := fs.cluster.PartitionManager().GetFileAndMetaFromPartition(path)
 	if err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
-			return nil, types.FileMetadata{}, types.ErrFileNotFound
+			return fs.cluster.PartitionManager().GetFileFromPeers(path)
 		}
-		return nil, types.FileMetadata{}, err
+		return fs.cluster.PartitionManager().GetFileFromPeers(path)
 	}
 
 	// Check if file is marked as deleted
 	if metadata.Deleted {
-		return nil, types.FileMetadata{}, types.ErrFileNotFound
+		return fs.cluster.PartitionManager().GetFileFromPeers(path)
 	}
 
 	// Verify file integrity using checksum
@@ -376,7 +374,7 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (types.FileMetadata, error
 	metadata, err := fs.cluster.PartitionManager().GetMetadataFromPartition(path)
 	if err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
-			return types.FileMetadata{}, types.ErrFileNotFound
+			return fs.cluster.PartitionManager().GetMetadataFromPeers(path)
 		}
 		return types.FileMetadata{}, err
 	}

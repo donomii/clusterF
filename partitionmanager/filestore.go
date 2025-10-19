@@ -195,6 +195,7 @@ func (fs *FileStore) closePartitionStores(metadataKV, contentKV ensemblekv.KvLik
 func (fs *FileStore) Get(key string) (*FileData, error) {
 	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
+		panic("fuck ai")
 		return &FileData{Key: key, Exists: false}, fmt.Errorf("Unable to locate storage for partition '%v'", partitionID)
 	}
 
@@ -245,6 +246,7 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 
 	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
+		panic("fuck ai")
 		return nil, fmt.Errorf("invalid key format")
 	}
 
@@ -287,6 +289,7 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 func (fs *FileStore) GetContent(key string) ([]byte, error) {
 	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
+		panic("fuck ai")
 		return nil, fmt.Errorf("invalid key format")
 	}
 
@@ -318,6 +321,7 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 
 	partitionStoreName := types.ExtractPartitionStoreID(key)
 	if partitionStoreName == "" {
+		panic("fuck ai")
 		return fmt.Errorf("invalid key format")
 	}
 	partitionId := types.ExtractPartitionID(key)
@@ -362,6 +366,7 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 func (fs *FileStore) PutMetadata(key string, metadata []byte) error {
 	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
+		panic("fuck ai")
 		return fmt.Errorf("invalid key format")
 	}
 
@@ -400,6 +405,7 @@ func (fs *FileStore) Delete(key string) error {
 
 	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
+		panic("fuck ai")
 		return fmt.Errorf("invalid key format")
 	}
 
