@@ -1233,7 +1233,7 @@ func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID typ
 			//If we can't, then remove the peer as a holder, from the crdt
 			pm.removePeerHolder(partitionID, holderID, 30*time.Minute)
 		}
-		err := pm.syncPartitionFromPeer(ctx, partitionID, holderID)
+		err := pm.syncPartitionWithPeer(ctx, partitionID, holderID)
 		if err != nil {
 			pm.logf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
 		}

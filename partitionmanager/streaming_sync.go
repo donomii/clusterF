@@ -1,4 +1,4 @@
-// NEW streaming HandlePartitionSync and syncPartitionFromPeer implementations
+// NEW streaming HandlePartitionSync and syncPartitionWithPeer implementations
 package partitionmanager
 
 import (
@@ -14,13 +14,19 @@ import (
 	"github.com/donomii/clusterF/urlutil"
 )
 
-// handlePartitionSync serves partition data with object-by-object streaming
+// handlePartitionSync serves partition data with object-by-object streaming or accepts updates
 func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.Request, partitionID types.PartitionID) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		pm.handlePartitionSyncGet(w, r, partitionID)
+	case http.MethodPost:
+		pm.handlePartitionSyncPost(w, r, partitionID)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
+}
 
+func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *http.Request, partitionID types.PartitionID) {
 	ctx := r.Context()
 	select {
 	case <-ctx.Done():
@@ -29,7 +35,7 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 	default:
 	}
 
-	if pm.deps.Cluster.GetPartitionSyncPaused() {
+	if pm.deps.Cluster != nil && pm.deps.Cluster.GetPartitionSyncPaused() {
 		http.Error(w, "sync paused", http.StatusServiceUnavailable)
 		return
 	}
@@ -107,8 +113,61 @@ func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.R
 	pm.debugf("[PARTITION] Completed streaming %d entries for partition %s", entriesStreamed, partitionID)
 }
 
-// syncPartitionFromPeer synchronizes a partition using object-by-object streaming
-func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID) error {
+func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *http.Request, partitionID types.PartitionID) {
+	if pm.deps.Cluster != nil && pm.deps.Cluster.GetPartitionSyncPaused() {
+		http.Error(w, "sync paused", http.StatusServiceUnavailable)
+		return
+	}
+
+	sourceNode := types.NodeID(r.Header.Get("X-ClusterF-Node"))
+	if sourceNode == "" {
+		sourceNode = "unknown"
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	applied := 0
+	skipped := 0
+
+	for {
+		var entry PartitionSyncEntry
+		if err := decoder.Decode(&entry); err == io.EOF {
+			break
+		} else if err != nil {
+			http.Error(w, fmt.Sprintf("failed to decode entry: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		if entry.Key == "" {
+			break
+		}
+
+		ok, err := pm.applyPartitionEntry(entry, sourceNode, partitionID)
+		if err != nil {
+			pm.logf("[PARTITION] Failed to apply streamed entry %s from %s: %v", entry.Key, sourceNode, err)
+			continue
+		}
+		if ok {
+			applied++
+		} else {
+			skipped++
+		}
+	}
+
+	pm.MarkForReindex(partitionID)
+	pm.notifyFileListChanged()
+
+	response := map[string]int{
+		"applied": applied,
+		"skipped": skipped,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+	pm.debugf("[PARTITION] Applied %d entries from %s for partition %s (skipped %d)", applied, sourceNode, partitionID, skipped)
+}
+
+// syncPartitionWithPeer synchronizes a partition using object-by-object streaming in both directions
+func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID) error {
 	// No-store nodes should never sync partitions
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: refusing to sync partition %s", partitionID)
@@ -145,17 +204,44 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 		return fmt.Errorf("peer '%s' not found for partition '%s'. Available peers: [%s]", peerID, partitionID, strings.Join(availablePeers, ", "))
 	}
 
-	pm.debugf("[PARTITION] Starting streaming sync of %s from %s", partitionID, peerID)
+	pm.debugf("[PARTITION] Starting bidirectional streaming sync of %s with %s", partitionID, peerID)
 
-	// Request partition data stream from peer
-	syncURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
+	syncCount, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peerAddr, peerPort)
 	if err != nil {
-		return fmt.Errorf("failed to build sync URL: %v", err)
+		return err
 	}
 
-	resp, err := pm.httpClient().Get(syncURL)
+	pm.MarkForReindex(partitionID)
+
+	pm.debugf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
+
+	// Notify frontend that file list may have changed
+	pm.notifyFileListChanged()
+
+	// Push our latest view back to the peer
+	if err := pm.pushPartitionToPeer(ctx, partitionID, peerID, peerAddr, peerPort); err != nil {
+		return fmt.Errorf("failed to push partition %s to %s: %w", partitionID, peerID, err)
+	}
+
+	pm.debugf("[PARTITION] Completed bidirectional sync of %s with %s", partitionID, peerID)
+
+	return nil
+}
+
+func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) (int, error) {
+	syncURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
 	if err != nil {
-		return fmt.Errorf("failed to request partition sync: %v", err)
+		return 0, fmt.Errorf("failed to build sync URL: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, syncURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to build sync request: %v", err)
+	}
+
+	resp, err := pm.httpClient().Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to request partition sync: %v", err)
 	}
 	defer func() {
 		io.Copy(io.Discard, resp.Body)
@@ -163,90 +249,190 @@ func (pm *PartitionManager) syncPartitionFromPeer(ctx context.Context, partition
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("peer returned error %d '%s'", resp.StatusCode, resp.Status)
+		return 0, fmt.Errorf("peer returned error %d '%s'", resp.StatusCode, resp.Status)
 	}
 
-	// Stream and apply entries one by one
 	decoder := json.NewDecoder(resp.Body)
 	syncCount := 0
 
 	for {
 		if ctx.Err() != nil {
-			return fmt.Errorf("context canceled: %v", ctx.Err())
+			return 0, fmt.Errorf("context canceled: %v", ctx.Err())
 		}
 
 		var entry PartitionSyncEntry
 		if err := decoder.Decode(&entry); err == io.EOF {
 			break
 		} else if err != nil {
-			// Read a sample of what we received to help debug
 			sample := make([]byte, 200)
 			n, _ := resp.Body.Read(sample)
-			return fmt.Errorf("failed to decode sync entry from %s (partition %s): %v. Sample of received data (%d bytes): %q", peerID, partitionID, err, n, string(sample[:n]))
+			return 0, fmt.Errorf("failed to decode sync entry from %s (partition %s): %v. Sample of received data (%d bytes): %q", peerID, partitionID, err, n, string(sample[:n]))
 		}
 
 		if entry.Key == "" {
-			break // End of stream marker
+			break
 		}
 
-		// Verify entry checksum
-		expectedChecksum := pm.calculateEntryChecksum(entry.Metadata, entry.Content)
-		if entry.Checksum != expectedChecksum {
-			pm.logf("[PARTITION] Checksum mismatch for %s from %s: expected %s, got %s", entry.Key, peerID, expectedChecksum, entry.Checksum)
-			//FIXME do something about it
-			continue // Skip corrupted entry
+		applied, err := pm.applyPartitionEntry(entry, peerID, partitionID)
+		if err != nil {
+			pm.logf("[PARTITION] Failed to apply sync entry '%s' from %s: %v", entry.Key, peerID, err)
+			continue
 		}
-
-		// Apply CRDT merge logic
-		if pm.shouldUpdateEntry(entry) {
-			if err := pm.deps.FileStore.Put(entry.Key, entry.Metadata, entry.Content); err != nil {
-				pm.logf("[PARTITION] Failed to store sync entry '%s': %v", entry.Key, err)
-				continue
-			}
+		if applied {
 			syncCount++
-
-			var metadata types.FileMetadata
-			err := json.Unmarshal(entry.Metadata, &metadata)
-			if err != nil {
-				pm.logf("corrupt metadata in transfer: %v", string(entry.Metadata))
-			}
-
-			partitionKey := HashToPartition(metadata.Path)
-			holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionKey, pm.deps.NodeID)
-
-			// Get existing partitiontime
-			dataPoint := pm.deps.Frogpond.GetDataPoint(holderKey)
-			data := dataPoint.Value
-
-			var currentHolderData types.HolderData
-			json.Unmarshal(data, &currentHolderData)
-
-			if metadata.ModifiedAt.After(currentHolderData.MostRecentModifiedTime) {
-				holderData := types.HolderData{
-					MostRecentModifiedTime: metadata.ModifiedAt,
-					File_count:             currentHolderData.File_count, //FIXME detect if we're updating or inserting for the first time
-					Checksum:               "",
-				}
-				holderJSON, _ := json.Marshal(holderData)
-
-				// Send  updates to CRDT
-				pm.sendUpdates(pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON))
-			}
-
 			if syncCount%100 == 0 {
 				pm.debugf("[PARTITION] Applied %d entries for partition %s", syncCount, partitionID)
 			}
 		}
 	}
 
-	// Update our partition metadata
-	pm.MarkForReindex(partitionID)
+	return syncCount, nil
+}
 
-	pm.debugf("[PARTITION] Completed sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
+func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID types.NodeID, partitionID types.PartitionID) (bool, error) {
+	expectedChecksum := pm.calculateEntryChecksum(entry.Metadata, entry.Content)
+	if entry.Checksum != expectedChecksum {
+		return false, fmt.Errorf("checksum mismatch for %s from %s: expected %s, got %s", entry.Key, peerID, expectedChecksum, entry.Checksum)
+	}
 
-	// Notify frontend that file list may have changed
-	pm.notifyFileListChanged()
+	if !pm.shouldUpdateEntry(entry) {
+		return false, nil
+	}
 
+	if err := pm.deps.FileStore.Put(entry.Key, entry.Metadata, entry.Content); err != nil {
+		return false, fmt.Errorf("failed to store entry %s: %w", entry.Key, err)
+	}
+
+	if !pm.hasFrogpond() {
+		return true, nil
+	}
+
+	var metadata types.FileMetadata
+	if err := json.Unmarshal(entry.Metadata, &metadata); err != nil {
+		return true, fmt.Errorf("corrupt metadata for entry %s: %w", entry.Key, err)
+	}
+
+	partitionKey := HashToPartition(metadata.Path)
+	holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionKey, pm.deps.NodeID)
+
+	dataPoint := pm.deps.Frogpond.GetDataPoint(holderKey)
+	var currentHolderData types.HolderData
+	if len(dataPoint.Value) > 0 {
+		if err := json.Unmarshal(dataPoint.Value, &currentHolderData); err != nil {
+			currentHolderData = types.HolderData{}
+		}
+	}
+
+	if metadata.ModifiedAt.After(currentHolderData.MostRecentModifiedTime) {
+		holderData := types.HolderData{
+			MostRecentModifiedTime: metadata.ModifiedAt,
+			File_count:             currentHolderData.File_count,
+			Checksum:               "",
+		}
+		holderJSON, _ := json.Marshal(holderData)
+		pm.sendUpdates(pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON))
+	}
+
+	return true, nil
+}
+
+func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) error {
+	pushURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
+	if err != nil {
+		return fmt.Errorf("failed to build push URL: %v", err)
+	}
+
+	pr, pw := io.Pipe()
+	encoder := json.NewEncoder(pw)
+	errCh := make(chan error, 1)
+	var sentCount int64
+
+	go func() {
+		prefix := fmt.Sprintf("partition:%s:file:", partitionID)
+		streamErr := pm.deps.FileStore.Scan(prefix, func(key string, metadata, content []byte) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			if !strings.HasPrefix(key, prefix) {
+				return nil
+			}
+
+			if content == nil {
+				content = []byte{}
+			}
+
+			entry := PartitionSyncEntry{
+				Key:      key,
+				Metadata: metadata,
+				Content:  content,
+				Checksum: pm.calculateEntryChecksum(metadata, content),
+			}
+
+			if err := encoder.Encode(entry); err != nil {
+				return err
+			}
+
+			sentCount++
+			if sentCount%100 == 0 {
+				pm.debugf("[PARTITION] Streamed %d entries of %s to %s", sentCount, partitionID, peerID)
+			}
+
+			return nil
+		})
+
+		if streamErr == nil {
+			streamErr = encoder.Encode(struct{}{})
+		}
+
+		if streamErr != nil {
+			pw.CloseWithError(streamErr)
+		} else {
+			pw.Close()
+		}
+
+		errCh <- streamErr
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, pushURL, pr)
+	if err != nil {
+		pw.CloseWithError(err)
+		<-errCh
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-ClusterF-Node", string(pm.deps.NodeID))
+
+	resp, err := pm.httpClient().Do(req)
+	if err != nil {
+		pw.CloseWithError(err)
+		<-errCh
+		return err
+	}
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		streamErr := <-errCh
+		msg := strings.TrimSpace(string(body))
+		if msg == "" {
+			msg = resp.Status
+		}
+		if streamErr != nil {
+			return fmt.Errorf("peer %s rejected partition push (%s): %v", peerID, msg, streamErr)
+		}
+		return fmt.Errorf("peer %s rejected partition push (%s)", peerID, msg)
+	}
+
+	streamErr := <-errCh
+	if streamErr != nil && streamErr != io.EOF {
+		return fmt.Errorf("failed to stream partition %s to %s: %w", partitionID, peerID, streamErr)
+	}
+
+	pm.debugf("[PARTITION] Pushed %d entries for partition %s to %s", sentCount, partitionID, peerID)
 	return nil
 }
 

@@ -247,7 +247,7 @@ func (cfs *ClusterFileSystem) fakeStatIfNotFound(clusterPath string) (*webdav.Fi
 		return &webdav.FileInfo{
 			Path:     clusterPath,
 			Size:     0,
-			ModTime:  dps[0].ModifiedAt,
+			ModTime:  dps[0].ModifiedAt, //FIXME use the latest modified time from the list
 			IsDir:    true,
 			MIMEType: "application/directory",
 			ETag:     fmt.Sprintf("%x", dps[0].ModifiedAt.UnixNano()),
