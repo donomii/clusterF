@@ -76,8 +76,9 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	//pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
 	count := 0
 
-	pm.ReindexList.Range(func(key types.PartitionID, value bool) bool {
-
+	keys := pm.ReindexList.Keys()
+	for _, key := range keys {
+		value, _ := pm.ReindexList.Load(key)
 		if value {
 			pm.ReindexList.Store(key, false) // Clear the flag before re-indexing, as new items will not necessarily be caught during
 			//pm.deps.Logger.Printf("[REINDEX] Starting reindex of partition %v", key)
@@ -85,8 +86,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 			count = count + 1
 			pm.debugf("Finished reindex of %v", key)
 		}
-		return true
-	})
+	}
 
 	pm.debugf("[RUNREINDEX] Completed reindex cycle in %v for %v partitions", time.Since(start), count)
 
