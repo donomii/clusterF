@@ -69,6 +69,9 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	if pm.deps.Cluster.NoStore() {
 		return
 	}
+	if pm.getPartitionSyncPaused() {
+		return
+	}
 	start := time.Now()
 	//pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
 	count := 0
@@ -885,7 +888,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			}
 
 		}
-		pm.logf("Updated CRDT metadata for partition %v", partitionID)
+		pm.logf("[updatePartitionMetadata] Updated CRDT metadata for partition %v", partitionID)
 	}
 	// Send updates to peers
 
@@ -1273,7 +1276,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			if pm.getPartitionSyncPaused() {
 				// Sync is paused, wait a bit before checking again
 				syncInterval := pm.getPartitionSyncInterval()
-				pm.debugf("Waiting syncInterval %v", syncInterval)
+				//pm.debugf("Waiting syncInterval %v", syncInterval)
 				select {
 				case <-ctx.Done():
 					return
@@ -1292,7 +1295,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			} else {
 				// Nothing to sync, wait a bit before checking again
 				syncInterval := pm.getPartitionSyncInterval()
-				pm.debugf("Waiting syncInterval %v", syncInterval)
+				//pm.debugf("Waiting syncInterval %v", syncInterval)
 				select {
 				case <-ctx.Done():
 					return

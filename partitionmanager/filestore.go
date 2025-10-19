@@ -198,7 +198,7 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 		return &FileData{Key: key, Exists: false}, fmt.Errorf("Unable to locate storage for partition '%v'", partitionID)
 	}
 
-	fs.debugf("Get: acquiring read lock for partition %s, key %s", partitionID, key)
+	//fs.debugf("Get: acquiring read lock for partition %s, key %s", partitionID, key)
 	start := time.Now()
 	lock := fs.getPartitionLock(partitionID)
 	lock.RLock()
@@ -248,7 +248,7 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid key format")
 	}
 
-	fs.debugf("GetMetadata: acquiring read lock for partition %s, key %s", partitionID, key)
+	//fs.debugf("GetMetadata: acquiring read lock for partition %s, key %s", partitionID, key)
 	start := time.Now()
 	lock := fs.getPartitionLock(partitionID)
 	lock.RLock()
