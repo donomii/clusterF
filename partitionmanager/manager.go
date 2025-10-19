@@ -72,7 +72,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	start := time.Now()
 	//pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
 	count := 0
-	defer pm.debugf("[REINDEX] Completed reindex cycle in %v for %v partitions", time.Since(start), count)
+
 	pm.ReindexList.Range(func(key types.PartitionID, value bool) bool {
 
 		if value {
@@ -80,9 +80,12 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 			//pm.deps.Logger.Printf("[REINDEX] Starting reindex of partition %v", key)
 			pm.updatePartitionMetadata(ctx, key)
 			count = count + 1
+			pm.debugf("Finished reindex of %v", key)
 		}
 		return true
 	})
+
+	pm.debugf("[RUNREINDEX] Completed reindex cycle in %v for %v partitions", time.Since(start), count)
 
 }
 
