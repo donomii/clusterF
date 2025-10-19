@@ -327,6 +327,9 @@ func (c *Cluster) updateNodeMetadata() {
 		url = storageSettings.URL
 	}
 
+	// Get absolute path for data directory for THIS node only
+	absDataDir, _ := filepath.Abs(c.DataDir)
+
 	nodeData := types.NodeData{
 		NodeID:        string(c.NodeId),
 		Address:       address,
@@ -338,7 +341,7 @@ func (c *Cluster) updateNodeMetadata() {
 		DiskSize:      diskSize,
 		DiskFree:      diskFree,
 		IsStorage:     !c.noStore,
-		DataDir:       c.DataDir,
+		DataDir:       absDataDir,
 		StorageFormat: storageFormat,
 		StorageMinor:  storageMinor,
 		Program:       program,
