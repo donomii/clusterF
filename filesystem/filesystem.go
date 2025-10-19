@@ -271,7 +271,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 			}
 		}
 
-		fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, path)
+		fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
 		if err != nil {
 			lastErr = err
 			continue
@@ -414,7 +414,7 @@ func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime tim
 }
 
 func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *types.PeerInfo, path string, modTime time.Time, size int64) (bool, error) {
-	fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, path)
+	fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
 	if err != nil {
 		return false, err
 	}

@@ -406,7 +406,7 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename str
 		decodedPath = "/" + decodedPath
 	}
 
-	fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, decodedPath)
+	fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, decodedPath)
 	if err != nil {
 		pm.debugf("[PARTITION] Failed to build URL for %s on %s: %v", filename, peer.NodeID, err)
 		return nil, err
@@ -453,7 +453,7 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 		decodedPath = "/" + decodedPath
 	}
 
-	metadataURL, err := urlutil.BuildMetadataURL(peer.Address, peer.HTTPPort, decodedPath)
+	metadataURL, err := urlutil.BuildInternalMetadataURL(peer.Address, peer.HTTPPort, decodedPath)
 	if err != nil {
 		return types.FileMetadata{}, err
 	}
@@ -700,7 +700,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadat
 			continue
 		}
 
-		if peer, ok := pm.loadPeer(holder); ok {
+		if peer, ok := pm.loadPeer(holder); ok { //What stupidity is this?
 			addPeer(holder, peer)
 			continue
 		}

@@ -984,6 +984,9 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/api/crdt/search", corsMiddleware(c.Debug, c.Logger(), c.handleCRDTSearchAPI))
 	mux.HandleFunc("/api/files/", corsMiddleware(c.Debug, c.Logger(), c.handleFilesAPI))
 	mux.HandleFunc("/api/metadata/", corsMiddleware(c.Debug, c.Logger(), c.handleMetadataAPI))
+	// Internal API endpoints for peer-to-peer communication
+	mux.HandleFunc("/internal/files/", corsMiddleware(c.Debug, c.Logger(), c.handleInternalFilesAPI))
+	mux.HandleFunc("/internal/metadata/", corsMiddleware(c.Debug, c.Logger(), c.handleInternalMetadataAPI))
 	// Partition sync endpoints
 	mux.HandleFunc("/api/partition-sync/", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionSyncAPI))
 	mux.HandleFunc("/api/partition-stats", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionStats))
@@ -1156,6 +1159,7 @@ func (c *Cluster) handleIntegrityCheck(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(results)
 }
 
+// handleMetadataAPI handles external metadata requests by calling internal handler
 func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/metadata")
 	if path == "" {
@@ -1170,13 +1174,137 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.debugf("[METADATA_API] GET request for path: %s", path)
+	c.debugf("[METADATA_API] External GET request for path: %s - forwarding to internal handler", path)
 
+	// Get partition info to find which nodes hold this file
+	partitionID := c.PartitionManager().CalculatePartitionName(path)
+	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
+
+	if partitionInfo == nil {
+		c.debugf("[METADATA_API] No partition info found for %s (partition %s)", path, partitionID)
+		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition info found for partition %s)", path, partitionID), http.StatusNotFound)
+		return
+	}
+
+	if len(partitionInfo.Holders) == 0 {
+		c.debugf("[METADATA_API] No holders registered for partition %s (file %s)", partitionID, path)
+		http.Error(w, fmt.Sprintf("File not found in cluster: %s (partition %s has no holders registered)", path, partitionID), http.StatusNotFound)
+		return
+	}
+
+	// Get peer info for all holders
+	peers := c.DiscoveryManager().GetPeers()
+	peerLookup := make(map[types.NodeID]*types.PeerInfo)
+	for _, peer := range peers {
+		peerLookup[types.NodeID(peer.NodeID)] = peer
+	}
+
+	c.debugf("[METADATA_API] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
+
+	// Try each holder until we find the metadata
+	var holderErrors []string
+	for _, holderID := range partitionInfo.Holders {
+		c.debugf("[METADATA_API] Trying holder %s for file %s", holderID, path)
+
+		// Get peer info for this holder
+		var peer *types.PeerInfo
+		if holderID == c.ID() {
+			c.debugf("[METADATA_API] Fetching metadata from localhost")
+			// This is us - call internal handler directly
+			c.handleInternalMetadataAPI(w, r)
+			return
+		} else if p, ok := peerLookup[holderID]; ok {
+			c.debugf("Fetching metadata from peer %+v", p)
+			peer = p
+		} else {
+			c.debugf("[METADATA_API] No peer info available for holder %s", holderID)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: no peer info", holderID))
+			continue
+		}
+
+		// Build URL for this peer's internal metadata endpoint
+		metadataURL, err := urlutil.BuildInternalMetadataURL(peer.Address, peer.HTTPPort, path)
+		if err != nil {
+			c.debugf("[METADATA_API] Failed to build URL for peer %s: %v", peer.NodeID, err)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: URL build failed: %v", peer.NodeID, err))
+			continue
+		}
+
+		// Create request with internal header
+		req, err := http.NewRequest(http.MethodGet, metadataURL, nil)
+		if err != nil {
+			c.debugf("[METADATA_API] Failed to create request for peer %s: %v", peer.NodeID, err)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: request creation failed: %v", peer.NodeID, err))
+			continue
+		}
+		req.Header.Set("X-ClusterF-Internal", "1")
+
+		resp, err := c.HttpDataClient.Do(req)
+		if err != nil {
+			c.debugf("[METADATA_API] Failed to get metadata from peer %s: %v", peer.NodeID, err)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			c.debugf("[METADATA_API] Found metadata for %s on holder %s", path, peer.NodeID)
+
+			// Copy all headers from peer response
+			for key, values := range resp.Header {
+				for _, value := range values {
+					w.Header().Add(key, value)
+				}
+			}
+
+			w.WriteHeader(http.StatusOK)
+			io.Copy(w, resp.Body)
+			return
+		}
+
+		// Read error response body for more detailed error information
+		errorBody, _ := io.ReadAll(resp.Body)
+		errorMsg := fmt.Sprintf("Expected 200, got %d", resp.StatusCode)
+		if len(errorBody) > 0 {
+			errorMsg += fmt.Sprintf(": %s", string(errorBody))
+		}
+		holderErrors = append(holderErrors, fmt.Sprintf("%s: %s", peer.NodeID, errorMsg))
+		c.debugf("[METADATA_API] Holder %s returned status %d for metadata %s: %s", peer.NodeID, resp.StatusCode, path, string(errorBody))
+	}
+
+	// Metadata not found on any registered holder
+	c.debugf("[METADATA_API] Metadata for %s not found on any registered holder for partition %s", path, partitionID)
+	errorSummary := fmt.Sprintf("Metadata not found in cluster: %s", path)
+	if len(holderErrors) > 0 {
+		errorSummary += fmt.Sprintf(" (tried holders: %s)", strings.Join(holderErrors, ", "))
+	}
+	http.Error(w, errorSummary, http.StatusNotFound)
+}
+
+// handleInternalMetadataAPI handles internal peer-to-peer metadata requests
+// Only queries local storage, never forwards to other peers
+func (c *Cluster) handleInternalMetadataAPI(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/internal/metadata")
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	c.debugf("[INTERNAL_METADATA_API] GET request for path: %s", path)
+
+	// Only check local storage, never forward to peers
 	metadata, err := c.FileSystem.GetMetadata(path)
 	if err != nil {
-		c.debugf("[METADATA_API] Not found: %v", path)
+		c.debugf("[INTERNAL_METADATA_API] Not found locally: %v", path)
 		if errors.Is(err, types.ErrFileNotFound) {
-			http.Error(w, "Not found", http.StatusNotFound)
+			http.Error(w, "Metadata not found", http.StatusNotFound)
 			return
 		}
 		http.Error(w, fmt.Sprintf("Failed to retrieve metadata: %v", err), http.StatusInternalServerError)

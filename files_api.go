@@ -15,6 +15,33 @@ import (
 	"github.com/donomii/clusterF/urlutil"
 )
 
+// handleInternalFilesAPI handles internal peer-to-peer file operations
+// Separate endpoint for internal cluster communication at /internal/files/
+func (c *Cluster) handleInternalFilesAPI(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/internal/files")
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		c.handleFileGetInternal(w, r, path)
+	case http.MethodHead:
+		c.handleFileHeadInternal(w, r, path)
+	case http.MethodPut:
+		c.handleFilePutInternal(w, r, path)
+	case http.MethodDelete:
+		c.handleFileDeleteInternal(w, r, path)
+	case http.MethodPost:
+		c.handleFilePostInternal(w, r, path)
+	default:
+		http.Error(w, fmt.Sprintf("Method %s not allowed for /internal/files (supported: GET, HEAD, PUT, DELETE, POST)", r.Method), http.StatusMethodNotAllowed)
+	}
+}
+
 // handleFilesAPI handles file system API operations.
 func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/files")
@@ -25,16 +52,9 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 		path = "/" + path
 	}
 
-	// Check if this is an internal peer-to-peer request
-	isInternal := r.Header.Get("X-ClusterF-Internal") != ""
-
 	switch r.Method {
 	case http.MethodGet:
-		if isInternal {
-			c.handleFileGetInternal(w, r, path)
-		} else {
-			c.handleFileGet(w, r, path)
-		}
+		c.handleFileGet(w, r, path)
 	case http.MethodHead:
 		c.handleFileHead(w, r, path)
 	case http.MethodPut:
@@ -48,7 +68,7 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleFileGetInternal handles internal peer-to-peer file requests
+// handleFileGetInternal handles internal peer-to-peer file GET requests
 // Only queries local storage, never forwards to other peers
 func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, path string) {
 	c.debugf("[FILES] Internal GET request for path: %s", path)
@@ -203,7 +223,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		}
 
 		// Build URL for this peer
-		fileURL, err := urlutil.BuildFilesURL(peer.Address, peer.HTTPPort, path)
+		fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
 		if err != nil {
 			c.debugf("[FILES] Failed to build URL for peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: URL build failed: %v", peer.NodeID, err))
@@ -311,6 +331,190 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 	w.Header().Set("X-ClusterF-Is-Directory", "false")
 	if metadata.Checksum != "" {
 
+		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
+		w.Header().Set("ETag", fmt.Sprintf("\"%s\"", metadata.Checksum))
+	} else {
+		panic("no")
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleFilePutInternal handles internal peer-to-peer file PUT requests
+func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, path string) {
+	// Update current file for monitoring
+	c.currentFile.Store(path)
+	defer c.currentFile.Store("")
+
+	c.debugf("[FILES] Internal PUT request for path: %s", path)
+
+	content, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read request body for %s: %v", path, err), http.StatusBadRequest)
+		return
+	}
+
+	if len(content) == 0 && r.Header.Get("Content-Type") == "" {
+		c.debugf("[FILES] Ignoring empty internal upload for %s (likely directory)", path)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"path":    path,
+			"message": "Directory ignored",
+		})
+		return
+	}
+
+	forwardedFrom := r.Header.Get("X-Forwarded-From")
+	isForwarded := forwardedFrom != ""
+
+	var metadata types.FileMetadata
+
+	if isForwarded {
+		metaHeader := r.Header.Get("X-ClusterF-Metadata")
+		if metaHeader == "" {
+			http.Error(w, fmt.Sprintf("Missing forwarded metadata for internal file upload: %s", path), http.StatusBadRequest)
+			return
+		}
+		decoded, err := base64.StdEncoding.DecodeString(metaHeader)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid forwarded metadata encoding for %s: %v", path, err), http.StatusBadRequest)
+			return
+		}
+		if err := json.Unmarshal(decoded, &metadata); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid forwarded metadata payload for %s: %v", path, err), http.StatusBadRequest)
+			return
+		}
+
+		if metadata.ModifiedAt.IsZero() {
+			panic("no")
+			http.Error(w, fmt.Sprintf("ModifiedAt timestamp is zero in forwarded metadata for %s", path), http.StatusBadRequest)
+			return
+		}
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	if isForwarded {
+		if metadata.ContentType != "" {
+			contentType = metadata.ContentType
+		}
+
+		if _, err := c.FileSystem.StoreFileWithModTime(c.AppContext(), path, content, contentType, metadata.ModifiedAt); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		modHeader := r.Header.Get("X-ClusterF-Modified-At")
+		if modHeader == "" {
+			http.Error(w, fmt.Sprintf("Missing X-ClusterF-Modified-At header for internal file upload: %s", path), http.StatusBadRequest)
+			return
+		}
+		localModTime, err := parseHeaderTimestamp(modHeader)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
+			return
+		}
+		if _, err := c.FileSystem.StoreFileWithModTime(c.AppContext(), path, content, contentType, localModTime); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	c.debugf("[FILES] Stored internal %s (%d bytes)", path, len(content))
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"path":    path,
+		"size":    len(content),
+	})
+}
+
+// handleFileDeleteInternal handles internal peer-to-peer file DELETE requests
+func (c *Cluster) handleFileDeleteInternal(w http.ResponseWriter, r *http.Request, path string) {
+	c.debugf("[FILES] Internal DELETE request for path: %s", path)
+
+	if err := c.FileSystem.DeleteFile(c.AppContext(), path); err != nil {
+		if errors.Is(err, types.ErrFileNotFound) {
+			http.Error(w, fmt.Sprintf("File not found for internal deletion: %s", path), http.StatusNotFound)
+			return
+		}
+		http.Error(w, fmt.Sprintf("Failed to delete internal file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	c.debugf("[FILES] Deleted internal %s", path)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleFilePostInternal handles internal peer-to-peer file POST requests
+func (c *Cluster) handleFilePostInternal(w http.ResponseWriter, r *http.Request, path string) {
+	c.debugf("[FILES] Internal POST request for path: %s", path)
+
+	createDir := strings.EqualFold(r.Header.Get("X-Create-Directory"), "true")
+	if !createDir {
+		http.Error(w, fmt.Sprintf("Unsupported internal POST operation for %s (only directory creation supported via X-Create-Directory header)", path), http.StatusBadRequest)
+		return
+	}
+
+	if err := c.FileSystem.CreateDirectory(path); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create internal directory: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"path":    path,
+	})
+}
+
+// handleFileHeadInternal handles internal peer-to-peer file HEAD requests
+func (c *Cluster) handleFileHeadInternal(w http.ResponseWriter, r *http.Request, path string) {
+	c.debugf("[FILES] Internal HEAD request for path: %s", path)
+
+	// Only check local storage, never forward to peers
+	metadata, err := c.FileSystem.GetMetadata(path)
+	if err != nil {
+		switch {
+		case errors.Is(err, types.ErrIsDirectory):
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-ClusterF-Is-Directory", "true")
+			w.WriteHeader(http.StatusOK)
+			return
+		case errors.Is(err, types.ErrFileNotFound):
+			c.debugf("[FILES] Internal HEAD metadata not found locally for %s", path)
+			http.Error(w, fmt.Sprintf("File metadata not found: %s", path), http.StatusNotFound)
+			return
+		default:
+			c.debugf("[FILES] Failed internal HEAD metadata %s: %v", path, err)
+			http.Error(w, fmt.Sprintf("Failed to retrieve metadata for %s: %v", path, err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if metadata.IsDirectory {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-ClusterF-Is-Directory", "true")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	ct := metadata.ContentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
+	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
+	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339))
+	w.Header().Set("X-ClusterF-Is-Directory", "false")
+	if metadata.Checksum != "" {
 		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
 		w.Header().Set("ETag", fmt.Sprintf("\"%s\"", metadata.Checksum))
 	} else {

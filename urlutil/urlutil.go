@@ -67,14 +67,14 @@ func BuildHTTPURL(address string, port int, rawPath string) (string, error) {
 	return u.String(), nil
 }
 
-func BuildFilesURL(address string, port int, filePath string) (string, error) {
+func BuildInternalFilesURL(address string, port int, filePath string) (string, error) {
 	normalized := normalizeAbsolutePath(filePath)
-	return BuildHTTPURL(address, port, "/api/files"+normalized)
+	return BuildHTTPURL(address, port, "/internal/files"+normalized)
 }
 
-func BuildMetadataURL(address string, port int, filePath string) (string, error) {
+func BuildInternalMetadataURL(address string, port int, filePath string) (string, error) {
 	normalized := normalizeAbsolutePath(filePath)
-	return BuildHTTPURL(address, port, "/api/metadata"+normalized)
+	return BuildHTTPURL(address, port, "/internal/metadata"+normalized)
 }
 
 func EncodePath(path string) string {
