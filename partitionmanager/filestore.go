@@ -578,6 +578,76 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 	return nil
 }
 
+// ScanMetadata calls fn for each metadata entry with the given prefix
+func (fs *FileStore) ScanMetadataFullKeys(prefix string, fn func(key string, metadata []byte) error) error {
+	start := time.Now()
+	checkForRecursiveScan()
+
+	// Determine which partitions to scan based on prefix
+	partitions, err := fs.getAllPartitionStores(prefix)
+	if err != nil {
+		return err
+	}
+
+	fs.debugf("ScanMetadata: scanning %d partitions for prefix %s", len(partitions), prefix)
+
+	for _, partitionID := range partitions {
+		fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
+		lock := fs.getPartitionLock(partitionID)
+		lock.RLock()
+
+		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+		if err != nil {
+			lock.RUnlock()
+			continue // Skip this partition if it can't be opened
+		}
+
+		// Collect keys and metadata from this partition
+		var keys []string
+		var metadataValues [][]byte
+
+		_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
+			keyStr := string(k)
+			if prefix == "" || strings.HasPrefix(keyStr, prefix) {
+
+				keys = append(keys, keyStr)
+				metaCopy := make([]byte, len(v))
+				copy(metaCopy, v)
+				metadataValues = append(metadataValues, metaCopy)
+			}
+			return nil
+		})
+
+		if mapErr != nil {
+			fs.closePartitionStores(metadataKV, contentKV)
+			lock.RUnlock()
+			return mapErr
+		}
+
+		// Call fn for each key
+		for i, key := range keys {
+			// Decrypt metadata before passing to callback
+			decMetadata := metadataValues[i]
+			if len(fs.encryptionKey) > 0 {
+				decMetadata = fs.xorEncrypt(metadataValues[i])
+			}
+
+			if err := fn(key, decMetadata); err != nil {
+				fs.closePartitionStores(metadataKV, contentKV)
+				lock.RUnlock()
+				return err
+			}
+		}
+
+		fs.closePartitionStores(metadataKV, contentKV)
+		lock.RUnlock()
+		fs.debugf("ScanMetadata: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
+	}
+
+	fs.debugf("Finished ScanMetadata for prefix %v in %v seconds", prefix, time.Since(start).Seconds())
+	return nil
+}
+
 func makeKey(path string) string {
 	partitionID := HashToPartition(path)
 	key := fmt.Sprintf("partition:%v:file:%v", partitionID, path)
