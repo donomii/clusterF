@@ -794,7 +794,7 @@ func (c *Cluster) runPartitionReindex(ctx context.Context) {
 	pm := c.PartitionManager()
 	pm.RunReindex(ctx)
 	if c.partitionReIndexInterval.Seconds() == 0 {
-		c.partitionReIndexInterval = 5 * time.Second
+		c.partitionReIndexInterval = 500 * time.Second
 	}
 	ticker := time.NewTicker(c.partitionReIndexInterval)
 
