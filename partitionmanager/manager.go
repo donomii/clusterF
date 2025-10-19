@@ -1500,6 +1500,9 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			return ctx.Err()
 		}
 
+		if key == "" {
+			return nil
+		}
 		partitionID := types.ExtractPartitionID(key)
 		if partitionID != "" {
 			partitions[partitionID] = true
