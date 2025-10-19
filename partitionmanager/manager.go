@@ -640,7 +640,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 	if err != nil {
 		// It's normal for a file not to be found locally
 		pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
-		return types.FileMetadata{}, types.ErrFileNotFound
+		return pm.GetMetadataFromPeers(path)
 	}
 
 	var parsedMetadata types.FileMetadata

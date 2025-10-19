@@ -205,7 +205,7 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 	fs.debugf("Get: acquired read lock for partition %s after %v", partitionID, time.Since(start))
 	defer func() {
 		lock.RUnlock()
-		fs.debugf("Get: released read lock for partition %s", partitionID)
+		fs.debugf("Get: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
 	}()
 
 	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
@@ -255,7 +255,7 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 	fs.debugf("GetMetadata: acquired read lock for partition %s after %v", partitionID, time.Since(start))
 	defer func() {
 		lock.RUnlock()
-		fs.debugf("GetMetadata: released read lock for partition %s", partitionID)
+		fs.debugf("GetMetadata: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
 	}()
 
 	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
@@ -490,7 +490,7 @@ func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content [
 
 		fs.closePartitionStores(metadataKV, contentKV)
 		lock.RUnlock()
-		fs.debugf("Scan: released read lock for partition %s", partitionID)
+		fs.debugf("Scan: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
 	}
 
 	return nil
@@ -560,7 +560,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 		fs.closePartitionStores(metadataKV, contentKV)
 		lock.RUnlock()
-		fs.debugf("ScanMetadata: released read lock for partition %s", partitionID)
+		fs.debugf("ScanMetadata: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
 	}
 
 	fs.debugf("Finished ScanMetadata for prefix %v in %v seconds", prefix, time.Since(start).Seconds())

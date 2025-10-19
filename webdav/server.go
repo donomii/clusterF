@@ -47,10 +47,13 @@ func NewServer(fs types.FileSystemLike, clusterDir string, port int, logger *log
 func (s *Server) Start() error {
 	s.logger.Printf("[WEBDAV] Starting WebDAV server on %s", s.httpServer.Addr)
 
-	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := s.httpServer.ListenAndServe(); err != nil {
+		if err == http.ErrServerClosed {
+			return nil
+		}
 		s.logger.Printf("[WEBDAV] Server error: %v", err)
+		return err
 	}
-
 	return nil
 }
 

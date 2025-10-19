@@ -267,8 +267,38 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 			func(ctx context.Context) {
 				defer func() { _ = recover() }()
 				webdavPort := 8080 // Default WebDAV port
-				if err := webdav.StartWebDAVServer(cluster.FileSystem, webdavDir, webdavPort, cluster.Logger()); err != nil {
-					cluster.Logger().Printf("[WEBDAV] Failed to start WebDAV server: %v", err)
+				logger := cluster.Logger()
+				logger.Printf("[WEBDAV] WebDAV server starting on port %d", webdavPort)
+				if webdavDir != "" {
+					logger.Printf("[WEBDAV] Serving cluster path: %s", webdavDir)
+				} else {
+					logger.Printf("[WEBDAV] Serving entire cluster")
+				}
+
+				server := webdav.NewServer(cluster.FileSystem, webdavDir, webdavPort, logger)
+
+				errCh := make(chan error, 1)
+				go func() {
+					errCh <- server.Start()
+				}()
+
+				select {
+				case <-ctx.Done():
+					if err := server.Stop(); err != nil {
+						logger.Printf("[WEBDAV] Error stopping WebDAV server: %v", err)
+					}
+					select {
+					case err := <-errCh:
+						if err != nil {
+							logger.Printf("[WEBDAV] Server exited with error: %v", err)
+						}
+					case <-time.After(5 * time.Second):
+						logger.Printf("[WEBDAV] Server shutdown timed out waiting for exit")
+					}
+				case err := <-errCh:
+					if err != nil {
+						logger.Printf("[WEBDAV] Server exited with error: %v", err)
+					}
 				}
 			})
 	}
