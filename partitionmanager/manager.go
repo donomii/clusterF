@@ -380,7 +380,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 
 	// Update partition metadata in CRDT
 	pm.MarkForReindex(partitionID)
-	pm.logf("[PARTITION] Marked %v for reindex", partitionID)
+	//pm.logf("[PARTITION] Marked %v for reindex", partitionID)
 
 	// Debug: verify what we just stored
 	if storedData, err := pm.deps.FileStore.Get(fileKey); err == nil && storedData.Exists {
@@ -888,7 +888,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			}
 
 		}
-		pm.logf("[updatePartitionMetadata] Updated CRDT metadata for partition %v", partitionID)
+		pm.debugf("[updatePartitionMetadata] Updated CRDT metadata for partition %v", partitionID)
 	}
 	// Send updates to peers
 
