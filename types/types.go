@@ -326,6 +326,7 @@ func ExtractFilePath(key string) string {
 	}
 
 	log.Panicf("Invalid key provided to ExtractFilePath: %v", key)
+	return ""
 }
 
 type PartitionID string
