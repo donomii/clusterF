@@ -1492,7 +1492,7 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 
 	// Get all unique partition IDs from the local store
 	partitions := make(map[types.PartitionID]bool)
-	pm.deps.FileStore.Scan("", func(key string, metadata, content []byte) error {
+	pm.deps.FileStore.ScanMetadata("", func(key string, metadata []byte) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
