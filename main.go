@@ -347,8 +347,12 @@ Press Ctrl+C to stop...
 
 	// Attempt to open the desktop drop window by default. If it fails, continue silently.
 	if !noDesktop {
-		// Check if we have a display environment before attempting desktop UI
-		if hasGraphicsEnvironment() {
+		switch {
+		case !desktopUISupported():
+			cluster.Logger().Printf("[UI] Desktop UI support not compiled in, skipping desktop UI")
+		case !hasGraphicsEnvironment():
+			cluster.Logger().Printf("[UI] No graphics environment detected, skipping desktop UI")
+		default:
 			// Start signal handler in background
 			go func() {
 				<-sigChan
@@ -367,8 +371,6 @@ Press Ctrl+C to stop...
 			cluster.Stop()
 			fmt.Println("Goodbye!")
 			return
-		} else {
-			cluster.Logger().Printf("[UI] No graphics environment detected, skipping desktop UI")
 		}
 	}
 

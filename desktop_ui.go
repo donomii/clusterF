@@ -16,6 +16,11 @@ import (
 // Global variable to track webview shutdown
 var desktopUIShutdown int32
 
+// desktopUISupported reports whether the desktop UI is available in this build.
+func desktopUISupported() bool {
+	return true
+}
+
 // StartDesktopUI opens a native window that navigates to the built-in file browser
 // so you can drag-and-drop files without using an external browser.
 func StartDesktopUI(httpPort int, cluster *Cluster) {
