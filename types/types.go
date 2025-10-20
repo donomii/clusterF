@@ -346,9 +346,10 @@ func ExtractPartitionStoreID(key string) PartitionStore {
 // ExtractFilePath extracts the cluster file path e.g. /Desktop/
 func ExtractFilePath(key string) string {
 	// Key format: partition:p12345:file:/path/to/file
-	parts := strings.Split(key, ":file:")
-	if len(parts) > 1 {
-		return parts[1]
+	const marker = ":file:"
+	idx := strings.Index(key, marker)
+	if idx >= 0 && idx+len(marker) < len(key) {
+		return key[idx+len(marker):]
 	}
 
 	log.Panicf("Invalid key provided to ExtractFilePath: %v", key)
