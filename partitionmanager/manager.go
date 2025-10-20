@@ -35,7 +35,7 @@ type Dependencies struct {
 	NoStore               bool
 	Logger                *log.Logger
 	Debugf                func(string, ...interface{})
-	FileStore             *FileStore
+	FileStore             types.FileStoreLike
 	HttpDataClient        *http.Client
 	Discovery             types.DiscoveryManagerLike
 	Cluster               types.ClusterLike
@@ -237,7 +237,24 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 
 // getAllPartitionStores returns all partition store names from the FileStore
 func (pm *PartitionManager) getAllPartitionStores() ([]types.PartitionStore, error) {
-	return pm.deps.FileStore.getAllPartitionStores("")
+	partitionSet := make(map[types.PartitionStore]struct{})
+	err := pm.deps.FileStore.ScanMetadataFullKeys("", func(key string, _ []byte) error {
+		storeID := types.ExtractPartitionStoreID(key)
+		if storeID != "" {
+			partitionSet[storeID] = struct{}{}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	partitions := make([]types.PartitionStore, 0, len(partitionSet))
+	for p := range partitionSet {
+		partitions = append(partitions, p)
+	}
+	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
+	return partitions, nil
 }
 
 func (pm *PartitionManager) debugf(format string, args ...interface{}) string {
@@ -1475,7 +1492,7 @@ func isIn(id types.NodeID, list []types.NodeID) bool {
 }
 
 // FileStore returns the underlying FileStore for direct access (used by tests)
-func (pm *PartitionManager) FileStore() *FileStore {
+func (pm *PartitionManager) FileStore() types.FileStoreLike {
 	return pm.deps.FileStore
 }
 

@@ -52,6 +52,23 @@ type PartitionManagerLike interface {
 	MarkForReindex(pId PartitionID)
 }
 
+// FileStoreLike abstracts the storage layer used by the partition manager.
+type FileStoreLike interface {
+	Close()
+	SetEncryptionKey(key []byte)
+	Get(key string) (*FileData, error)
+	GetMetadata(key string) ([]byte, error)
+	GetContent(key string) ([]byte, error)
+	Put(key string, metadata, content []byte) error
+	PutMetadata(key string, metadata []byte) error
+	Delete(key string) error
+	Scan(prefix string, fn func(key string, metadata, content []byte) error) error
+	ScanMetadata(prefix string, fn func(key string, metadata []byte) error) error
+	ScanMetadataFullKeys(prefix string, fn func(key string, metadata []byte) error) error
+	ScanPartitionMetaData(partitionStore PartitionStore, fn func(key []byte, metadata []byte) error) error
+	CalculatePartitionChecksum(ctx context.Context, prefix string) (string, error)
+}
+
 type PartitionInfo struct {
 	ID           PartitionID           `json:"id"`
 	LastModified time.Time             `json:"last_modified"`
@@ -195,6 +212,14 @@ type SearchResult struct {
 	ModifiedAt  time.Time `json:"modified_at,omitempty"`
 	CreatedAt   time.Time `json:"created_at,omitempty"`
 	Checksum    string    `json:"checksum,omitempty"`
+}
+
+// FileData represents a complete file entry.
+type FileData struct {
+	Key      string
+	Metadata []byte
+	Content  []byte
+	Exists   bool
 }
 
 // Sent to the browser for display

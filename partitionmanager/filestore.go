@@ -47,14 +47,6 @@ func checkForRecursiveScan() {
 	}
 }
 
-// FileData represents a complete file entry
-type FileData struct {
-	Key      string
-	Metadata []byte
-	Content  []byte
-	Exists   bool
-}
-
 // NewFileStore creates a new FileStore with per-partition storage
 func NewFileStore(baseDir string, debug bool, storageMajor, storageMinor string) *FileStore {
 	if storageMajor == "" {
@@ -192,11 +184,11 @@ func (fs *FileStore) closePartitionStores(metadataKV, contentKV ensemblekv.KvLik
 }
 
 // Get retrieves both metadata and content atomically
-func (fs *FileStore) Get(key string) (*FileData, error) {
+func (fs *FileStore) Get(key string) (*types.FileData, error) {
 	partitionID := types.ExtractPartitionStoreID(key)
 	if partitionID == "" {
 		panic("fuck ai")
-		return &FileData{Key: key, Exists: false}, fmt.Errorf("Unable to locate storage for partition '%v'", partitionID)
+		return &types.FileData{Key: key, Exists: false}, fmt.Errorf("Unable to locate storage for partition '%v'", partitionID)
 	}
 
 	//fs.debugf("Get: acquiring read lock for partition %s, key %s", partitionID, key)
@@ -210,7 +202,7 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 
 	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
 	if err != nil {
-		return &FileData{Key: key, Exists: false}, err
+		return &types.FileData{Key: key, Exists: false}, err
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
@@ -221,7 +213,7 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 
 	// If neither exists, file doesn't exist
 	if metaErr != nil && contentErr != nil {
-		return &FileData{
+		return &types.FileData{
 			Key:    key,
 			Exists: false,
 		}, fmt.Errorf("File not found in store: %v, %v", metaErr, contentErr)
@@ -230,7 +222,7 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 	// Decrypt data
 	metadata, content = fs.decrypt(metadata, content)
 
-	return &FileData{
+	return &types.FileData{
 		Key:      key,
 		Metadata: metadata,
 		Content:  content,

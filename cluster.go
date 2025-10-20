@@ -430,7 +430,8 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Loaded CRDT state from KV\n")
 
 	// Initialize file store
-	fileStore := partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug, opts.StorageMajor, opts.StorageMinor)
+	//fileStore := partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug, opts.StorageMajor, opts.StorageMinor)
+	fileStore := partitionmanager.NewDiskFileStore(filepath.Join(opts.DataDir, "partitions"))
 
 	// Handle encryption if key provided
 	if opts.EncryptionKey != "" {
