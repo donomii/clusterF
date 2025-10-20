@@ -207,8 +207,8 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		// Get peer info for this holder
 		var peer *types.PeerInfo
 		if holderID == c.ID() {
-			c.debugf("[FILES] Fetching file from localhost")
-			// This is us
+			c.debugf("[FILES] Fetching file from localhost via HTTP")
+			// This is us, but still go through HTTP path for consistency
 			peer = &types.PeerInfo{
 				NodeID:   string(c.ID()),
 				Address:  c.DiscoveryManager().GetLocalAddress(),

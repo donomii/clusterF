@@ -1211,10 +1211,17 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 		// Get peer info for this holder
 		var peer *types.PeerInfo
 		if holderID == c.ID() {
-			c.debugf("[METADATA_API] Fetching metadata from localhost")
-			// This is us - call internal handler directly
-			c.handleInternalMetadataAPI(w, r)
-			return
+
+			c.debugf("[METADATA_API] Fetching metadata from localhost via HTTP")
+			peer = &types.PeerInfo{
+				NodeID:   string(c.ID()),
+				Address:  c.DiscoveryManager().GetLocalAddress(),
+				HTTPPort: c.HTTPPort(),
+			}
+		} else if p, ok := peerLookup[holderID]; ok {
+			c.debugf("Fetching metadata from peer %+v", p)
+			peer = p
+
 		} else if p, ok := peerLookup[holderID]; ok {
 			c.debugf("Fetching metadata from peer %+v", p)
 			peer = p

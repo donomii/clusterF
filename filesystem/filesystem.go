@@ -369,9 +369,9 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (types.FileMetadata, error
 	metadata, err := fs.cluster.PartitionManager().GetMetadataFromPartition(path)
 	if err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
-			return fs.cluster.PartitionManager().GetMetadataFromPeers(path)
+			return types.FileMetadata{}, types.ErrFileNotFound
 		}
-		return fs.cluster.PartitionManager().GetMetadataFromPeers(path)
+		return types.FileMetadata{}, types.ErrFileNotFound
 	}
 
 	// Check if file is marked as deleted
