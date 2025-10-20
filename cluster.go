@@ -10,7 +10,6 @@ import (
 	"io"
 	"log"
 	"math/rand"
-	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -42,26 +41,6 @@ const (
 	DefaultDataDir       = "./data"
 	DefaultRF            = 3 // Default Replication Factor
 )
-
-func newHTTPTransport(idleTimeout time.Duration, maxPerHost int, responseHeaderTimeout time.Duration) *http.Transport {
-	dialer := &net.Dialer{
-		Timeout:   10 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
-
-	return &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           dialer.DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          maxPerHost * 4,
-		MaxIdleConnsPerHost:   maxPerHost,
-		MaxConnsPerHost:       maxPerHost * 2,
-		IdleConnTimeout:       idleTimeout,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ExpectContinueTimeout: 2 * time.Second,
-		ResponseHeaderTimeout: responseHeaderTimeout,
-	}
-}
 
 type Metadata struct {
 	NodeID    types.NodeID `json:"node_id"`
@@ -399,16 +378,25 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.threadManager = threadmanager.NewThreadManager(id, opts.Logger)
 	c.debugf("Initialized thread manager\n")
 
-	// Create HTTP clients with tuned connection pooling and timeouts
-	controlTransport := newHTTPTransport(45*time.Second, 8, 15*time.Second)
+	// Create HTTP clients with connection pooling and differentiated timeouts
+	controlTransport := &http.Transport{
+		MaxIdleConns:        50, // Limit idle connections
+		MaxIdleConnsPerHost: 5,  // Limit per-host connections
+		IdleConnTimeout:     30 * time.Second,
+		TLSHandshakeTimeout: 5 * time.Second,
+		DisableKeepAlives:   false,
+	}
 	c.httpClient = &http.Client{
-		Timeout:   45 * time.Second,
+		Timeout:   30 * time.Second,
 		Transport: controlTransport,
 	}
-	dataTransport := newHTTPTransport(2*time.Minute, 16, 45*time.Second)
-	dataTransport.TLSHandshakeTimeout = 10 * time.Second
-	dataTransport.MaxConnsPerHost = 48
-	dataTransport.MaxIdleConns = 96
+	dataTransport := &http.Transport{
+		MaxIdleConns:        50,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     2 * time.Minute,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DisableKeepAlives:   false,
+	}
 	c.HttpDataClient = &http.Client{
 		Timeout:   5 * time.Minute,
 		Transport: dataTransport,

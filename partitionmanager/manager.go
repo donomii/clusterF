@@ -426,9 +426,9 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename str
 		body, _ := resp.ReadAllAndClose()
 		pm.debugf("[PARTITION] Peer %s returned %s for file %s", peer.NodeID, resp.Status, filename)
 		if len(body) > 0 {
-			return nil, fmt.Errorf("peer returned %s: %s", resp.Status, string(body))
+			return nil, fmt.Errorf("peer %s returned %s for file %s: %s", peer.NodeID, resp.Status, filename, string(body))
 		}
-		return nil, fmt.Errorf("peer returned %s", resp.Status)
+		return nil, fmt.Errorf("peer %s returned %s for file %s", peer.NodeID, resp.Status, filename)
 	}
 	// Read content
 	content, err := resp.ReadAllAndClose()
@@ -461,7 +461,10 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := resp.ReadAllAndClose()
-		return types.FileMetadata{}, fmt.Errorf("peer %s returned %s for metadata %s: %s", peer.NodeID, resp.Status, filename, string(body))
+		if len(body) > 0 {
+			return types.FileMetadata{}, fmt.Errorf("peer %s returned %s for metadata %s: %s", peer.NodeID, resp.Status, filename, string(body))
+		}
+		return types.FileMetadata{}, fmt.Errorf("peer %s returned %s for metadata %s", peer.NodeID, resp.Status, filename)
 	}
 
 	var metadata types.FileMetadata
