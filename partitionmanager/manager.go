@@ -633,6 +633,9 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 	if err != nil {
 		// It's normal for a file not to be found locally
 		pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
+		buf := make([]byte, 1<<16)
+		n := runtime.Stack(buf, false)
+		log.Printf("[PARTITION] Stack trace:\n%s", string(buf[:n]))
 		return types.FileMetadata{}, fmt.Errorf("[PARTITION] Metadata %s not found locally: %v", path, err)
 	}
 
