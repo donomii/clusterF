@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/httpclient"
+	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 )
@@ -242,15 +243,87 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	// Get discovery peers to match nodeIDs to addresses
 	peerMap := fs.cluster.DiscoveryManager().GetPeerMap()
 
-	// Try forwarding to target nodes until one succeeds
-	var lastErr error
-	skippedPeers := 0
-
 	modTime, size, metaErr := decodeForwardedMetadata(metadataJSON)
 
-	//fs.debugf("Uploading %v to one of %v nodes(%v)", path, len(targetNodes), targetNodes)
-	for _, nodeID := range targetNodes {
-		//fs.debugf("Uploading %v to %v", path, nodeID)
+	attempted := make(map[string]struct{}, len(targetNodes))
+	totalSkipped := 0
+
+	nodeID, skipped, lastErr, allSkipped := fs.tryForwardToNodes(context.Background(), path, metadataJSON, content, contentType, targetNodes, attempted, peerMap, modTime, size, metaErr)
+	totalSkipped += skipped
+	if lastErr == nil {
+		return nodeID, nil
+	}
+	if allSkipped {
+		fs.debugf("[FILES] All peers already had %s; nothing to forward", path)
+		return "", nil
+	}
+
+	if len(nodesForPartition) > 0 {
+		fallbackTargets := make([]string, 0, len(allNodes))
+		for nodeID, nodeInfo := range allNodes {
+			if nodeInfo == nil || !nodeInfo.IsStorage {
+				continue
+			}
+			id := string(nodeID)
+			if _, seen := attempted[id]; seen {
+				continue
+			}
+			if nodeInfo.DiskSize > 0 {
+				used := nodeInfo.DiskSize - nodeInfo.DiskFree
+				if used < 0 {
+					used = 0
+				}
+				usage := float64(used) / float64(nodeInfo.DiskSize)
+				if usage >= 0.9 {
+					continue
+				}
+			}
+			fallbackTargets = append(fallbackTargets, id)
+		}
+
+		if len(fallbackTargets) > 1 {
+			for i := len(fallbackTargets) - 1; i > 0; i-- {
+				j := rand.Intn(i + 1)
+				fallbackTargets[i], fallbackTargets[j] = fallbackTargets[j], fallbackTargets[i]
+			}
+			if rand.Float64() < 0.25 {
+				fallbackTargets[0], fallbackTargets[1] = fallbackTargets[1], fallbackTargets[0]
+			}
+		}
+
+		nodeID, skipped, err, fallbackSkipped := fs.tryForwardToNodes(context.Background(), path, metadataJSON, content, contentType, fallbackTargets, attempted, peerMap, modTime, size, metaErr)
+		totalSkipped += skipped
+		if err == nil {
+			return nodeID, nil
+		}
+		if fallbackSkipped {
+			fs.debugf("[FILES] All fallback peers already had %s; nothing to forward", path)
+			return "", nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no storage nodes accepted upload (skipped=%v)", totalSkipped)
+	}
+
+	return "", fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
+}
+
+func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string, metadataJSON []byte, content []byte, contentType string, targets []string, attempted map[string]struct{}, peerMap *syncmap.SyncMap[string, *types.PeerInfo], modTime time.Time, size int64, metaErr error) (types.NodeID, int, error, bool) {
+	if len(targets) == 0 {
+		return "", 0, fmt.Errorf("no storage nodes available to forward upload"), false
+	}
+
+	skipped := 0
+	var lastErr error
+	metaHeader := base64.StdEncoding.EncodeToString(metadataJSON)
+
+	for _, nodeID := range targets {
+		attempted[nodeID] = struct{}{}
+
 		peer, ok := peerMap.Load(nodeID)
 		if !ok {
 			fs.debugf("[FILES] Node %s not found in discovery peers", nodeID)
@@ -262,7 +335,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 			upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size)
 			if err == nil && upToDate {
 				msg := fmt.Sprintf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
-				skippedPeers++
+				skipped++
 				lastErr = fmt.Errorf("%v", msg)
 				fs.debugf("%v", msg)
 				continue
@@ -278,10 +351,10 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 			continue
 		}
 
-		resp, err := httpclient.Put(context.Background(), fs.cluster.DataClient(), fileURL, bytes.NewReader(content),
+		resp, err := httpclient.Put(ctx, fs.cluster.DataClient(), fileURL, bytes.NewReader(content),
 			httpclient.WithHeader("Content-Type", contentType),
 			httpclient.WithHeader("X-Forwarded-From", string(fs.cluster.ID())),
-			httpclient.WithHeader("X-ClusterF-Metadata", base64.StdEncoding.EncodeToString(metadataJSON)),
+			httpclient.WithHeader("X-ClusterF-Metadata", metaHeader),
 		)
 		if err != nil {
 			lastErr = err
@@ -290,23 +363,20 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			resp.Close()
 			fs.debugf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
-			return types.NodeID(nodeID), nil
+			return types.NodeID(nodeID), skipped, nil, false
 		}
 		respBody, _ := resp.ReadAllAndClose()
 		lastErr = fmt.Errorf("peer (%v) store query returned %v(%v) '%v'", peer.NodeID, resp.StatusCode, resp.Status, respBody)
-
 	}
 
-	if skippedPeers == len(targetNodes) {
-		fs.debugf("[FILES] All peers already had %s; nothing to forward", path)
-		return "", nil
+	if skipped == len(targets) {
+		return "", skipped, lastErr, true
 	}
-
 	if lastErr == nil {
-		lastErr = fmt.Errorf("no storage nodes accepted upload (skipped=%v)", skippedPeers)
+		lastErr = fmt.Errorf("no storage nodes accepted upload (skipped=%v)", skipped)
 	}
 
-	return "", fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
+	return "", skipped, lastErr, false
 }
 
 // GetFileWithContentType retrieves a file and returns an io.ReadCloser with content type
