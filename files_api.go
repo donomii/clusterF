@@ -284,52 +284,96 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path string) {
 	c.debugf("[FILES] HEAD request for path: %s", path)
 
-	metadata, err := c.FileSystem.GetMetadata(path)
-	if err != nil {
-		switch {
-		case errors.Is(err, types.ErrIsDirectory):
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-ClusterF-Is-Directory", "true")
+	partitionID := c.PartitionManager().CalculatePartitionName(path)
+	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
+
+	if partitionInfo == nil {
+		c.debugf("[FILES] No partition info found for %s (partition %s)", path, partitionID)
+		http.Error(w, fmt.Sprintf("File metadata not found: %s (no partition info found for partition %s)", path, partitionID), http.StatusNotFound)
+		return
+	}
+
+	if len(partitionInfo.Holders) == 0 {
+		c.debugf("[FILES] No holders registered for partition %s (file %s)", partitionID, path)
+		http.Error(w, fmt.Sprintf("File metadata not found: %s (partition %s has no holders registered)", path, partitionID), http.StatusNotFound)
+		return
+	}
+
+	peers := c.DiscoveryManager().GetPeers()
+	peerLookup := make(map[types.NodeID]*types.PeerInfo)
+	for _, peer := range peers {
+		peerLookup[types.NodeID(peer.NodeID)] = peer
+	}
+
+	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
+
+	var holderErrors []string
+	for _, holderID := range partitionInfo.Holders {
+		c.debugf("[FILES] Trying holder %s for HEAD on %s", holderID, path)
+
+		var peer *types.PeerInfo
+		if holderID == c.ID() {
+			c.debugf("[FILES] Fetching HEAD metadata from localhost via HTTP")
+			peer = &types.PeerInfo{
+				NodeID:   string(c.ID()),
+				Address:  c.DiscoveryManager().GetLocalAddress(),
+				HTTPPort: c.HTTPPort(),
+			}
+		} else if p, ok := peerLookup[holderID]; ok {
+			c.debugf("Fetching HEAD metadata from peer %+v", p)
+			peer = p
+		} else {
+			c.debugf("[FILES] No peer info available for holder %s", holderID)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: no peer info", holderID))
+			continue
+		}
+
+		fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
+		if err != nil {
+			c.debugf("[FILES] Failed to build URL for peer %s: %v", peer.NodeID, err)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: URL build failed: %v", peer.NodeID, err))
+			continue
+		}
+
+		resp, err := httpclient.Head(r.Context(), c.HttpDataClient, fileURL,
+			httpclient.WithHeader("X-ClusterF-Internal", "1"),
+		)
+		if err != nil {
+			c.debugf("[FILES] Failed HEAD metadata from peer %s: %v", peer.NodeID, err)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
+			continue
+		}
+
+		success := false
+		func() {
+			defer resp.Close()
+			if resp.StatusCode == http.StatusOK {
+				for key, values := range resp.Header {
+					for _, value := range values {
+						w.Header().Add(key, value)
+					}
+				}
+				success = true
+				return
+			}
+
+			errorMsg := fmt.Sprintf("Expected 200, got %d", resp.StatusCode)
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: %s", peer.NodeID, errorMsg))
+			c.debugf("[FILES] Holder %s returned status %d for HEAD %s", peer.NodeID, resp.StatusCode, path)
+		}()
+
+		if success {
 			w.WriteHeader(http.StatusOK)
-			return
-		case errors.Is(err, types.ErrFileNotFound):
-			c.debugf("[FILES] HEAD metadata not found for %s", path)
-			http.Error(w, fmt.Sprintf("File metadata not found: %s", path), http.StatusNotFound)
-			return
-		default:
-			c.debugf("[FILES] Failed HEAD metadata %s: %v", path, err)
-			http.Error(w, fmt.Sprintf("Failed to retrieve metadata for %s: %v", path, err), http.StatusInternalServerError)
 			return
 		}
 	}
 
-	if metadata.IsDirectory {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-ClusterF-Is-Directory", "true")
-		w.WriteHeader(http.StatusOK)
-		return
+	c.debugf("[FILES] Metadata for %s not found on any registered holder for partition %s", path, partitionID)
+	errorSummary := fmt.Sprintf("File metadata not found in cluster: %s", path)
+	if len(holderErrors) > 0 {
+		errorSummary += fmt.Sprintf(" (tried holders: %s)", strings.Join(holderErrors, ", "))
 	}
-
-	ct := metadata.ContentType
-	if ct == "" {
-		ct = "application/octet-stream"
-	}
-	if metadata.ModifiedAt.IsZero() {
-		panic("no")
-	}
-	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
-	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
-	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339))
-	w.Header().Set("X-ClusterF-Is-Directory", "false")
-	if metadata.Checksum != "" {
-
-		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
-		w.Header().Set("ETag", fmt.Sprintf("\"%s\"", metadata.Checksum))
-	} else {
-		panic("no")
-	}
-	w.WriteHeader(http.StatusOK)
+	http.Error(w, errorSummary, http.StatusNotFound)
 }
 
 // handleFilePutInternal handles internal peer-to-peer file PUT requests
