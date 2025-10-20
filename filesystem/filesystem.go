@@ -396,6 +396,59 @@ func (fs *ClusterFileSystem) MetadataForPath(path string) (types.FileMetadata, e
 	return fs.GetMetadata(path)
 }
 
+// MetadataViaAPI fetches metadata via the external HTTP API, ensuring fan-out across the cluster.
+func (fs *ClusterFileSystem) MetadataViaAPI(ctx context.Context, path string) (types.FileMetadata, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	type httpPortProvider interface {
+		HTTPPort() int
+	}
+	portSource, ok := fs.cluster.(httpPortProvider)
+	if !ok {
+		return types.FileMetadata{}, fmt.Errorf("cluster does not expose HTTPPort")
+	}
+
+	address := "localhost"
+	if dm := fs.cluster.DiscoveryManager(); dm != nil {
+		if addr := dm.GetLocalAddress(); addr != "" {
+			address = addr
+		}
+	}
+
+	normalized := urlutil.NormalizeAbsolutePath(path)
+	metadataURL, err := urlutil.BuildHTTPURL(address, portSource.HTTPPort(), "/api/metadata"+normalized)
+	if err != nil {
+		return types.FileMetadata{}, err
+	}
+
+	resp, err := httpclient.Get(ctx, fs.cluster.DataClient(), metadataURL)
+	if err != nil {
+		return types.FileMetadata{}, err
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		body, err := resp.ReadAllAndClose()
+		if err != nil {
+			return types.FileMetadata{}, err
+		}
+
+		var metadata types.FileMetadata
+		if err := json.Unmarshal(body, &metadata); err != nil {
+			return types.FileMetadata{}, fmt.Errorf("failed to decode metadata response: %w", err)
+		}
+		return metadata, nil
+	case http.StatusNotFound:
+		_ = resp.Close()
+		return types.FileMetadata{}, types.ErrFileNotFound
+	default:
+		body, _ := resp.ReadAllAndClose()
+		return types.FileMetadata{}, fmt.Errorf("metadata API returned %d (%s): %s", resp.StatusCode, resp.Status, strings.TrimSpace(string(body)))
+	}
+}
+
 // CreateDirectory is a no-op since directories are inferred from file paths
 func (fs *ClusterFileSystem) CreateDirectory(path string) error {
 	return nil // Directories are inferred from file paths

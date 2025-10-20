@@ -111,6 +111,7 @@ type FileSystemLike interface {
 	StoreFileWithModTime(ctx context.Context, path string, data []byte, contentType string, modTime time.Time) (NodeID, error)
 	DeleteFile(ctx context.Context, path string) error
 	MetadataForPath(path string) (FileMetadata, error)
+	MetadataViaAPI(ctx context.Context, path string) (FileMetadata, error)
 	// Additional methods for WebDAV support
 	GetFile(path string) ([]byte, FileMetadata, error)
 	ListDirectory(path string) ([]*FileMetadata, error)

@@ -290,7 +290,11 @@ func (e *Syncer) startWatcher(ctx context.Context) error {
 						if statErr != nil {
 							continue
 						}
-						if meta, err2 := e.fs.MetadataForPath(clusterPath); err2 == nil {
+						lookupCtx := ctx
+						if lookupCtx == nil {
+							lookupCtx = context.Background()
+						}
+						if meta, err2 := e.fs.MetadataViaAPI(lookupCtx, clusterPath); err2 == nil {
 							if metadataMatches(meta, st.Size(), st.ModTime()) {
 								continue
 							}
@@ -440,7 +444,11 @@ func (e *Syncer) importAll(ctx context.Context) error {
 
 		if d.IsDir() {
 			// ensure directory exists in cluster
-			if meta, err := e.fs.MetadataForPath(clusterPath); err == nil && meta.IsDirectory {
+			lookupCtx := ctx
+			if lookupCtx == nil {
+				lookupCtx = context.Background()
+			}
+			if meta, err := e.fs.MetadataViaAPI(lookupCtx, clusterPath); err == nil && meta.IsDirectory {
 				return nil
 			}
 			_ = e.fs.CreateDirectory(clusterPath)
@@ -451,7 +459,11 @@ func (e *Syncer) importAll(ctx context.Context) error {
 		if err != nil {
 			return nil
 		}
-		if meta, err := e.fs.MetadataForPath(clusterPath); err == nil {
+		lookupCtx := ctx
+		if lookupCtx == nil {
+			lookupCtx = context.Background()
+		}
+		if meta, err := e.fs.MetadataViaAPI(lookupCtx, clusterPath); err == nil {
 			if metadataMatches(meta, st.Size(), st.ModTime()) {
 				return nil
 			}
@@ -606,8 +618,12 @@ func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs
 		e.setCurrentFile(clusterPath)
 	}
 
-	// Check if file already exists with same content
-	if meta, err := e.fs.MetadataForPath(clusterPath); err == nil {
+	// Check if file already exists with same content (via external API)
+	lookupCtx := ctx
+	if lookupCtx == nil {
+		lookupCtx = context.Background()
+	}
+	if meta, err := e.fs.MetadataViaAPI(lookupCtx, clusterPath); err == nil {
 		if metadataMatches(meta, st.Size(), st.ModTime()) {
 			e.logger.Printf("[IMPORT] Skipping synchronised file %s", clusterPath)
 			return
