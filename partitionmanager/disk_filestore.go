@@ -30,11 +30,14 @@ type DiskFileStore struct {
 
 // NewDiskFileStore creates a new disk-backed filestore rooted at baseDir.
 func NewDiskFileStore(baseDir string) *DiskFileStore {
-	return &DiskFileStore{
+	store := &DiskFileStore{
 		baseDir:     baseDir,
 		metadataDir: filepath.Join(baseDir, "metadata"),
 		contentDir:  filepath.Join(baseDir, "contents"),
 	}
+	_ = os.MkdirAll(store.metadataDir, 0o755)
+	_ = os.MkdirAll(store.contentDir, 0o755)
+	return store
 }
 
 // Close implements FileStoreLike; nothing to clean up for plain disk storage.
@@ -369,7 +372,8 @@ func (fs *DiskFileStore) walkMetadataFiles(fn func(key, metaPath string) error) 
 			return nil
 		}
 
-		key := filepath.ToSlash(rel)
+		filePath := "/" + filepath.ToSlash(rel)
+		key := makeKey(filePath)
 		return fn(key, path)
 	})
 }
@@ -398,12 +402,28 @@ func keyRelativePath(key string) (string, error) {
 		return "", fmt.Errorf("empty key")
 	}
 
-	cleaned := filepath.Clean(string(filepath.Separator) + key)
-	if strings.HasPrefix(cleaned, "..") {
-		return "", fmt.Errorf("invalid key: %s", key)
+	filePath := types.ExtractFilePath(key)
+	if filePath == "" {
+		return "", fmt.Errorf("empty file path for key %s", key)
 	}
 
-	return strings.TrimPrefix(cleaned, string(filepath.Separator)), nil
+	cleaned := filepath.Clean(filePath)
+	cleaned = strings.TrimPrefix(cleaned, "/")
+	cleaned = strings.TrimPrefix(cleaned, string(filepath.Separator))
+	if cleaned == "" || cleaned == "." {
+		return "", fmt.Errorf("invalid file path derived from key %s", key)
+	}
+
+	segments := strings.Split(filepath.ToSlash(cleaned), "/")
+	builder := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return "", fmt.Errorf("invalid relative path derived from key %s", key)
+		}
+		builder = append(builder, segment)
+	}
+
+	return filepath.FromSlash(strings.Join(builder, "/")), nil
 }
 
 func ensureParentDir(path string) error {
