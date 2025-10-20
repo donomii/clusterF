@@ -239,23 +239,23 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 }
 
 func (fs *FileStore) rLockPartition(partitionStoreID types.PartitionStore) {
-	lock := fs.getPartitionLock(partitionStoreID)
-	lock.RLock()
+	// := fs.getPartitionLock(partitionStoreID)
+	//lock.RLock()
 }
 
 func (fs *FileStore) runLockPartition(partitionStoreID types.PartitionStore) {
-	lock := fs.getPartitionLock(partitionStoreID)
-	lock.RUnlock()
+	//lock := fs.getPartitionLock(partitionStoreID)
+	//lock.RUnlock()
 }
 
 func (fs *FileStore) lockPartition(partitionStoreID types.PartitionStore) {
-	lock := fs.getPartitionLock(partitionStoreID)
-	lock.Lock()
+	//lock := fs.getPartitionLock(partitionStoreID)
+	//lock.Lock()
 }
 
 func (fs *FileStore) unLockPartition(partitionStoreID types.PartitionStore) {
-	lock := fs.getPartitionLock(partitionStoreID)
-	lock.Unlock()
+	//lock := fs.getPartitionLock(partitionStoreID)
+	//lock.Unlock()
 }
 
 // GetMetadata retrieves only metadata
@@ -471,8 +471,7 @@ func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content [
 	for _, partitionID := range partitions {
 		fs.debugf("Scan: acquiring read lock for partition %s", partitionID)
 		start := time.Now()
-		lock := fs.getPartitionLock(partitionID)
-		lock.RLock()
+		fs.rLockPartition(partitionID)
 		fs.debugf("Scan: acquired read lock for partition %s after %v", partitionID, time.Since(start))
 
 		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
@@ -609,8 +608,7 @@ func (fs *FileStore) ScanMetadataFullKeys(prefix string, fn func(key string, met
 
 	for _, partitionID := range partitions {
 		fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
-		lock := fs.getPartitionLock(partitionID)
-		lock.RLock()
+		fs.rLockPartition(partitionID)
 
 		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
 		if err != nil {
