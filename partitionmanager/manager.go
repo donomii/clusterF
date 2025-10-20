@@ -831,7 +831,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		return nil
 	})
 
-	pm.debugf("[updatePartitionMetadata] Finished scan after %v seconds", time.Since(start))
+	pm.debugf("[updatePartitionMetadata] Finished scan for partition %v after %v seconds", StartPartitionID, time.Since(start))
 
 	allUpdates := []frogpond.DataPoint{}
 	for partitionID, count := range partitionsCount {
@@ -889,7 +889,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	// Send updates to peers
 
 	pm.sendUpdates(allUpdates)
-	pm.debugf("[updatePartitionMetadata] CRDT update finished scan after %v seconds", time.Since(start))
+	pm.debugf("[updatePartitionMetadata] CRDT update for all partitions in %v finished scan after %v seconds", partitionStore, time.Since(start))
 }
 
 // removePartitionHolder removes this node as a holder for a partition
