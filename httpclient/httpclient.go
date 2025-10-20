@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // RequestOption customizes an outgoing HTTP request.
@@ -94,6 +95,9 @@ func DoMethod(ctx context.Context, client *http.Client, method, url string, body
 		ctx = context.Background()
 	}
 
+	if strings.Contains(url, "/api") {
+		panic("Nodes are not allowed to call external api")
+	}
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, err
