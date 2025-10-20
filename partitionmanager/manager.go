@@ -264,7 +264,7 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) string {
 			loc = fmt.Sprintf("%s:%d: ", file, line)
 		}
 		message := fmt.Sprintf(loc+format, args...)
-		pm.deps.Logger.Printf(message)
+		pm.deps.Logger.Printf("%v", message)
 		return message
 	}
 	return ""
@@ -880,7 +880,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 				allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
 				allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
 
-				pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, partitionsCount[partitionID])
+				//pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, partitionsCount[partitionID])
 			}
 
 		}
