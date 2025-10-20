@@ -62,7 +62,7 @@ func NewPartitionManager(deps Dependencies) *PartitionManager {
 
 func (pm *PartitionManager) MarkForReindex(pId types.PartitionID) {
 	pm.ReindexList.Store(pId, true)
-	pm.debugf("[MarkForReindex] Marked partition %v for reindex.  List is now %v", pId, pm.ReindexList.Keys())
+	//pm.debugf("[MarkForReindex] Marked partition %v for reindex.  List is now %v", pId, pm.ReindexList.Keys())
 }
 
 func (pm *PartitionManager) RunReindex(ctx context.Context) {
