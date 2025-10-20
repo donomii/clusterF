@@ -344,7 +344,6 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 			continue
 		}
 
-		success := false
 		func() {
 			defer resp.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -353,7 +352,7 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 						w.Header().Add(key, value)
 					}
 				}
-				success = true
+				w.WriteHeader(http.StatusOK)
 				return
 			}
 
@@ -362,8 +361,7 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 			c.debugf("[FILES] Holder %s returned status %d for HEAD %s", peer.NodeID, resp.StatusCode, path)
 		}()
 
-		if success {
-			w.WriteHeader(http.StatusOK)
+		if w.Header().Get("Content-Type") != "" || w.Header().Get("X-ClusterF-Is-Directory") != "" {
 			return
 		}
 	}
