@@ -201,11 +201,10 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 
 	//fs.debugf("Get: acquiring read lock for partition %s, key %s", partitionID, key)
 	start := time.Now()
-	lock := fs.getPartitionLock(partitionID)
-	lock.RLock()
+	fs.rLockPartition(partitionID)
 	fs.debugf("Get: acquired read lock for partition %s after %v", partitionID, time.Since(start))
 	defer func() {
-		lock.RUnlock()
+		fs.runLockPartition(partitionID)
 		fs.debugf("Get: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
 	}()
 
@@ -239,6 +238,26 @@ func (fs *FileStore) Get(key string) (*FileData, error) {
 	}, nil
 }
 
+func (fs *FileStore) rLockPartition(partitionStoreID types.PartitionStore) {
+	lock := fs.getPartitionLock(partitionStoreID)
+	lock.RLock()
+}
+
+func (fs *FileStore) runLockPartition(partitionStoreID types.PartitionStore) {
+	lock := fs.getPartitionLock(partitionStoreID)
+	lock.RUnlock()
+}
+
+func (fs *FileStore) lockPartition(partitionStoreID types.PartitionStore) {
+	lock := fs.getPartitionLock(partitionStoreID)
+	lock.Lock()
+}
+
+func (fs *FileStore) unLockPartition(partitionStoreID types.PartitionStore) {
+	lock := fs.getPartitionLock(partitionStoreID)
+	lock.Unlock()
+}
+
 // GetMetadata retrieves only metadata
 func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 	//fs.debugf("Starting FileStore.GetMetadata for key %v", key)
@@ -252,11 +271,10 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 
 	//fs.debugf("GetMetadata: acquiring read lock for partition %s, key %s", partitionID, key)
 	start := time.Now()
-	lock := fs.getPartitionLock(partitionID)
-	lock.RLock()
+	fs.rLockPartition(partitionID)
 	fs.debugf("GetMetadata: acquired read lock for partition %s after %v", partitionID, time.Since(start))
 	defer func() {
-		lock.RUnlock()
+		fs.runLockPartition(partitionID)
 		fs.debugf("GetMetadata: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
 	}()
 
@@ -293,9 +311,8 @@ func (fs *FileStore) GetContent(key string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid key format")
 	}
 
-	lock := fs.getPartitionLock(partitionID)
-	lock.RLock()
-	defer lock.RUnlock()
+	fs.rLockPartition(partitionID)
+	defer fs.runLockPartition(partitionID)
 
 	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
 	if err != nil {
@@ -330,11 +347,11 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 
 	fs.debugf("Put: acquiring write lock for partition %s, key %s", partitionStoreName, key)
 	start := time.Now()
-	lock := fs.getPartitionLock(partitionStoreName)
-	lock.Lock()
+	fs.lockPartition(partitionStoreName)
+
 	fs.debugf("Put: acquired write lock for partition %s after %v", partitionStoreName, time.Since(start))
 	defer func() {
-		lock.Unlock()
+		fs.unLockPartition(partitionStoreName)
 		fs.debugf("Put: released write lock for partition %s", partitionStoreName)
 	}()
 
@@ -377,11 +394,11 @@ func (fs *FileStore) PutMetadata(key string, metadata []byte) error {
 
 	fs.debugf("PutMetadata: acquiring write lock for partition %s, key %s", partitionID, key)
 	start := time.Now()
-	lock := fs.getPartitionLock(partitionID)
-	lock.Lock()
+	fs.lockPartition(partitionID)
+
 	fs.debugf("PutMetadata: acquired write lock for partition %s after %v", partitionID, time.Since(start))
 	defer func() {
-		lock.Unlock()
+		fs.unLockPartition(partitionID)
 		fs.debugf("PutMetadata: released write lock for partition %s", partitionID)
 	}()
 
@@ -416,11 +433,11 @@ func (fs *FileStore) Delete(key string) error {
 
 	fs.debugf("Delete: acquiring write lock for partition %s, key %s", partitionID, key)
 	start := time.Now()
-	lock := fs.getPartitionLock(partitionID)
-	lock.Lock()
+	fs.lockPartition(partitionID)
+
 	fs.debugf("Delete: acquired write lock for partition %s after %v", partitionID, time.Since(start))
 	defer func() {
-		lock.Unlock()
+		fs.unLockPartition(partitionID)
 		fs.debugf("Delete: released write lock for partition %s", partitionID)
 	}()
 
@@ -460,7 +477,7 @@ func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content [
 
 		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
 		if err != nil {
-			lock.RUnlock()
+			fs.runLockPartition(partitionID)
 			continue // Skip this partition if it can't be opened
 		}
 
@@ -481,7 +498,7 @@ func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content [
 
 		if mapErr != nil {
 			fs.closePartitionStores(metadataKV, contentKV)
-			lock.RUnlock()
+			fs.runLockPartition(partitionID)
 			return mapErr
 		}
 
@@ -494,13 +511,13 @@ func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content [
 
 			if err := fn(key, decMetadata, decContent); err != nil {
 				fs.closePartitionStores(metadataKV, contentKV)
-				lock.RUnlock()
+				fs.runLockPartition(partitionID)
 				return err
 			}
 		}
 
 		fs.closePartitionStores(metadataKV, contentKV)
-		lock.RUnlock()
+		fs.runLockPartition(partitionID)
 		fs.debugf("Scan: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
 	}
 
@@ -522,12 +539,11 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 	for _, partitionID := range partitions {
 		fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
-		lock := fs.getPartitionLock(partitionID)
-		lock.RLock()
+		fs.rLockPartition(partitionID)
 
 		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
 		if err != nil {
-			lock.RUnlock()
+			fs.runLockPartition(partitionID)
 			continue // Skip this partition if it can't be opened
 		}
 
@@ -550,7 +566,7 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 		if mapErr != nil {
 			fs.closePartitionStores(metadataKV, contentKV)
-			lock.RUnlock()
+			fs.runLockPartition(partitionID)
 			return mapErr
 		}
 
@@ -564,13 +580,13 @@ func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []
 
 			if err := fn(key, decMetadata); err != nil {
 				fs.closePartitionStores(metadataKV, contentKV)
-				lock.RUnlock()
+				fs.runLockPartition(partitionID)
 				return err
 			}
 		}
 
 		fs.closePartitionStores(metadataKV, contentKV)
-		lock.RUnlock()
+		fs.runLockPartition(partitionID)
 		fs.debugf("ScanMetadata: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
 	}
 
@@ -598,7 +614,7 @@ func (fs *FileStore) ScanMetadataFullKeys(prefix string, fn func(key string, met
 
 		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
 		if err != nil {
-			lock.RUnlock()
+			fs.runLockPartition(partitionID)
 			continue // Skip this partition if it can't be opened
 		}
 
@@ -620,7 +636,7 @@ func (fs *FileStore) ScanMetadataFullKeys(prefix string, fn func(key string, met
 
 		if mapErr != nil {
 			fs.closePartitionStores(metadataKV, contentKV)
-			lock.RUnlock()
+			fs.runLockPartition(partitionID)
 			return mapErr
 		}
 
@@ -634,13 +650,13 @@ func (fs *FileStore) ScanMetadataFullKeys(prefix string, fn func(key string, met
 
 			if err := fn(key, decMetadata); err != nil {
 				fs.closePartitionStores(metadataKV, contentKV)
-				lock.RUnlock()
+				fs.runLockPartition(partitionID)
 				return err
 			}
 		}
 
 		fs.closePartitionStores(metadataKV, contentKV)
-		lock.RUnlock()
+		fs.runLockPartition(partitionID)
 		fs.debugf("ScanMetadata: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
 	}
 

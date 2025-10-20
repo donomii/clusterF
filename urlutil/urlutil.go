@@ -67,6 +67,11 @@ func BuildHTTPURL(address string, port int, rawPath string) (string, error) {
 	return u.String(), nil
 }
 
+func BuildFilesURL(address string, port int, filePath string) (string, error) {
+	normalized := normalizeAbsolutePath(filePath)
+	return BuildHTTPURL(address, port, "/api/files"+normalized)
+}
+
 func BuildInternalFilesURL(address string, port int, filePath string) (string, error) {
 	normalized := normalizeAbsolutePath(filePath)
 	return BuildHTTPURL(address, port, "/internal/files"+normalized)

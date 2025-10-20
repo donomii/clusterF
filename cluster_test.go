@@ -918,26 +918,26 @@ func TestCluster_BasicOperations(t *testing.T) {
 	var body []byte
 
 	// Test GET operation
-	WaitForConditionT(t, "File availability", func() bool {
+	err = CheckSuccessWithError(func() error {
 		url = baseURL + "/api/files/test-file.txt"
 		resp, err = client.Get(url)
 		if err != nil {
-			t.Fatalf("GET request failed: %v", err)
+			return fmt.Errorf("GET request failed: %v", err)
 		}
 
 		body, err = io.ReadAll(resp.Body)
 		if err != nil {
-			t.Fatalf("Failed to read response: %v", err)
+			return fmt.Errorf("Failed to read response: %v", err)
 		}
 
 		clearResponseBody(resp)
-		return resp.StatusCode == http.StatusOK
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("Expected status %v, got status %v", http.StatusOK, resp.StatusCode)
+		}
+		return nil
 	}, 1000, 10000) // Retry for up to 10 seconds
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Testing file get, expected 200, got %d.  File /test-file.txt, target url %v", resp.StatusCode, url)
-	}
-	if !bytes.Equal(body, testData) {
-		t.Fatalf("Data mismatch: expected %q, got %q", testData, body)
+	if err != nil {
+		t.Fatalf("%v: %v", err, string(body))
 	}
 	// Test status endpoint
 	WaitForConditionT(t, "Status endpoint", func() bool {

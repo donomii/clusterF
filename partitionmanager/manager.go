@@ -1239,7 +1239,7 @@ func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID typ
 		if ctx.Err() != nil {
 			return
 		}
-		pm.logf("[PARTITION] Syncing %s from %s", partitionID, holderID)
+		pm.debugf("[PARTITION] Syncing %s from %s", partitionID, holderID)
 
 		// Find the peer in the nodes crdt
 		nodeData := pm.deps.Cluster.GetNodeInfo(holderID)

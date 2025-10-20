@@ -205,6 +205,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		return "", fmt.Errorf("no storage nodes available to forward upload (after filtering)")
 	}
 
+	/*  Need a better system, or we just load one node
 	minIdx := -1
 	minUsage := 2.0 // Higher than any valid usage (which is <= 1.0)
 	for i, candidate := range candidates {
@@ -222,6 +223,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		copy(candidates[1:minIdx+1], candidates[0:minIdx])
 		candidates[0] = lowest
 	}
+	*/
 	// Occasionally rotate the first two nodes to avoid hot-spotting on a single peer
 	if len(candidates) > 1 && rand.Float64() < 0.25 {
 		candidates[0], candidates[1] = candidates[1], candidates[0]
