@@ -240,7 +240,7 @@ func (pm *PartitionManager) getAllPartitionStores() ([]types.PartitionStore, err
 	return pm.deps.FileStore.getAllPartitionStores("")
 }
 
-func (pm *PartitionManager) debugf(format string, args ...interface{}) {
+func (pm *PartitionManager) debugf(format string, args ...interface{}) string {
 	if pm.deps.Debugf != nil {
 		// Get caller info
 		_, file, line, ok := runtime.Caller(1) // 1 = caller of debugf
@@ -248,11 +248,14 @@ func (pm *PartitionManager) debugf(format string, args ...interface{}) {
 		if ok {
 			loc = fmt.Sprintf("%s:%d: ", file, line)
 		}
-		pm.deps.Debugf(loc+format, args...)
+		message := fmt.Sprintf(loc+format, args...)
+		pm.deps.Debugf(message)
+		return message
 	}
+	return ""
 }
 
-func (pm *PartitionManager) logf(format string, args ...interface{}) {
+func (pm *PartitionManager) logf(format string, args ...interface{}) string {
 	if pm.deps.Logger != nil {
 		// Get caller info
 		_, file, line, ok := runtime.Caller(1)
@@ -260,8 +263,11 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) {
 		if ok {
 			loc = fmt.Sprintf("%s:%d: ", file, line)
 		}
-		pm.deps.Logger.Printf(loc+format, args...)
+		message := fmt.Sprintf(loc+format, args...)
+		pm.deps.Logger.Printf(message)
+		return message
 	}
+	return ""
 }
 
 // errorf creates a detailed error with full stack trace and human-readable dump
@@ -484,8 +490,7 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, types.FileMetadata, error) {
 	// If in no-store mode, always try peers first
 	if pm.deps.NoStore {
-		pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path)
-		return pm.GetFileFromPeers(path)
+		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path))
 	}
 
 	partitionID := HashToPartition(path)
@@ -494,13 +499,12 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	// Get metadata and content atomically
 	fileData, err := pm.deps.FileStore.Get(fileKey)
 	if err != nil {
-		pm.debugf("[PARTITION] File %s not found locally (err: %v), trying peers", fileKey, err)
-		return pm.GetFileFromPeers(path)
+		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] File %s not found locally (err: %v), trying peers", fileKey, err))
 	}
 
 	if !fileData.Exists {
-		pm.debugf("[PARTITION] File %s not found locally, trying peers", fileKey)
-		return pm.GetFileFromPeers(path)
+		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] File %s not found locally", fileKey))
+
 	}
 
 	// Parse metadata
@@ -521,9 +525,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	}
 
 	if err := pm.verifyFileChecksum(fileData.Content, checksum, path, string(pm.deps.NodeID)); err != nil {
-		pm.logf("[PARTITION] Local file corruption detected for %s: %v", path, err)
-		// File is corrupted locally, try to get from peers
-		return pm.GetFileFromPeers(path)
+		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.logf("[PARTITION] Local file corruption detected for %s: %v", path, err))
 	}
 	pm.debugf("[PARTITION] Local checksum verified for %s", path)
 
