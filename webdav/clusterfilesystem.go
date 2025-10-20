@@ -149,7 +149,7 @@ func (cfs *ClusterFileSystem) Open(ctx context.Context, name string) (io.ReadClo
 		return nil, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("path not found"))
 	}
 
-	data, _, err := cfs.fs.GetFile(clusterPath)
+	data, _, err := cfs.fs.GetFile(clusterPath) // Is now only local, need getfrompeers here
 	if err != nil {
 		cfs.debugf("[WEBDAV] Open: GetFile failed: %v", err)
 		return nil, webdav.NewHTTPError(http.StatusNotFound, err)
@@ -172,7 +172,7 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 	}
 
 	// First try to get basic metadata
-	metaS, err := cfs.fs.MetadataForPath(clusterPath)
+	metaS, err := cfs.fs.MetadataForPath(clusterPath) //local
 	meta := &metaS
 	if err != nil {
 		cfs.debugf("[WEBDAV] Stat: MetadataForPath failed: %v", err)

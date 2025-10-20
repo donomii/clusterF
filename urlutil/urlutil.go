@@ -82,6 +82,10 @@ func BuildInternalMetadataURL(address string, port int, filePath string) (string
 	return BuildHTTPURL(address, port, "/internal/metadata"+normalized)
 }
 
+func BuildInternalSearchURL(address string, port int) (string, error) {
+	return BuildHTTPURL(address, port, "/internal/search")
+}
+
 func EncodePath(path string) string {
 	_, encoded := encodePath(path)
 	return encoded

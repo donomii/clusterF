@@ -128,7 +128,7 @@ func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 
 // searchPeer performs a search on a specific peer
 func (c *Cluster) searchPeer(peer *types.PeerInfo, req SearchRequest) []types.SearchResult {
-	endpointURL, err := urlutil.BuildHTTPURL(peer.Address, peer.HTTPPort, "/api/search")
+	endpointURL, err := urlutil.BuildInternalSearchURL(peer.Address, peer.HTTPPort)
 	if err != nil {
 		c.debugf("Failed to build search URL for peer %s: %v", peer.NodeID, err)
 		return nil
@@ -193,6 +193,51 @@ func (c *Cluster) handleSearchAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		c.debugf("Failed to encode search response: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
+// handleInternalSearchAPI handles internal peer-to-peer search requests
+// Only performs local search, never forwards to other peers
+func (c *Cluster) handleInternalSearchAPI(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			c.debugf("Internal search API panic: %v", rec)
+			http.Error(w, fmt.Sprintf("Internal server error: %v", rec), http.StatusInternalServerError)
+		}
+	}()
+
+	if r.Method != http.MethodPost {
+		http.Error(w, fmt.Sprintf("Method %s not allowed for internal search API (only POST supported)", r.Method), http.StatusMethodNotAllowed)
+		return
+	}
+
+	c.debugf("[INTERNAL_SEARCH_API] POST request from peer")
+
+	var req SearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.Query == "" {
+		http.Error(w, "Search query cannot be empty - please provide a search term", http.StatusBadRequest)
+		return
+	}
+
+	c.debugf("[INTERNAL_SEARCH_API] Performing local search for query: %s", req.Query)
+
+	// Only perform local search, never forward to peers
+	results := c.performLocalSearch(req)
+
+	response := SearchResponse{
+		Results: results,
+		Count:   len(results),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		c.debugf("Failed to encode internal search response: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }

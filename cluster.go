@@ -988,6 +988,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	// Internal API endpoints for peer-to-peer communication
 	mux.HandleFunc("/internal/files/", corsMiddleware(c.Debug, c.Logger(), c.handleInternalFilesAPI))
 	mux.HandleFunc("/internal/metadata/", corsMiddleware(c.Debug, c.Logger(), c.handleInternalMetadataAPI))
+	mux.HandleFunc("/internal/search", corsMiddleware(c.Debug, c.Logger(), c.handleInternalSearchAPI))
 	// Partition sync endpoints
 	mux.HandleFunc("/api/partition-sync/", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionSyncAPI))
 	mux.HandleFunc("/api/partition-stats", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionStats))

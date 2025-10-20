@@ -325,14 +325,14 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, types.FileMetadata, e
 	content, metadata, err := fs.cluster.PartitionManager().GetFileAndMetaFromPartition(path)
 	if err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
-			return fs.cluster.PartitionManager().GetFileFromPeers(path)
+			return nil, types.FileMetadata{}, types.ErrFileNotFound
 		}
-		return fs.cluster.PartitionManager().GetFileFromPeers(path)
+		return nil, types.FileMetadata{}, fmt.Errorf("file not found locally: %v", path)
 	}
 
 	// Check if file is marked as deleted
 	if metadata.Deleted {
-		return fs.cluster.PartitionManager().GetFileFromPeers(path)
+		return nil, types.FileMetadata{}, fmt.Errorf("file was deleted: %v", path)
 	}
 
 	// Verify file integrity using checksum
