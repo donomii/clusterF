@@ -884,7 +884,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			}
 
 		}
-		pm.debugf("[updatePartitionMetadata] Updated CRDT metadata for partition %v", partitionID)
+		//pm.debugf("[updatePartitionMetadata] Updated CRDT metadata for partition %v", partitionID)
 	}
 	// Send updates to peers
 
