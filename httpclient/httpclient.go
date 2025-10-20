@@ -3,6 +3,7 @@ package httpclient
 import (
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -95,9 +96,11 @@ func DoMethod(ctx context.Context, client *http.Client, method, url string, body
 		ctx = context.Background()
 	}
 
-	if strings.Contains(url, "/api") {
+	if strings.Contains(url, "api/") {
 		panic("Nodes are not allowed to call external api")
 	}
+
+	log.Printf("Making http call to %v\n", url)
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, err
