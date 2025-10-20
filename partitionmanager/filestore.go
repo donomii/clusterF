@@ -669,15 +669,15 @@ func makeKey(path string) string {
 }
 
 func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, fn func(key []byte, metadata []byte) error) error {
-	start := time.Now()
-	fs.debugf("[FILESTORE] Opening partitionStore %v", partitionStore)
+	//start := time.Now()
+	//fs.debugf("[FILESTORE] Opening partitionStore %v", partitionStore)
 	metadataKV, contentKV, err := fs.openPartitionStores(partitionStore)
 	defer fs.closePartitionStores(metadataKV, contentKV)
 	if err != nil {
 		fs.debugf("Warn: skipping partition %v in search\n", partitionStore)
 		return err // Skip this partition if it can't be opened
 	}
-	fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
+	//fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
 
 	_, err = metadataKV.MapFunc(fn)
 	return err
