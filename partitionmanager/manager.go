@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"hash"
 	"hash/crc32"
-	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -19,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donomii/clusterF/httpclient"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
@@ -413,29 +413,25 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename str
 	}
 
 	// Create request with internal header to prevent recursion
-	req, err := http.NewRequest(http.MethodGet, fileURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-ClusterF-Internal", "1")
-
-	resp, err := pm.httpClient().Do(req)
+	resp, err := httpclient.Get(context.Background(), pm.httpClient(), fileURL,
+		httpclient.WithHeader("X-ClusterF-Internal", "1"),
+	)
 	if err != nil {
 		pm.debugf("[PARTITION] Failed to get file %s from %s: %v", filename, peer.NodeID, err)
 		return nil, err
 	}
-	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
 
 	// Check response
 	if resp.StatusCode != http.StatusOK {
+		body, _ := resp.ReadAllAndClose()
 		pm.debugf("[PARTITION] Peer %s returned %s for file %s", peer.NodeID, resp.Status, filename)
+		if len(body) > 0 {
+			return nil, fmt.Errorf("peer returned %s: %s", resp.Status, string(body))
+		}
 		return nil, fmt.Errorf("peer returned %s", resp.Status)
 	}
 	// Read content
-	content, err := io.ReadAll(resp.Body)
+	content, err := resp.ReadAllAndClose()
 	if err != nil {
 		pm.debugf("[PARTITION] Failed to read file %s from %s: %v", filename, peer.NodeID, err)
 		return nil, err
@@ -458,26 +454,18 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 		return types.FileMetadata{}, err
 	}
 
-	req, err := http.NewRequest(http.MethodGet, metadataURL, nil)
+	resp, err := httpclient.Get(context.Background(), pm.httpClient(), metadataURL)
 	if err != nil {
 		return types.FileMetadata{}, err
 	}
-
-	resp, err := pm.httpClient().Do(req)
-	if err != nil {
-		return types.FileMetadata{}, err
-	}
-	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return types.FileMetadata{}, fmt.Errorf("peer %s returned %s for metadata %s", peer.NodeID, resp.Status, filename)
+		body, _ := resp.ReadAllAndClose()
+		return types.FileMetadata{}, fmt.Errorf("peer %s returned %s for metadata %s: %s", peer.NodeID, resp.Status, filename, string(body))
 	}
 
 	var metadata types.FileMetadata
-	body, err := io.ReadAll(resp.Body)
+	body, err := resp.ReadAllAndClose()
 	if err != nil {
 		return types.FileMetadata{}, fmt.Errorf("failed to read response body from peer %s: %v", peer.NodeID, err)
 	}

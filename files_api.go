@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donomii/clusterF/httpclient"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 )
@@ -230,29 +231,19 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			continue
 		}
 
-		// Create request with internal header
-		req, err := http.NewRequest(http.MethodGet, fileURL, nil)
-		if err != nil {
-			c.debugf("[FILES] Failed to create request for peer %s: %v", peer.NodeID, err)
-			holderErrors = append(holderErrors, fmt.Sprintf("%s: request creation failed: %v", peer.NodeID, err))
-			continue
+		options := []httpclient.RequestOption{
+			httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		}
-		req.Header.Set("X-ClusterF-Internal", "1")
-
-		// Forward any download parameter
-		if r.URL.Query().Get("download") != "" {
-			q := req.URL.Query()
-			q.Set("download", r.URL.Query().Get("download"))
-			req.URL.RawQuery = q.Encode()
+		if download := r.URL.Query().Get("download"); download != "" {
+			options = append(options, httpclient.WithQueryParam("download", download))
 		}
 
-		resp, err := c.HttpDataClient.Do(req)
+		resp, err := httpclient.Get(r.Context(), c.HttpDataClient, fileURL, options...)
 		if err != nil {
 			c.debugf("[FILES] Failed to get file from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK {
 			c.debugf("[FILES] Found file %s on holder %s", path, peer.NodeID)
@@ -265,12 +256,14 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			}
 
 			w.WriteHeader(http.StatusOK)
-			io.Copy(w, resp.Body)
+			if _, err := resp.CopyToAndClose(w); err != nil {
+				c.debugf("[FILES] Failed streaming response body from %s: %v", peer.NodeID, err)
+			}
 			return
 		}
 
 		// Read error response body for more detailed error information
-		errorBody, _ := io.ReadAll(resp.Body)
+		errorBody, _ := resp.ReadAllAndClose()
 		errorMsg := fmt.Sprintf("Expected 200, got %d", resp.StatusCode)
 		if len(errorBody) > 0 {
 			errorMsg += fmt.Sprintf(": %s", string(errorBody))

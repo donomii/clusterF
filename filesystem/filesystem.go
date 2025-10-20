@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donomii/clusterF/httpclient"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 )
@@ -277,29 +278,21 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 			continue
 		}
 
-		req, err := http.NewRequest(http.MethodPut, fileURL, bytes.NewReader(content))
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		req.Header.Set("Content-Type", contentType)
-		req.Header.Set("X-Forwarded-From", string(fs.cluster.ID()))
-		req.Header.Set("X-ClusterF-Metadata", base64.StdEncoding.EncodeToString(metadataJSON))
-
-		resp, err := fs.cluster.DataClient().Do(req)
+		resp, err := httpclient.Put(context.Background(), fs.cluster.DataClient(), fileURL, bytes.NewReader(content),
+			httpclient.WithHeader("Content-Type", contentType),
+			httpclient.WithHeader("X-Forwarded-From", string(fs.cluster.ID())),
+			httpclient.WithHeader("X-ClusterF-Metadata", base64.StdEncoding.EncodeToString(metadataJSON)),
+		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			resp.Close()
 			fs.debugf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
 			return types.NodeID(nodeID), nil
 		}
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		respBody, _ := resp.ReadAllAndClose()
 		lastErr = fmt.Errorf("peer (%v) store query returned %v(%v) '%v'", peer.NodeID, resp.StatusCode, resp.Status, respBody)
 
 	}
@@ -418,15 +411,11 @@ func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *types.PeerInfo, path stri
 	if err != nil {
 		return false, err
 	}
-	req, err := http.NewRequest(http.MethodHead, fileURL, nil)
+	resp, err := httpclient.Head(context.Background(), fs.cluster.DataClient(), fileURL)
 	if err != nil {
 		return false, err
 	}
-	resp, err := fs.cluster.DataClient().Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
+	defer resp.Close()
 	switch resp.StatusCode {
 	case http.StatusNotFound:
 		return false, nil

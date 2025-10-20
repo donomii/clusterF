@@ -27,6 +27,7 @@ import (
 	"github.com/donomii/clusterF/filesync"
 	"github.com/donomii/clusterF/filesystem"
 	"github.com/donomii/clusterF/frontend"
+	"github.com/donomii/clusterF/httpclient"
 	"github.com/donomii/clusterF/indexer"
 	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/syncmap"
@@ -41,6 +42,26 @@ const (
 	DefaultDataDir       = "./data"
 	DefaultRF            = 3 // Default Replication Factor
 )
+
+func newHTTPTransport(idleTimeout time.Duration, maxPerHost int, responseHeaderTimeout time.Duration) *http.Transport {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          maxPerHost * 4,
+		MaxIdleConnsPerHost:   maxPerHost,
+		MaxConnsPerHost:       maxPerHost * 2,
+		IdleConnTimeout:       idleTimeout,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 2 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+	}
+}
 
 type Metadata struct {
 	NodeID    types.NodeID `json:"node_id"`
@@ -378,25 +399,16 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.threadManager = threadmanager.NewThreadManager(id, opts.Logger)
 	c.debugf("Initialized thread manager\n")
 
-	// Create HTTP clients with connection pooling and differentiated timeouts
-	transport := &http.Transport{
-		MaxIdleConns:        50, // Limit idle connections
-		MaxIdleConnsPerHost: 5,  // Limit per-host connections
-		IdleConnTimeout:     30 * time.Second,
-		TLSHandshakeTimeout: 5 * time.Second,
-		DisableKeepAlives:   false,
-	}
+	// Create HTTP clients with tuned connection pooling and timeouts
+	controlTransport := newHTTPTransport(45*time.Second, 8, 15*time.Second)
 	c.httpClient = &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: transport,
+		Timeout:   45 * time.Second,
+		Transport: controlTransport,
 	}
-	dataTransport := &http.Transport{
-		MaxIdleConns:        50,
-		MaxIdleConnsPerHost: 5,
-		IdleConnTimeout:     2 * time.Minute,
-		TLSHandshakeTimeout: 10 * time.Second,
-		DisableKeepAlives:   false,
-	}
+	dataTransport := newHTTPTransport(2*time.Minute, 16, 45*time.Second)
+	dataTransport.TLSHandshakeTimeout = 10 * time.Second
+	dataTransport.MaxConnsPerHost = 48
+	dataTransport.MaxIdleConns = 96
 	c.HttpDataClient = &http.Client{
 		Timeout:   5 * time.Minute,
 		Transport: dataTransport,
@@ -1230,22 +1242,14 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Create request with internal header
-		req, err := http.NewRequest(http.MethodGet, metadataURL, nil)
-		if err != nil {
-			c.debugf("[METADATA_API] Failed to create request for peer %s: %v", peer.NodeID, err)
-			holderErrors = append(holderErrors, fmt.Sprintf("%s: request creation failed: %v", peer.NodeID, err))
-			continue
-		}
-		req.Header.Set("X-ClusterF-Internal", "1")
-
-		resp, err := c.HttpDataClient.Do(req)
+		resp, err := httpclient.Get(r.Context(), c.HttpDataClient, metadataURL,
+			httpclient.WithHeader("X-ClusterF-Internal", "1"),
+		)
 		if err != nil {
 			c.debugf("[METADATA_API] Failed to get metadata from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK {
 			c.debugf("[METADATA_API] Found metadata for %s on holder %s", path, peer.NodeID)
@@ -1258,12 +1262,14 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 			}
 
 			w.WriteHeader(http.StatusOK)
-			io.Copy(w, resp.Body)
+			if _, err := resp.CopyToAndClose(w); err != nil {
+				c.debugf("[METADATA_API] Failed streaming metadata from %s: %v", peer.NodeID, err)
+			}
 			return
 		}
 
 		// Read error response body for more detailed error information
-		errorBody, _ := io.ReadAll(resp.Body)
+		errorBody, _ := resp.ReadAllAndClose()
 		errorMsg := fmt.Sprintf("Expected 200, got %d", resp.StatusCode)
 		if len(errorBody) > 0 {
 			errorMsg += fmt.Sprintf(": %s", string(errorBody))
