@@ -1328,7 +1328,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 	// Get available peers once - check BOTH discovery AND CRDT nodes
 	availablePeerIDs := pm.deps.Discovery.GetPeerMap()
-	pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs)
+	pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs.Keys())
 	//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
 	partitionKeys := make([]types.PartitionID, 0, len(allPartitions))
