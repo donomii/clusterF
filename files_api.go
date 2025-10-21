@@ -105,12 +105,22 @@ func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, 
 			serveDirectory()
 			return
 		case errors.Is(err, types.ErrFileNotFound):
-			c.debugf("[FILES] File %s not found locally", path)
-			http.Error(w, fmt.Sprintf("File not found: %s", path), http.StatusNotFound)
+			detail := err.Error()
+			if strings.HasPrefix(detail, types.ErrFileNotFound.Error()) {
+				detail = strings.TrimPrefix(detail, types.ErrFileNotFound.Error())
+				detail = strings.TrimPrefix(detail, ": ")
+			}
+			if detail == "" {
+				detail = path
+			}
+			message := fmt.Sprintf("File not found on holder %s: %s", string(c.ID()), detail)
+			c.debugf("[FILES] %s", message)
+			http.Error(w, message, http.StatusNotFound)
 			return
-		case strings.Contains(fmt.Sprintf("%v", err), "not found for file"): //FIXME better error string detection
-			c.debugf("[FILES] File %s not found locally", path)
-			http.Error(w, fmt.Sprintf("File not found: %s", path), http.StatusNotFound)
+		case strings.Contains(fmt.Sprintf("%v", err), "not found for file"): // Legacy error strings from older storage layers
+			message := fmt.Sprintf("File not found on holder %s: %v", string(c.ID()), err)
+			c.debugf("[FILES] %s", message)
+			http.Error(w, message, http.StatusNotFound)
 			return
 		default:
 			c.debugf("[FILES] Failed to retrieve %s: %v", path, err)

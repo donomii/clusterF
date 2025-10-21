@@ -515,11 +515,17 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	// Get metadata and content atomically
 	fileData, err := pm.deps.FileStore.Get(fileKey)
 	if err != nil {
-		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] File %s not found locally (err: %v), trying peers", fileKey, err))
+		if fileData != nil && !fileData.Exists {
+			pm.debugf("[PARTITION] File %s not found locally (partition %s): %v", fileKey, partitionID, err)
+			return []byte{}, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, fileKey, err.Error())
+		}
+		pm.logf("[PARTITION] Failed reading local store for %s (partition %s, key %s): %v", path, partitionID, fileKey, err)
+		return []byte{}, types.FileMetadata{}, fmt.Errorf("failed reading local store for %s (partition %s, key %s): %w", path, partitionID, fileKey, err)
 	}
 
 	if !fileData.Exists {
-		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] File %s not found locally", fileKey))
+		pm.debugf("[PARTITION] File %s lookup returned empty record (partition %s)", fileKey, partitionID)
+		return []byte{}, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, fileKey, "store returned empty record")
 
 	}
 
@@ -531,7 +537,8 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 
 	// Check if file is marked as deleted
 	if metadata.Deleted {
-		return nil, types.FileMetadata{}, types.ErrFileNotFound
+		pm.debugf("[PARTITION] File %s marked as deleted locally (partition %s)", fileKey, partitionID)
+		return nil, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, fileKey, "file is marked as deleted (tombstone present)")
 	}
 
 	// Verify checksum if available
@@ -548,6 +555,18 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	pm.debugf("[PARTITION] Found file %s locally in partition %s", path, partitionID)
 	pm.debugf("[PARTITION] Retrieved file %s: %d bytes content", path, len(fileData.Content))
 	return fileData.Content, metadata, nil
+}
+
+func (pm *PartitionManager) localFileNotFound(path string, partitionID types.PartitionID, fileKey string, detail string) error {
+	message := fmt.Sprintf("file %s is missing on holder %s (partition %s)", path, pm.deps.NodeID, partitionID)
+	if fileKey != "" {
+		message = fmt.Sprintf("%s, storage key %s", message, fileKey)
+	}
+	detail = strings.TrimSpace(detail)
+	if detail != "" {
+		message = fmt.Sprintf("%s: %s", message, detail)
+	}
+	return fmt.Errorf("%w: %s", types.ErrFileNotFound, message)
 }
 
 // GetFileFromPeers attempts to retrieve a file from peer nodes

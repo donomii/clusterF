@@ -479,9 +479,9 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, types.FileMetadata, e
 	// Bubble errors from the partition manager so callers know whether the lookup failed locally or globally.
 	if err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
-			return nil, types.FileMetadata{}, types.ErrFileNotFound
+			return nil, types.FileMetadata{}, err
 		}
-		return nil, types.FileMetadata{}, fmt.Errorf("file not found locally: %v", path)
+		return nil, types.FileMetadata{}, fmt.Errorf("partition lookup failed for %s: %w", path, err)
 	}
 
 	// Check if file is marked as deleted
