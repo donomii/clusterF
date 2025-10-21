@@ -1273,7 +1273,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 		return
 	}
 
-	throttle := make(chan struct{}, 50)
+	throttle := make(chan struct{}, 10)
 	defer close(throttle)
 
 	// Loop forever, checking for partitions to sync

@@ -352,8 +352,7 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 	}
 
 	for i, _ := range nodes {
-		nodes[i].initialSyncDone.Store(false)
-		nodes[i].syncPeersFromDiscovery()
+		nodes[i].FullSyncAllPeers()
 	}
 
 	// Compute the expected partition for this file (same hashing as PartitionManager)

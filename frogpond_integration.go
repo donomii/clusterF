@@ -383,33 +383,6 @@ func (c *Cluster) handleFrogpondUpdate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleFrogpondFullSync handles incoming full store sync from a new peer
-func (c *Cluster) handleFrogpondFullSync(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		return
-	}
-
-	var peerData []frogpond.DataPoint
-	if err := json.Unmarshal(body, &peerData); err != nil {
-		http.Error(w, "Failed to parse full store data", http.StatusBadRequest)
-		return
-	}
-
-	// Apply the peer's full store and get any resulting updates
-	resultingUpdates := c.frogpond.AppendDataPoints(peerData)
-	c.sendUpdatesToPeers(resultingUpdates)
-
-	c.Logger().Printf("[FULL_SYNC] Received and applied %d data points from peer", len(peerData))
-	w.WriteHeader(http.StatusOK)
-}
-
 // handleFrogpondFullStore serves our complete frogpond store to requesting peers
 func (c *Cluster) handleFrogpondFullStore(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
