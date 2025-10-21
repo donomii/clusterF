@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/donomii/clusterF/httpclient"
@@ -151,89 +152,66 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	// Get nodes that hold this partition
 	nodesForPartition := fs.cluster.GetNodesForPartition(partitionName)
 
-	// If partition exists on nodes, use those
-	var targetNodes []string
+	desiredReplicas := fs.cluster.ReplicationFactor()
+	if desiredReplicas < 1 {
+		desiredReplicas = 1
+	}
+
+	// Build the list of nodes that must receive the upload (holders first, otherwise RF candidates).
+	targetNodes := make([]string, 0)
+	targetSet := make(map[string]bool)
+	// When we already host the partition we must push the update to every current holder.
 	if len(nodesForPartition) > 0 {
-		targetNodes = make([]string, len(nodesForPartition))
-		for i, nodeID := range nodesForPartition {
-			targetNodes[i] = string(nodeID)
+		// Existing holders already replicate this partition; include every holder so they all receive the update.
+		// Walk the holder list so we capture a deduplicated slice of nodes to push to.
+		for _, nodeID := range nodesForPartition {
+			id := string(nodeID)
+			if id == "" {
+				continue
+			}
+			if targetSet[id] {
+				continue
+			}
+			targetSet[id] = true
+			targetNodes = append(targetNodes, id)
 		}
 	} else {
-		// No nodes hold this partition yet - filter out no-store nodes and randomize
+		// No holders yet, so choose fresh storage nodes that can accept the data without being over capacity.
+		candidates := make([]string, 0, len(allNodes))
+		// Inspect every known storage node to assemble the list of initial replica targets.
 		for nodeID, nodeInfo := range allNodes {
+			// Ignore peers that are not active storage hosts so uploads target real capacity.
 			if nodeInfo != nil && nodeInfo.IsStorage {
-				targetNodes = append(targetNodes, string(nodeID))
+				// Skip peers that are dangerously full so we do not overload their disks with new replicas.
+				if nodeInfo.DiskSize > 0 {
+					used := nodeInfo.DiskSize - nodeInfo.DiskFree
+					if used < 0 {
+						used = 0
+					}
+					usage := float64(used) / float64(nodeInfo.DiskSize)
+					if usage >= 0.9 {
+						continue
+					}
+				}
+				candidates = append(candidates, string(nodeID))
 			}
 		}
-	}
-	// Randomize the list
-	if len(targetNodes) > 1 {
-		for i := len(targetNodes) - 1; i > 0; i-- {
-			j := rand.Intn(i + 1)
-			targetNodes[i], targetNodes[j] = targetNodes[j], targetNodes[i]
+		if len(candidates) == 0 {
+			return "", fmt.Errorf("no storage nodes available to forward upload")
 		}
-	}
-	// Select nodes based on rules
-	type nodeCandidate struct {
-		id       string
-		usage    float64
-		hasUsage bool
-	}
-
-	candidates := make([]nodeCandidate, 0, len(targetNodes))
-	for _, id := range targetNodes {
-		info, ok := allNodes[types.NodeID(id)]
-		var usage float64
-		hasUsage := ok && info != nil && info.DiskSize > 0
-		if hasUsage {
-			used := info.DiskSize - info.DiskFree
-			if used < 0 {
-				used = 0
+		if len(candidates) > 1 {
+			rand.Shuffle(len(candidates), func(i, j int) {
+				candidates[i], candidates[j] = candidates[j], candidates[i]
+			})
+		}
+		// Copy the filtered candidates into the target set without adding duplicates.
+		for _, id := range candidates {
+			if targetSet[id] {
+				continue
 			}
-			usage = float64(used) / float64(info.DiskSize)
-			if usage >= 0.9 {
-				continue // Drop nodes that are 90% full or higher
-			}
+			targetSet[id] = true
+			targetNodes = append(targetNodes, id)
 		}
-		// Track candidate usage so we can prioritise low-usage nodes
-		candidates = append(candidates, nodeCandidate{
-			id:       id,
-			usage:    usage,
-			hasUsage: hasUsage,
-		})
-	}
-
-	if len(candidates) == 0 {
-		return "", fmt.Errorf("no storage nodes available to forward upload (after filtering)")
-	}
-
-	/*  Need a better system, or we just load one node
-	minIdx := -1
-	minUsage := 2.0 // Higher than any valid usage (which is <= 1.0)
-	for i, candidate := range candidates {
-		if !candidate.hasUsage {
-			continue
-		}
-		if candidate.usage < minUsage {
-			minUsage = candidate.usage
-			minIdx = i
-		}
-	}
-	if minIdx > 0 {
-		// Move the lowest-usage node to the front so it is tried first
-		lowest := candidates[minIdx]
-		copy(candidates[1:minIdx+1], candidates[0:minIdx])
-		candidates[0] = lowest
-	}
-	*/
-	// Occasionally rotate the first two nodes to avoid hot-spotting on a single peer
-	if len(candidates) > 1 && rand.Float64() < 0.25 {
-		candidates[0], candidates[1] = candidates[1], candidates[0]
-	}
-
-	targetNodes = targetNodes[:0]
-	for _, candidate := range candidates {
-		targetNodes = append(targetNodes, candidate.id)
 	}
 
 	if len(targetNodes) == 0 {
@@ -245,138 +223,243 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 	modTime, size, metaErr := decodeForwardedMetadata(metadataJSON)
 
-	attempted := make(map[string]struct{}, len(targetNodes))
-	totalSkipped := 0
-
-	nodeID, skipped, lastErr, allSkipped := fs.tryForwardToNodes(context.Background(), path, metadataJSON, content, contentType, targetNodes, attempted, peerMap, modTime, size, metaErr)
-	totalSkipped += skipped
-	if lastErr == nil {
-		return nodeID, nil
-	}
-	if allSkipped {
-		fs.debugf("[FILES] All peers already had %s; nothing to forward", path)
-		return "", nil
+	requiredSuccesses := len(nodesForPartition)
+	// When we have no holders, fall back to the configured replication factor as our success target.
+	if requiredSuccesses == 0 {
+		requiredSuccesses = desiredReplicas
+		if requiredSuccesses > len(targetNodes) {
+			requiredSuccesses = len(targetNodes)
+		}
 	}
 
-	if len(nodesForPartition) > 0 {
-		fallbackTargets := make([]string, 0, len(allNodes))
-		for nodeID, nodeInfo := range allNodes {
-			if nodeInfo == nil || !nodeInfo.IsStorage {
-				continue
+	// Bail out early if we still have nobody to write to after all the filtering above.
+	if requiredSuccesses == 0 {
+		return "", fmt.Errorf("no eligible storage nodes available for upload")
+	}
+
+	pending := append([]string(nil), targetNodes...)
+	successSet := make(map[string]bool)
+	successOrder := make([]types.NodeID, 0)
+	attemptedAll := make(map[string]bool)
+	attemptCounts := make(map[string]int)
+
+	maxBatch := desiredReplicas
+	if maxBatch <= 0 {
+		maxBatch = len(pending)
+	}
+
+	// Iterate in batches so we can fan out uploads while respecting the replication limit.
+	for len(pending) > 0 && len(successSet) < requiredSuccesses {
+		batchSize := maxBatch
+		if batchSize <= 0 || batchSize > len(pending) {
+			batchSize = len(pending)
+		}
+		batch := append([]string(nil), pending[:batchSize]...)
+		pending = pending[batchSize:]
+
+		attemptedBatch, _, successes, err, allSkipped := fs.tryForwardToNodes(context.Background(), path, metadataJSON, content, contentType, batch, peerMap, modTime, size, metaErr)
+
+		successMap := make(map[string]bool, len(successes))
+		// Record which peers actually accepted this batch so we do not queue them again.
+		for _, s := range successes {
+			sid := string(s)
+			successMap[sid] = true
+			if !successSet[sid] {
+				successSet[sid] = true
+				successOrder = append(successOrder, s)
 			}
-			id := string(nodeID)
-			if _, seen := attempted[id]; seen {
-				continue
-			}
-			if nodeInfo.DiskSize > 0 {
-				used := nodeInfo.DiskSize - nodeInfo.DiskFree
-				if used < 0 {
-					used = 0
+		}
+
+		// Track per-node contact counts to enforce the retry limit.
+		for id := range attemptedBatch {
+			attemptedAll[id] = true
+			attemptCounts[id]++
+		}
+
+		// If every peer said it already has the file, count them as satisfied without retrying elsewhere.
+		if allSkipped && len(successes) == 0 {
+			// Mark every peer in the batch as satisfied because they already had the data.
+			for id := range attemptedBatch {
+				if !successSet[id] {
+					successSet[id] = true
+					successOrder = append(successOrder, types.NodeID(id))
 				}
-				usage := float64(used) / float64(nodeInfo.DiskSize)
-				if usage >= 0.9 {
+			}
+			continue
+		}
+
+		// On failure, requeue the peers that might still accept the data, but stop after a few tries.
+		if err != nil {
+			retry := make([]string, 0)
+			// Iterate over the batch so we only retry nodes that actually failed.
+			for id := range attemptedBatch {
+				if successMap[id] {
 					continue
 				}
+				if attemptCounts[id] >= 3 {
+					return "", fmt.Errorf("failed to forward upload to %s after %d attempts: %v", id, attemptCounts[id], err)
+				}
+				retry = append(retry, id)
 			}
-			fallbackTargets = append(fallbackTargets, id)
+			if len(retry) == 0 {
+				return "", err
+			}
+			rand.Shuffle(len(retry), func(i, j int) {
+				retry[i], retry[j] = retry[j], retry[i]
+			})
+			pending = append(pending, retry...)
 		}
 
-		if len(fallbackTargets) > 1 {
-			for i := len(fallbackTargets) - 1; i > 0; i-- {
-				j := rand.Intn(i + 1)
-				fallbackTargets[i], fallbackTargets[j] = fallbackTargets[j], fallbackTargets[i]
+		// If we run out of candidates before hitting the target, pull in additional storage nodes.
+		if len(pending) == 0 && len(successSet) < requiredSuccesses {
+			extra := make([]string, 0)
+			// Sweep remaining storage peers so we can widen the search for replica targets.
+			for nodeID, nodeInfo := range allNodes {
+				if nodeInfo == nil || !nodeInfo.IsStorage {
+					continue
+				}
+				id := string(nodeID)
+				if successSet[id] || attemptedAll[id] {
+					continue
+				}
+				// Avoid fetching help from nodes that are already low on disk space.
+				if nodeInfo.DiskSize > 0 {
+					used := nodeInfo.DiskSize - nodeInfo.DiskFree
+					if used < 0 {
+						used = 0
+					}
+					usage := float64(used) / float64(nodeInfo.DiskSize)
+					if usage >= 0.9 {
+						continue
+					}
+				}
+				extra = append(extra, id)
 			}
-			if rand.Float64() < 0.25 {
-				fallbackTargets[0], fallbackTargets[1] = fallbackTargets[1], fallbackTargets[0]
+			if len(extra) > 0 {
+				rand.Shuffle(len(extra), func(i, j int) {
+					extra[i], extra[j] = extra[j], extra[i]
+				})
+				pending = append(pending, extra...)
 			}
-		}
-
-		nodeID, skipped, err, fallbackSkipped := fs.tryForwardToNodes(context.Background(), path, metadataJSON, content, contentType, fallbackTargets, attempted, peerMap, modTime, size, metaErr)
-		totalSkipped += skipped
-		if err == nil {
-			return nodeID, nil
-		}
-		if fallbackSkipped {
-			fs.debugf("[FILES] All fallback peers already had %s; nothing to forward", path)
-			return "", nil
-		}
-		if err != nil {
-			lastErr = err
 		}
 	}
 
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no storage nodes accepted upload (skipped=%v)", totalSkipped)
+	if len(successSet) < requiredSuccesses {
+		return "", fmt.Errorf("failed to reach required replicas (needed %d, achieved %d)", requiredSuccesses, len(successSet))
 	}
 
-	return "", fmt.Errorf("failed to forward upload to any storage node: %v", lastErr)
+	var chosen types.NodeID
+	if len(successOrder) > 0 {
+		chosen = successOrder[0]
+	}
+
+	return chosen, nil
 }
 
-func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string, metadataJSON []byte, content []byte, contentType string, targets []string, attempted map[string]struct{}, peerMap *syncmap.SyncMap[string, *types.PeerInfo], modTime time.Time, size int64, metaErr error) (types.NodeID, int, error, bool) {
+func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string, metadataJSON []byte, content []byte, contentType string, targets []string, peerMap *syncmap.SyncMap[string, *types.PeerInfo], modTime time.Time, size int64, metaErr error) (map[string]bool, int, []types.NodeID, error, bool) {
 	if len(targets) == 0 {
-		return "", 0, fmt.Errorf("no storage nodes available to forward upload"), false
+		return map[string]bool{}, 0, nil, fmt.Errorf("no storage nodes available to forward upload"), false
+	}
+
+	// Every goroutine reports its outcome via this channel-friendly struct.
+	type forwardResult struct {
+		node    types.NodeID
+		skipped bool
+		err     error
 	}
 
 	skipped := 0
-	var lastErr error
+	attempted := make(map[string]bool, len(targets))
 	metaHeader := base64.StdEncoding.EncodeToString(metadataJSON)
 
+	results := make(chan forwardResult, len(targets))
+	var wg sync.WaitGroup
+
+	// Fan the upload out to each target concurrently so we don't serialize network writes.
 	for _, nodeID := range targets {
-		attempted[nodeID] = struct{}{}
+		attempted[nodeID] = true
 
-		peer, ok := peerMap.Load(nodeID)
-		if !ok {
-			fs.debugf("[FILES] Node %s not found in discovery peers", nodeID)
-			lastErr = fmt.Errorf("[FILES] Node %s not found in discovery peers", nodeID)
-			continue
-		}
+		wg.Add(1)
+		go func(nodeID string) {
+			defer wg.Done()
 
-		if metaErr == nil {
-			upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size)
-			if err == nil && upToDate {
-				msg := fmt.Sprintf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
-				skipped++
-				lastErr = fmt.Errorf("%v", msg)
+			peer, ok := peerMap.Load(nodeID)
+			if !ok {
+				msg := fmt.Errorf("[FILES] Node %s not found in discovery peers", nodeID)
 				fs.debugf("%v", msg)
-				continue
+				results <- forwardResult{node: types.NodeID(nodeID), err: msg}
+				return
 			}
+
+			// Skip redundant uploads when we already know the peer has a fresh copy.
+			if metaErr == nil {
+				upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size)
+				if err == nil && upToDate {
+					fs.debugf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
+					results <- forwardResult{node: types.NodeID(nodeID), skipped: true}
+					return
+				}
+				if err != nil {
+					fs.debugf("[FILES] HEAD check failed for %s on %s: %v", path, peer.NodeID, err)
+				}
+			}
+
+			fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
 			if err != nil {
-				fs.debugf("[FILES] HEAD check failed for %s on %s: %v", path, peer.NodeID, err)
+				results <- forwardResult{node: types.NodeID(nodeID), err: err}
+				return
 			}
-		}
 
-		fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
-		if err != nil {
-			lastErr = err
+			resp, err := httpclient.Put(ctx, fs.cluster.DataClient(), fileURL, bytes.NewReader(content),
+				httpclient.WithHeader("Content-Type", contentType),
+				httpclient.WithHeader("X-Forwarded-From", string(fs.cluster.ID())),
+				httpclient.WithHeader("X-ClusterF-Metadata", metaHeader),
+			)
+			if err != nil {
+				results <- forwardResult{node: types.NodeID(nodeID), err: err}
+				return
+			}
+			// Treat only 2xx responses as a successful replica write.
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				resp.Close()
+				fs.debugf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
+				results <- forwardResult{node: types.NodeID(nodeID)}
+				return
+			}
+			respBody, _ := resp.ReadAllAndClose()
+			results <- forwardResult{
+				node: types.NodeID(nodeID),
+				err:  fmt.Errorf("peer (%v) store query returned %v(%v) '%v'", peer.NodeID, resp.StatusCode, resp.Status, respBody),
+			}
+		}(nodeID)
+	}
+
+	wg.Wait()
+	// The channel is buffered to len(targets); close it once all senders are done.
+	close(results)
+
+	var errorMessages []string
+	successes := make([]types.NodeID, 0, len(targets))
+
+	// Drain the results channel once all uploads finished to aggregate successes and failures.
+	for res := range results {
+		if res.skipped {
+			skipped++
 			continue
 		}
-
-		resp, err := httpclient.Put(ctx, fs.cluster.DataClient(), fileURL, bytes.NewReader(content),
-			httpclient.WithHeader("Content-Type", contentType),
-			httpclient.WithHeader("X-Forwarded-From", string(fs.cluster.ID())),
-			httpclient.WithHeader("X-ClusterF-Metadata", metaHeader),
-		)
-		if err != nil {
-			lastErr = err
+		if res.err != nil {
+			errorMessages = append(errorMessages, res.err.Error())
 			continue
 		}
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			resp.Close()
-			fs.debugf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
-			return types.NodeID(nodeID), skipped, nil, false
-		}
-		respBody, _ := resp.ReadAllAndClose()
-		lastErr = fmt.Errorf("peer (%v) store query returned %v(%v) '%v'", peer.NodeID, resp.StatusCode, resp.Status, respBody)
+		successes = append(successes, res.node)
 	}
 
-	if skipped == len(targets) {
-		return "", skipped, lastErr, true
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no storage nodes accepted upload (skipped=%v)", skipped)
+	if len(errorMessages) == 0 {
+		return attempted, skipped, successes, nil, skipped == len(targets)
 	}
 
-	return "", skipped, lastErr, false
+	combinedErr := errors.New(strings.Join(errorMessages, "; "))
+	return attempted, skipped, successes, combinedErr, false
 }
 
 // GetFileWithContentType retrieves a file and returns an io.ReadCloser with content type
@@ -393,6 +476,7 @@ func (fs *ClusterFileSystem) GetFileWithContentType(path string) (io.ReadCloser,
 func (fs *ClusterFileSystem) GetFile(path string) ([]byte, types.FileMetadata, error) {
 	// Get file content and metadata together
 	content, metadata, err := fs.cluster.PartitionManager().GetFileAndMetaFromPartition(path)
+	// Bubble errors from the partition manager so callers know whether the lookup failed locally or globally.
 	if err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
 			return nil, types.FileMetadata{}, types.ErrFileNotFound
@@ -437,6 +521,7 @@ func (fs *ClusterFileSystem) GetMetadata(path string) (types.FileMetadata, error
 	//defer fs.debugf("Leaving GetMetadata for path %v", path)
 	// Try to get metadata from partition system
 	metadata, err := fs.cluster.PartitionManager().GetMetadataFromPartition(path)
+	// Translate partition-layer failures into the filesystem contract for metadata lookups.
 	if err != nil {
 		if errors.Is(err, types.ErrFileNotFound) {
 			return types.FileMetadata{}, types.ErrFileNotFound

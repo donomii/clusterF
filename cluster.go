@@ -149,6 +149,10 @@ func (c *Cluster) PartitionManager() types.PartitionManagerLike {
 	return c.partitionManager
 }
 
+func (c *Cluster) ReplicationFactor() int {
+	return c.getCurrentRF()
+}
+
 type StorageSettings struct {
 	Program             string `json:"program"`
 	URL                 string `json:"url"`

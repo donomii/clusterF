@@ -42,6 +42,10 @@ func (m *MockCluster) Logger() *log.Logger {
 	return m.logger
 }
 
+func (m *MockCluster) ReplicationFactor() int {
+	return 3
+}
+
 func (m *MockCluster) NoStore() bool {
 	return false
 }

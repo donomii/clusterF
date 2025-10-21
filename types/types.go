@@ -26,6 +26,7 @@ type ClusterLike interface {
 	DiscoveryManager() DiscoveryManagerLike                        // Return the Discovery Manager of this Node
 	Exporter() ExporterLike                                        // Return the Exporter of this Node
 	Logger() *log.Logger                                           // Return the logger for this node
+	ReplicationFactor() int                                        // Current replication factor
 	NoStore() bool                                                 // Return true if this node does not participate in data storage
 	ListDirectoryUsingSearch(path string) ([]*FileMetadata, error) // Search the cluster for a prefix (a directory)
 	DataClient() *http.Client                                      // The data transport client, at the moment, there is only the HTTP protocol client
