@@ -382,7 +382,8 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		DisableKeepAlives:   false,
 	}
 	c.HttpDataClient = &http.Client{
-		Timeout:   5 * time.Minute,
+		// No hard deadline for large transfers; rely on transport- and context-level cancellation.
+		Timeout:   0,
 		Transport: dataTransport,
 	}
 	c.debugf("Initialized HTTP clients\n")
@@ -1038,8 +1039,9 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	server = &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      100 * time.Second,
-		IdleTimeout:       15 * time.Second, // important for keep-alive churn
+		// Leave WriteTimeout unset so long-running downloads/uploads do not get cut mid-transfer.
+		WriteTimeout: 0,
+		IdleTimeout:  15 * time.Second, // important for keep-alive churn
 	}
 
 	c.server = server
