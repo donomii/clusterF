@@ -163,7 +163,7 @@ func (dm *DiscoveryManager) Stop() {
 func (dm *DiscoveryManager) GetPeers() []*types.PeerInfo {
 	var peers []*types.PeerInfo
 	dm.peers.Range(func(nodeID string, peer *types.PeerInfo) bool {
-		if peer.NodeID != dm.nodeID { // Exclude ourselves
+		if peer.NodeID != types.NodeID(dm.nodeID) { // Exclude ourselves
 			peers = append(peers, peer)
 		}
 		return true
@@ -179,7 +179,7 @@ func (dm *DiscoveryManager) GetPeerMap() *syncmap.SyncMap[string, *types.PeerInf
 func (dm *DiscoveryManager) GetPeerCount() int {
 	count := 0
 	dm.peers.Range(func(nodeID string, peer *types.PeerInfo) bool {
-		if peer.NodeID != dm.nodeID {
+		if peer.NodeID != types.NodeID(dm.nodeID) {
 			count++
 		}
 		return true
@@ -290,7 +290,7 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 
 	// Update peer information
 	peer := &types.PeerInfo{
-		NodeID:   nodeID,
+		NodeID:   types.NodeID(nodeID),
 		HTTPPort: httpPort,
 		Address:  addr.IP.String(),
 		LastSeen: time.Now(),
@@ -349,7 +349,7 @@ func (dm *DiscoveryManager) SetPeerTimeout(timeout time.Duration) {
 func (dm *DiscoveryManager) GetDiscoveryStatus() map[string]interface{} {
 	var peerList []map[string]interface{}
 	dm.peers.Range(func(nodeID string, peer *types.PeerInfo) bool {
-		if peer.NodeID != dm.nodeID {
+		if peer.NodeID != types.NodeID(dm.nodeID) {
 			peerList = append(peerList, map[string]interface{}{
 				"node_id":   peer.NodeID,
 				"address":   peer.Address,

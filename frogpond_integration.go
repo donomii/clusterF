@@ -62,7 +62,7 @@ func (c *Cluster) getPeerList() []types.PeerInfo {
 		}
 
 		peer := types.PeerInfo{
-			NodeID:        nodeData.NodeID,
+			NodeID:        types.NodeID(nodeData.NodeID),
 			Address:       nodeData.Address,
 			HTTPPort:      nodeData.HTTPPort,
 			DiscoveryPort: nodeData.DiscoveryPort,
@@ -306,7 +306,7 @@ func (c *Cluster) updateNodeMetadata() {
 	address := ""
 	peers := c.DiscoveryManager().GetPeers()
 	for _, peer := range peers {
-		if peer.NodeID == string(c.NodeId) {
+		if peer.NodeID == c.NodeId {
 			address = peer.Address
 			break
 		}

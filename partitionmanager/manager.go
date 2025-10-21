@@ -301,7 +301,7 @@ func (pm *PartitionManager) errorf(received []byte, errorMessage string) error {
 }
 
 // verifyFileChecksum validates file content against its expected SHA-256 checksum
-func (pm *PartitionManager) verifyFileChecksum(content []byte, expectedChecksum, path, peerID string) error {
+func (pm *PartitionManager) verifyFileChecksum(content []byte, expectedChecksum, path string, peerID types.NodeID) error {
 	hash := sha256.Sum256(content)
 	actualChecksum := hex.EncodeToString(hash[:])
 	if actualChecksum != expectedChecksum {
@@ -541,7 +541,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 		panic("no")
 	}
 
-	if err := pm.verifyFileChecksum(fileData.Content, checksum, path, string(pm.deps.NodeID)); err != nil {
+	if err := pm.verifyFileChecksum(fileData.Content, checksum, path, pm.deps.NodeID); err != nil {
 		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.logf("[PARTITION] Local file corruption detected for %s: %v", path, err))
 	}
 	pm.debugf("[PARTITION] Local checksum verified for %s", path)
@@ -1137,7 +1137,7 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 
 		// Verify checksum
 		if path, ok := metadata["path"].(string); ok {
-			if err := pm.verifyFileChecksum(content, checksum, path, string(pm.deps.NodeID)); err != nil {
+			if err := pm.verifyFileChecksum(content, checksum, path, pm.deps.NodeID); err != nil {
 				pm.logf("[INTEGRITY] Corruption detected in %s: %v", path, err)
 				corruptedFiles = append(corruptedFiles, path)
 				return nil
@@ -1332,7 +1332,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 	// Get available peers once - check BOTH discovery AND CRDT nodes
 	peers := pm.getPeers()
-	availablePeerIDs := make(map[string]bool)
+	availablePeerIDs := make(map[types.NodeID]bool)
 	for _, peer := range peers {
 		availablePeerIDs[peer.NodeID] = true
 	}
@@ -1340,19 +1340,11 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 	// Also add all active nodes from CRDT
 	if pm.hasFrogpond() {
-		nodeDataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("nodes/")
-		//pm.debugf("[PARTITION] Found %d node entries in CRDT", len(nodeDataPoints))
-		for _, dp := range nodeDataPoints {
-			//pm.debugf("[PARTITION] CRDT node key=%s deleted=%v valuelen=%d", string(dp.Key), dp.Deleted, len(dp.Value))
-			if dp.Deleted || len(dp.Value) == 0 {
-				continue
-			}
-			// Extract node ID from key: nodes/node-id
-			parts := strings.Split(string(dp.Key), "/")
-			if len(parts) >= 2 {
-				availablePeerIDs[parts[1]] = true
-				//pm.debugf("[PARTITION] Added CRDT node: %s", parts[1])
-			}
+		nodeDataPoints := pm.deps.Cluster.GetAllNodes()
+		for nodeId, _ := range nodeDataPoints {
+
+			availablePeerIDs[nodeId] = true
+
 		}
 	}
 	//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
@@ -1400,7 +1392,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 					// Find available holders to sync from
 					var availableHolders []types.NodeID
 					for _, holderID := range info.Holders {
-						if holderID != pm.deps.NodeID && availablePeerIDs[string(holderID)] {
+						if holderID != pm.deps.NodeID && availablePeerIDs[holderID] {
 							availableHolders = append(availableHolders, holderID)
 						}
 					}
@@ -1446,7 +1438,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 		// Find all available holders to sync from (must be different nodes and currently available)
 		var availableHolders []types.NodeID
 		for _, holderID := range info.Holders {
-			if holderID != pm.deps.NodeID && availablePeerIDs[string(holderID)] {
+			if holderID != pm.deps.NodeID && availablePeerIDs[holderID] {
 				availableHolders = append(availableHolders, holderID)
 			}
 		}

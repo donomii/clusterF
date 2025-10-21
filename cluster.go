@@ -472,7 +472,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 			nodeData := c.GetNodeInfo(id)
 			if nodeData != nil && nodeData.Address != "" {
 				return &types.PeerInfo{
-					NodeID:   nodeData.NodeID,
+					NodeID:   types.NodeID(nodeData.NodeID),
 					Address:  nodeData.Address,
 					HTTPPort: nodeData.HTTPPort,
 				}, true
@@ -1243,7 +1243,7 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 
 			c.debugf("[METADATA_API] Fetching metadata from localhost via HTTP")
 			peer = &types.PeerInfo{
-				NodeID:   string(c.ID()),
+				NodeID:   c.ID(),
 				Address:  c.DiscoveryManager().GetLocalAddress(),
 				HTTPPort: c.HTTPPort(),
 			}

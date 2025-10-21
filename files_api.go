@@ -210,7 +210,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			c.debugf("[FILES] Fetching file from localhost via HTTP")
 			// This is us, but still go through HTTP path for consistency
 			peer = &types.PeerInfo{
-				NodeID:   string(c.ID()),
+				NodeID:   c.ID(),
 				Address:  c.DiscoveryManager().GetLocalAddress(),
 				HTTPPort: c.HTTPPort(),
 			}
@@ -315,7 +315,7 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 		if holderID == c.ID() {
 			c.debugf("[FILES] Fetching HEAD metadata from localhost via HTTP")
 			peer = &types.PeerInfo{
-				NodeID:   string(c.ID()),
+				NodeID:   c.ID(),
 				Address:  c.DiscoveryManager().GetLocalAddress(),
 				HTTPPort: c.HTTPPort(),
 			}
