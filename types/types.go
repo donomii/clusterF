@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -179,6 +180,7 @@ type FileMetadata struct {
 	ModifiedAt  time.Time `json:"modified_at"`
 	IsDirectory bool      `json:"is_directory"`
 	Checksum    string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
+	Holders     []NodeID  `json:"holders,omitempty"`
 	Deleted     bool      `json:"deleted,omitempty"`
 	DeletedAt   time.Time `json:"deleted_at,omitempty"`
 }
@@ -217,6 +219,7 @@ type SearchResult struct {
 	ModifiedAt  time.Time `json:"modified_at,omitempty"`
 	CreatedAt   time.Time `json:"created_at,omitempty"`
 	Checksum    string    `json:"checksum,omitempty"`
+	Holders     []NodeID  `json:"holders,omitempty"`
 }
 
 // FileData represents a complete file entry.
@@ -306,6 +309,8 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 			Name:       normPath,
 			Path:       searchPath + normPath,
 			ModifiedAt: result.ModifiedAt,
+			CreatedAt:  result.CreatedAt,
+			Holders:    uniqueNodeIDs(result.Holders),
 		}
 	} else {
 		// It's a file in the current directory
@@ -316,19 +321,74 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 			ContentType: result.ContentType,
 			ModifiedAt:  result.ModifiedAt,
 			Checksum:    result.Checksum,
+			CreatedAt:   result.CreatedAt,
+			Holders:     uniqueNodeIDs(result.Holders),
 		}
 	}
 	if newResult.ModifiedAt.IsZero() {
 		panic("no")
 	}
 	if existing, ok := resultMap[normPath]; ok {
-		// Merge logic: keep the one with the latest ModifiedAt
-		if newResult.ModifiedAt.After(existing.ModifiedAt) {
-			resultMap[normPath] = newResult
-		}
+		resultMap[normPath] = mergeSearchResults(existing, newResult)
 	} else {
 		resultMap[normPath] = newResult
 	}
+}
+
+func uniqueNodeIDs(ids []NodeID) []NodeID {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	seen := make(map[NodeID]struct{}, len(ids))
+	result := make([]NodeID, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+
+	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	return result
+}
+
+func mergeSearchResults(existing, incoming SearchResult) SearchResult {
+	merged := existing
+	merged.Holders = mergeNodeIDSlices(existing.Holders, incoming.Holders)
+
+	if incoming.ModifiedAt.After(existing.ModifiedAt) {
+		merged.Name = incoming.Name
+		merged.Path = incoming.Path
+		merged.Size = incoming.Size
+		merged.ContentType = incoming.ContentType
+		merged.ModifiedAt = incoming.ModifiedAt
+		merged.CreatedAt = incoming.CreatedAt
+		merged.Checksum = incoming.Checksum
+	}
+
+	return merged
+}
+
+func mergeNodeIDSlices(current, updates []NodeID) []NodeID {
+	if len(current) == 0 {
+		return uniqueNodeIDs(updates)
+	}
+	if len(updates) == 0 {
+		return uniqueNodeIDs(current)
+	}
+	combined := make([]NodeID, 0, len(current)+len(updates))
+	combined = append(combined, current...)
+	combined = append(combined, updates...)
+	return uniqueNodeIDs(combined)
 }
 
 type PartitionStore string

@@ -85,6 +85,22 @@ func TestPerformLocalSearch(t *testing.T) {
 
 			results := cluster.performLocalSearch(req)
 
+			for _, result := range results {
+				if len(result.Holders) == 0 {
+					t.Fatalf("result %s missing holders", result.Path)
+				}
+				found := false
+				for _, holder := range result.Holders {
+					if holder == cluster.ID() {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("result %s missing local holder %s in %+v", result.Path, cluster.ID(), result.Holders)
+				}
+			}
+
 			if len(results) != tt.expectedCount {
 				t.Errorf("Expected %d results, got %d", tt.expectedCount, len(results))
 			}

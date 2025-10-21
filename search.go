@@ -4,16 +4,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/donomii/clusterF/types"
+	"github.com/donomii/clusterF/urlutil"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/donomii/clusterF/syncmap"
-	"github.com/donomii/clusterF/types"
-	"github.com/donomii/clusterF/urlutil"
 )
 
 // SearchMode defines the type of search
@@ -42,11 +40,13 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 
 	// Use indexer for fast prefix search
 	results := c.indexer.PrefixSearch(req.Query)
+	localNode := c.ID()
 
 	// Collapse results into map to deduplicate
 	resultMap := make(map[string]types.SearchResult)
 	for _, res := range results {
 		c.debugf("[LOCALSEARCH] Found result %v\n", res.Path)
+		res.Holders = append(res.Holders, localNode)
 		types.AddResultToMap(res, resultMap, req.Query)
 	}
 
@@ -64,37 +64,41 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 
 // searchAllNodes performs a search across all peers and combines results
 func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
-	var allResults []types.SearchResult
-	seen := syncmap.NewSyncMap[string, bool]()
+	allResults := make([]types.SearchResult, 0)
 
 	// Search locally first
 	localResults := c.performLocalSearch(req)
-	for _, result := range localResults {
-		if exists, _ := seen.Load(result.Path); !exists {
-			seen.Store(result.Path, true)
-			allResults = append(allResults, result)
-		}
-	}
+	allResults = append(allResults, localResults...)
 
 	wg := &sync.WaitGroup{}
-	// Search all peers
 	peers := c.DiscoveryManager().GetPeers()
+	resultsCh := make(chan []types.SearchResult, len(peers))
+
 	for _, peer := range peers {
+		peer := peer
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			c.debugf("[SEARCH] Searching peer %s (%s)\n", peer.NodeID, peer.Address)
 			peerResults := c.searchPeer(peer, req)
 			c.debugf("Received results from peer: %+v", peerResults)
-			for _, result := range peerResults {
-				if exists, _ := seen.Load(result.Path); !exists {
-					seen.Store(result.Path, true)
-					allResults = append(allResults, result)
+			if len(peerResults) > 0 {
+				for i := range peerResults {
+					peerResults[i].Holders = append(peerResults[i].Holders, peer.NodeID)
 				}
+				resultsCh <- peerResults
 			}
 		}()
 	}
-	wg.Wait()
+
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	for peerResults := range resultsCh {
+		allResults = append(allResults, peerResults...)
+	}
 
 	searchMap := make(map[string]types.SearchResult)
 
@@ -286,6 +290,20 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 			IsDirectory: strings.HasSuffix(result.Name, "/"),
 			Checksum:    result.Checksum,
 			ModifiedAt:  result.ModifiedAt,
+			CreatedAt:   result.CreatedAt,
+			Holders:     result.Holders,
+		}
+		if !metadata.IsDirectory {
+			hasLocal := false
+			for _, holder := range metadata.Holders {
+				if holder == c.ID() {
+					hasLocal = true
+					break
+				}
+			}
+			if !hasLocal {
+				metadata.Holders = append(metadata.Holders, c.ID())
+			}
 		}
 
 		fileMetadata = append(fileMetadata, metadata)
