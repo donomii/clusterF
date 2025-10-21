@@ -131,11 +131,23 @@ func (fs *DiskFileStore) Put(key string, metadata, content []byte) error {
 		return err
 	}
 
+	var meta types.FileMetadata
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		meta = types.FileMetadata{}
+	}
+	modTime := meta.ModifiedAt
+
 	if err := os.WriteFile(metaPath, metadata, 0o644); err != nil {
 		return err
 	}
+	if !modTime.IsZero() {
+		_ = os.Chtimes(metaPath, modTime, modTime)
+	}
 	if err := os.WriteFile(contentPath, content, 0o644); err != nil {
 		return err
+	}
+	if !modTime.IsZero() {
+		_ = os.Chtimes(contentPath, modTime, modTime)
 	}
 	return nil
 }
@@ -149,7 +161,19 @@ func (fs *DiskFileStore) PutMetadata(key string, metadata []byte) error {
 	if err := ensureParentDir(metaPath); err != nil {
 		return err
 	}
-	return os.WriteFile(metaPath, metadata, 0o644)
+	if err := os.WriteFile(metaPath, metadata, 0o644); err != nil {
+		return err
+	}
+
+	var meta types.FileMetadata
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		return nil
+	}
+	if meta.ModifiedAt.IsZero() {
+		return nil
+	}
+	_ = os.Chtimes(metaPath, meta.ModifiedAt, meta.ModifiedAt)
+	return nil
 }
 
 // Delete removes metadata and content for a key.
