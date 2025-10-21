@@ -64,18 +64,7 @@ func (c *Cluster) ID() types.NodeID {
 	return c.NodeId
 }
 
-// notifyFileListChanged signals all subscribers that the file list has changed
-func (c *Cluster) notifyFileListChanged() {
-	c.fileListMu.RLock()
-	defer c.fileListMu.RUnlock()
 
-	for ch := range c.fileListSubs {
-		select {
-		case ch <- struct{}{}:
-		default: // Non-blocking send, skip if channel is full
-		}
-	}
-}
 
 type GossipMessage struct {
 	From     types.NodeID `json:"from"`
@@ -500,11 +489,10 @@ func NewCluster(opts ClusterOpts) *Cluster {
 			}
 			return nil, false
 		},
-		Frogpond:              c.frogpond,
-		SendUpdatesToPeers:    c.sendUpdatesToPeers,
-		NotifyFileListChanged: c.notifyFileListChanged,
-		GetCurrentRF:          c.getCurrentRF,
-		Indexer:               c.indexer,
+		Frogpond:           c.frogpond,
+		SendUpdatesToPeers: c.sendUpdatesToPeers,
+		GetCurrentRF:       c.getCurrentRF,
+		Indexer:            c.indexer,
 	}
 	c.partitionManager = partitionmanager.NewPartitionManager(deps)
 	c.debugf("Initialized partition manager\n")
