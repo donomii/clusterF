@@ -3,6 +3,8 @@ package types
 import (
 	"context"
 	"errors"
+	"fmt"
+	"hash/crc32"
 	"log"
 	"net/http"
 	"strings"
@@ -117,6 +119,8 @@ type IndexerLike interface {
 	AddFile(path string, metadata FileMetadata)
 	// DeleteFile removes a file from the index
 	DeleteFile(path string)
+	// FilesForPartition returns the list of paths tracked for a partition
+	FilesForPartition(partitionID PartitionID) []string
 	// ImportFilestore imports all files from a FileStoreLike into the index
 	ImportFilestore(ctx context.Context, pm PartitionManagerLike) error
 }
@@ -327,6 +331,15 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 }
 
 type PartitionStore string
+
+const DefaultPartitionCount = 65536 // 2^16 partitions
+
+// PartitionIDForPath calculates the partition identifier for a given cluster path.
+func PartitionIDForPath(path string) PartitionID {
+	h := crc32.ChecksumIEEE([]byte(path))
+	partitionNum := h % DefaultPartitionCount
+	return PartitionID(fmt.Sprintf("p%05d", partitionNum))
+}
 
 // ExtractPartitionStoreID extracts the combined partition store name e.g. p12
 // Partitions are grouped together in files to avoid having 65k open files during operation

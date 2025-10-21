@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash"
-	"hash/crc32"
 	"log"
 	"math/rand"
 	"net/http"
@@ -26,7 +25,6 @@ import (
 )
 
 const (
-	DefaultPartitionCount    = 65536 // 2^16 partitions
 	defaultReplicationFactor = 3
 )
 
@@ -360,9 +358,7 @@ func (pm *PartitionManager) replicationFactor() int {
 // FIXME utility
 // HashToPartition calculates which partition a filename belongs to
 func HashToPartition(filename string) types.PartitionID {
-	h := crc32.ChecksumIEEE([]byte(filename))
-	partitionNum := h % DefaultPartitionCount
-	return types.PartitionID(fmt.Sprintf("p%05d", partitionNum))
+	return types.PartitionIDForPath(filename)
 }
 
 // CalculatePartitionName implements the interface method
@@ -395,6 +391,9 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	if pm.deps.Indexer != nil {
 		var metadata types.FileMetadata
 		if err := json.Unmarshal(metadataJSON, &metadata); err == nil {
+			if metadata.Path == "" {
+				metadata.Path = path
+			}
 			pm.deps.Indexer.AddFile(path, metadata)
 		}
 	}
@@ -770,9 +769,12 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 		return err
 	}
 
-	// Update indexer to remove file
+	// Update indexer to track tombstone for partition sync while removing from search results
 	if pm.deps.Indexer != nil {
-		pm.deps.Indexer.DeleteFile(path)
+		if metadata.Path == "" {
+			metadata.Path = path
+		}
+		pm.deps.Indexer.AddFile(path, metadata)
 	}
 
 	// Note: We don't delete the entry entirely, just mark as deleted
@@ -1553,6 +1555,6 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 		Pending_sync:          pendingSync,
 		Replication_factor:    currentRF,
 		Total_files:           totalFiles,
-		Partition_count_limit: DefaultPartitionCount,
+		Partition_count_limit: types.DefaultPartitionCount,
 	}
 }

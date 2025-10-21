@@ -10,6 +10,15 @@ import (
 	"github.com/donomii/clusterF/types"
 )
 
+func containsPath(paths []string, target string) bool {
+	for _, p := range paths {
+		if p == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestIndexerBasics_Trie(t *testing.T) {
 	testIndexerBasics(t, IndexTypeTrie)
 }
@@ -53,6 +62,14 @@ func testIndexerBasics(t *testing.T, indexType IndexType) {
 	}
 	idx.AddFile("/other/other.txt", metadata3)
 
+	for _, path := range []string{"/docs/test1.txt", "/docs/test2.txt", "/other/other.txt"} {
+		partitionID := types.PartitionIDForPath(path)
+		partitionPaths := idx.FilesForPartition(partitionID)
+		if !containsPath(partitionPaths, path) {
+			t.Errorf("[%s] Expected partition %s to contain %s", indexType, partitionID, path)
+		}
+	}
+
 	// Test prefix search
 	results := idx.PrefixSearch("/docs/")
 	if len(results) != 2 {
@@ -74,6 +91,11 @@ func testIndexerBasics(t *testing.T, indexType IndexType) {
 	results = idx.PrefixSearch("/docs/")
 	if len(results) != 1 {
 		t.Errorf("[%s] Expected 1 result after delete, got %d", indexType, len(results))
+	}
+
+	deletedPartition := types.PartitionIDForPath("/docs/test1.txt")
+	if !containsPath(idx.FilesForPartition(deletedPartition), "/docs/test1.txt") {
+		t.Errorf("[%s] Expected partition %s to retain tombstone for /docs/test1.txt", indexType, deletedPartition)
 	}
 }
 
@@ -159,6 +181,11 @@ func testIndexerDeletedFiles(t *testing.T, indexType IndexType) {
 		DeletedAt:   time.Now(),
 	}
 	idx.AddFile("/deleted.txt", deletedMetadata)
+
+	deletedPartition := types.PartitionIDForPath("/deleted.txt")
+	if !containsPath(idx.FilesForPartition(deletedPartition), "/deleted.txt") {
+		t.Errorf("[%s] Expected partition %s to include /deleted.txt tombstone", indexType, deletedPartition)
+	}
 
 	// Search should not return deleted files
 	results := idx.PrefixSearch("/")

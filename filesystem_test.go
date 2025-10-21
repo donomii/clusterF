@@ -5,17 +5,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"net/http"
-	"path"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/testenv"
+	"github.com/donomii/clusterF/types"
 )
 
 var testModTimeBase = time.Unix(1_700_000_000, 0)
@@ -355,11 +353,8 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 		nodes[i].FullSyncAllPeers()
 	}
 
-	// Compute the expected partition for this file (same hashing as PartitionManager)
-	// PartitionManager uses crc32 over the filename to map to pXXXXX
-	fname := path.Base(filePath)
-	partNum := crc32.ChecksumIEEE([]byte(fname)) % partitionmanager.DefaultPartitionCount
-	expectedPartition := fmt.Sprintf("p%05d", partNum)
+	// Compute the expected partition for this file using the shared partition helper
+	expectedPartition := string(types.PartitionIDForPath(filePath))
 
 	// Verify the file can be retrieved from each node over HTTP
 	// Note: This relies on partition replication, which happens in the background

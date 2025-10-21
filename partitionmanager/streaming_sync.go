@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,39 +48,32 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 
 	encoder := json.NewEncoder(w)
 	flusher, canFlush := w.(http.Flusher)
-	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
 
-	// Stream entries one by one using FileStore
+	paths, err := pm.partitionPaths(partitionID)
+	if err != nil {
+		pm.logf("[PARTITION] Failed to list files for partition %s: %v", partitionID, err)
+		http.Error(w, "failed to enumerate partition", http.StatusInternalServerError)
+		return
+	}
+
 	entriesStreamed := 0
-	err := pm.deps.FileStore.Scan(prefix, func(key string, metadata, content []byte) error {
+	for _, path := range paths {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("client disconnected")
+			pm.debugf("[PARTITION] Client disconnected while streaming %s", partitionID)
+			return
 		default:
 		}
 
-		if !strings.HasPrefix(key, prefix) {
-			return nil
+		entry, entryErr := pm.buildPartitionEntry(partitionID, path)
+		if entryErr != nil {
+			pm.debugf("[PARTITION] Skipping %s in %s: %v", path, partitionID, entryErr)
+			continue
 		}
 
-		// Get content for this key
-		if content == nil {
-			content = []byte{}
-		}
-
-		// Calculate checksum
-		checksum := pm.calculateEntryChecksum(metadata, content)
-
-		entry := PartitionSyncEntry{
-			Key:      key,
-			Metadata: metadata,
-			Content:  content,
-			Checksum: checksum,
-		}
-
-		// Stream this entry
 		if err := encoder.Encode(entry); err != nil {
-			return fmt.Errorf("failed to encode entry %s: %v", key, err)
+			pm.logf("[PARTITION] Failed to encode entry %s in %s: %v", path, partitionID, err)
+			return
 		}
 
 		entriesStreamed++
@@ -87,13 +81,6 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 			flusher.Flush()
 			pm.debugf("[PARTITION] Streamed %d entries for %s", entriesStreamed, partitionID)
 		}
-
-		return nil
-	})
-
-	if err != nil {
-		pm.logf("[PARTITION] Failed to stream partition %s: %v", partitionID, err)
-		return
 	}
 
 	// Stream an empty object to signify end of stream
@@ -303,13 +290,20 @@ func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID
 		return false, fmt.Errorf("failed to store entry %s: %w", entry.Key, err)
 	}
 
-	if !pm.hasFrogpond() {
-		return true, nil
-	}
-
 	var metadata types.FileMetadata
 	if err := json.Unmarshal(entry.Metadata, &metadata); err != nil {
 		return true, pm.errorf(entry.Metadata, fmt.Sprintf("corrupt metadata for entry %s: %v", entry.Key, err))
+	}
+	if metadata.Path == "" {
+		metadata.Path = types.ExtractFilePath(entry.Key)
+	}
+
+	if pm.deps.Indexer != nil {
+		pm.deps.Indexer.AddFile(metadata.Path, metadata)
+	}
+
+	if !pm.hasFrogpond() {
+		return true, nil
 	}
 
 	partitionKey := HashToPartition(metadata.Path)
@@ -336,6 +330,53 @@ func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID
 	return true, nil
 }
 
+func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]string, error) {
+	if pm.deps.Indexer != nil {
+		return pm.deps.Indexer.FilesForPartition(partitionID), nil
+	}
+
+	pm.debugf("[PARTITION] Indexer unavailable, falling back to metadata scan for %s", partitionID)
+	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
+	paths := []string{}
+	err := pm.deps.FileStore.ScanMetadataFullKeys(prefix, func(key string, _ []byte) error {
+		if !strings.HasPrefix(key, prefix) {
+			return nil
+		}
+		paths = append(paths, types.ExtractFilePath(key))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, path string) (PartitionSyncEntry, error) {
+	key := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
+	data, err := pm.deps.FileStore.Get(key)
+	if err != nil {
+		return PartitionSyncEntry{}, err
+	}
+	if data == nil || !data.Exists {
+		return PartitionSyncEntry{}, fmt.Errorf("entry %s missing", key)
+	}
+	metadata := data.Metadata
+	if len(metadata) == 0 {
+		return PartitionSyncEntry{}, fmt.Errorf("entry %s has no metadata", key)
+	}
+	content := data.Content
+	if content == nil {
+		content = []byte{}
+	}
+	return PartitionSyncEntry{
+		Key:      key,
+		Metadata: metadata,
+		Content:  content,
+		Checksum: pm.calculateEntryChecksum(metadata, content),
+	}, nil
+}
+
 func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) error {
 	pushURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
 	if err != nil {
@@ -348,50 +389,47 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 	var sentCount int64
 
 	go func() {
-		prefix := fmt.Sprintf("partition:%s:file:", partitionID)
-		streamErr := pm.deps.FileStore.Scan(prefix, func(key string, metadata, content []byte) error {
+		paths, listErr := pm.partitionPaths(partitionID)
+		if listErr != nil {
+			pw.CloseWithError(listErr)
+			errCh <- listErr
+			return
+		}
+
+		for _, path := range paths {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				err := ctx.Err()
+				pw.CloseWithError(err)
+				errCh <- err
+				return
 			}
 
-			if !strings.HasPrefix(key, prefix) {
-				return nil
-			}
-
-			if content == nil {
-				content = []byte{}
-			}
-
-			entry := PartitionSyncEntry{
-				Key:      key,
-				Metadata: metadata,
-				Content:  content,
-				Checksum: pm.calculateEntryChecksum(metadata, content),
+			entry, entryErr := pm.buildPartitionEntry(partitionID, path)
+			if entryErr != nil {
+				pm.debugf("[PARTITION] Skipping %s in %s while pushing to %s: %v", path, partitionID, peerID, entryErr)
+				continue
 			}
 
 			if err := encoder.Encode(entry); err != nil {
-				return err
+				pw.CloseWithError(err)
+				errCh <- err
+				return
 			}
 
 			sentCount++
 			if sentCount%100 == 0 {
 				pm.debugf("[PARTITION] Streamed %d entries of %s to %s", sentCount, partitionID, peerID)
 			}
-
-			return nil
-		})
-
-		if streamErr == nil {
-			streamErr = encoder.Encode(struct{}{})
 		}
 
-		if streamErr != nil {
-			pw.CloseWithError(streamErr)
-		} else {
-			pw.Close()
+		if err := encoder.Encode(struct{}{}); err != nil {
+			pw.CloseWithError(err)
+			errCh <- err
+			return
 		}
 
-		errCh <- streamErr
+		pw.Close()
+		errCh <- nil
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, pushURL, pr)
