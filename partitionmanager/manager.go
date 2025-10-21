@@ -678,11 +678,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadat
 		return types.FileMetadata{}, fmt.Errorf("no holders registered for partition %s", partitionID)
 	}
 
-	peers := pm.getPeers()
-	peerLookup := make(map[types.NodeID]*types.PeerInfo, len(peers))
-	for _, peer := range peers {
-		peerLookup[types.NodeID(peer.NodeID)] = peer
-	}
+	peerLookup := pm.deps.Discovery.GetPeerMap()
 
 	orderedPeers := make([]*types.PeerInfo, 0, len(partition.Holders))
 	seen := make(map[types.NodeID]bool)
@@ -705,7 +701,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadat
 	}
 
 	for _, holder := range partition.Holders {
-		if peer, ok := peerLookup[holder]; ok {
+		if peer, ok := peerLookup.Load(string(holder)); ok {
 			addPeer(holder, peer)
 			continue
 		}
@@ -719,7 +715,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadat
 	}
 
 	if len(orderedPeers) == 0 {
-		if len(peers) == 0 {
+		if len(peerLookup.Keys()) == 0 {
 			return types.FileMetadata{}, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
 		}
 		return types.FileMetadata{}, fmt.Errorf("no registered holders available for partition %s", partitionID)
@@ -1331,22 +1327,8 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 	pm.debugf("[PARTITION] Checking %d partitions for sync (RF=%d)", len(allPartitions), currentRF)
 
 	// Get available peers once - check BOTH discovery AND CRDT nodes
-	peers := pm.getPeers()
-	availablePeerIDs := make(map[types.NodeID]bool)
-	for _, peer := range peers {
-		availablePeerIDs[peer.NodeID] = true
-	}
+	availablePeerIDs := pm.deps.Discovery.GetPeerMap()
 	pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs)
-
-	// Also add all active nodes from CRDT
-	if pm.hasFrogpond() {
-		nodeDataPoints := pm.deps.Cluster.GetAllNodes()
-		for nodeId, _ := range nodeDataPoints {
-
-			availablePeerIDs[nodeId] = true
-
-		}
-	}
 	//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
 	partitionKeys := make([]types.PartitionID, 0, len(allPartitions))
@@ -1392,7 +1374,8 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 					// Find available holders to sync from
 					var availableHolders []types.NodeID
 					for _, holderID := range info.Holders {
-						if holderID != pm.deps.NodeID && availablePeerIDs[holderID] {
+						_, exists := availablePeerIDs.Load(string(holderID))
+						if holderID != pm.deps.NodeID && exists {
 							availableHolders = append(availableHolders, holderID)
 						}
 					}
@@ -1438,7 +1421,8 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 		// Find all available holders to sync from (must be different nodes and currently available)
 		var availableHolders []types.NodeID
 		for _, holderID := range info.Holders {
-			if holderID != pm.deps.NodeID && availablePeerIDs[holderID] {
+			_, exists := availablePeerIDs.Load(string(holderID))
+			if holderID != pm.deps.NodeID && exists {
 				availableHolders = append(availableHolders, holderID)
 			}
 		}
