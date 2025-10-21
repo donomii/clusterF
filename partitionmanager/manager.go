@@ -1299,6 +1299,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			if partitionID, holders := pm.findNextPartitionToSyncWithHolders(ctx); partitionID != "" {
 
 				throttle <- struct{}{}
+				pm.debugf("Partition syncs in progress: %v", len(throttle))
 				// Throttle concurrent syncs
 				go pm.doPartitionSync(ctx, partitionID, throttle, holders)
 
@@ -1320,7 +1321,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Context) (types.PartitionID, []types.NodeID) {
 	// If in no-store mode, don't sync any partitions
 	if pm.deps.NoStore {
-		//FIXME panic here
+		//FIXME panic here maybe
 		return "", nil
 	}
 
