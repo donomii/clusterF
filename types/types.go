@@ -14,6 +14,8 @@ import (
 	"github.com/donomii/clusterF/syncmap"
 )
 
+const DefaultPartitionSyncIntervalSeconds = 300
+
 // Shared sentinel errors for filesystem operations.
 var (
 	// ErrFileNotFound indicates that the requested file does not exist in any known partition.

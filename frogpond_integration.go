@@ -121,6 +121,28 @@ func (c *Cluster) SetPartitionSyncInterval(seconds int) {
 	c.Logger().Printf("[PARTITION] Set partition sync interval to %d seconds", seconds)
 }
 
+// GetPartitionSyncInterval returns the current partition sync interval in seconds.
+func (c *Cluster) GetPartitionSyncInterval() int {
+	if c.frogpond == nil {
+		return types.DefaultPartitionSyncIntervalSeconds
+	}
+
+	dp := c.frogpond.GetDataPoint("cluster/partition_sync_interval_seconds")
+	if dp.Deleted || len(dp.Value) == 0 {
+		return types.DefaultPartitionSyncIntervalSeconds
+	}
+
+	var seconds int
+	if err := json.Unmarshal(dp.Value, &seconds); err != nil {
+		return types.DefaultPartitionSyncIntervalSeconds
+	}
+
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
 // GetPartitionSyncPaused returns whether partition sync is paused
 func (c *Cluster) GetPartitionSyncPaused() bool {
 	data := c.frogpond.GetDataPoint("cluster/partition_sync_paused")

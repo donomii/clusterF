@@ -145,6 +145,10 @@
             placeholder="RF">
         <button class="btn" onclick="setReplicationFactor()">🔧 Set RF</button>
         <button class="btn" id="pauseBtn" onclick="togglePartitionSyncPause()">⏸️ Pause Sync</button>
+        <input type="number" id="partitionSyncIntervalInput" min="1"
+            style="margin: 0 10px; padding: 8px; border-radius: 4px; border: 1px solid #3b82f6; background: #1a1a2e; color: white; width: 80px;"
+            placeholder="Sync s">
+        <button class="btn" onclick="setPartitionSyncInterval()">⏱️ Set Sync Interval</button>
     </div>
 
     <div class="info">
@@ -156,6 +160,7 @@
         <div>Disk Usage: <span id="node_disk_usage">-</span></div>
         <div>Disk Free: <span id="node_disk_free">-</span></div>
         <div>Partition Sync: <span id="sync_status" style="font-weight: bold;">-</span></div>
+        <div>Sync Interval: <span id="partition_sync_interval">-</span> seconds</div>
         
         <div style="margin-top: 10px;">
             <div>Data Directory:</div>

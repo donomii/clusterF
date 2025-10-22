@@ -982,6 +982,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/frogpond/update", corsMiddleware(c.Debug, c.Logger(), c.handleFrogpondUpdate))
 	mux.HandleFunc("/frogpond/fullstore", corsMiddleware(c.Debug, c.Logger(), c.handleFrogpondFullStore))
 	mux.HandleFunc("/api/replication-factor", corsMiddleware(c.Debug, c.Logger(), c.handleReplicationFactor))
+	mux.HandleFunc("/api/partition-sync-interval", corsMiddleware(c.Debug, c.Logger(), c.handlePartitionSyncInterval))
 	mux.HandleFunc("/flamegraph", corsMiddleware(c.Debug, c.Logger(), c.handleFlameGraph))
 	mux.HandleFunc("/memorygraph", corsMiddleware(c.Debug, c.Logger(), c.handleMemoryFlameGraph))
 	mux.HandleFunc("/allocgraph", corsMiddleware(c.Debug, c.Logger(), c.handleAllocFlameGraph))
@@ -1379,6 +1380,15 @@ func (c *Cluster) initializeClusterSettings() {
 		c.Logger().Printf("[INIT] Set default replication factor to %d", DefaultRF)
 	}
 
+	// Initialize partition sync interval if not set
+	data = c.frogpond.GetDataPoint("cluster/partition_sync_interval_seconds")
+	if data.Deleted || len(data.Value) == 0 {
+		intervalJSON, _ := json.Marshal(types.DefaultPartitionSyncIntervalSeconds)
+		updates := c.frogpond.SetDataPoint("cluster/partition_sync_interval_seconds", intervalJSON)
+		c.sendUpdatesToPeers(updates)
+		c.Logger().Printf("[INIT] Set default partition sync interval to %d seconds", types.DefaultPartitionSyncIntervalSeconds)
+	}
+
 }
 
 // handleReplicationFactor handles GET/PUT requests for replication factor
@@ -1426,6 +1436,58 @@ func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":            true,
 			"replication_factor": int(rf),
+		})
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handlePartitionSyncInterval handles GET/PUT requests for partition sync interval seconds
+func (c *Cluster) handlePartitionSyncInterval(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		interval := c.GetPartitionSyncInterval()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"partition_sync_interval_seconds": interval,
+		})
+
+	case http.MethodPut:
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+
+		var request map[string]interface{}
+		if err := json.Unmarshal(body, &request); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		value, ok := request["partition_sync_interval_seconds"]
+		if !ok {
+			http.Error(w, "Missing partition_sync_interval_seconds field", http.StatusBadRequest)
+			return
+		}
+
+		intervalFloat, ok := value.(float64)
+		if !ok {
+			http.Error(w, "partition_sync_interval_seconds must be a number", http.StatusBadRequest)
+			return
+		}
+
+		if intervalFloat < 1 {
+			http.Error(w, "partition_sync_interval_seconds must be at least 1", http.StatusBadRequest)
+			return
+		}
+
+		c.SetPartitionSyncInterval(int(intervalFloat))
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":                         true,
+			"partition_sync_interval_seconds": int(intervalFloat),
 		})
 
 	default:

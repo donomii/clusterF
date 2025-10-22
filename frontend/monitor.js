@@ -86,6 +86,28 @@ async function refreshStats() {
         
         const rf = status.replication_factor || 3;
         document.getElementById('replication_factor').textContent = rf;
+
+        // Fetch partition sync interval
+        let partitionSyncInterval = null;
+        try {
+            const intervalResponse = await fetch('/api/partition-sync-interval');
+            if (intervalResponse.ok) {
+                const intervalData = await intervalResponse.json();
+                partitionSyncInterval = intervalData.partition_sync_interval_seconds;
+            }
+        } catch (e) {
+            // ignore, handled below
+        }
+
+        if (typeof partitionSyncInterval === 'number') {
+            document.getElementById('partition_sync_interval').textContent = partitionSyncInterval;
+            const intervalInput = document.getElementById('partitionSyncIntervalInput');
+            if (!intervalInput.value) {
+                intervalInput.value = partitionSyncInterval;
+            }
+        } else {
+            document.getElementById('partition_sync_interval').textContent = 'ERR';
+        }
         
         document.getElementById('tombstones').textContent = 0;
         
@@ -232,6 +254,35 @@ async function setReplicationFactor() {
         } else {
             const error = await response.text();
             alert('❌ Failed to set replication factor: ' + error);
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+async function setPartitionSyncInterval() {
+    try {
+        const intervalInput = document.getElementById('partitionSyncIntervalInput');
+        const newInterval = parseInt(intervalInput.value, 10);
+
+        if (isNaN(newInterval) || newInterval < 1) {
+            alert('❌ Partition sync interval must be a number >= 1 second');
+            return;
+        }
+
+        const response = await fetch('/api/partition-sync-interval', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ partition_sync_interval_seconds: newInterval })
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            alert('✅ Partition sync interval set to ' + result.partition_sync_interval_seconds + ' seconds');
+            refreshStats();
+        } else {
+            const error = await response.text();
+            alert('❌ Failed to set partition sync interval: ' + error);
         }
     } catch (error) {
         alert('Error: ' + error.message);
