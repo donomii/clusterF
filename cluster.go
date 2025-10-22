@@ -778,7 +778,9 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			c.logger.Printf("Started checkPeers\n")
 			checkPeers()
+			c.logger.Printf("Finished checkPeers\n")
 		}
 	}
 }
@@ -817,14 +819,19 @@ func (c *Cluster) runFilesync(ctx context.Context) {
 }
 
 func (c *Cluster) runFullStartupReindex(ctx context.Context) {
+	c.logger.Printf("Started runFullStartupReindex\n")
 	c.partitionManager.RunFullReindexAtStartup(ctx)
+	c.logger.Printf("Finished runFullStartupReindex\n")
 	<-ctx.Done()
+
 }
 
 func (c *Cluster) runIndexerImport(ctx context.Context) {
+	c.logger.Printf("Started runIndexerImport\n")
 	if err := c.indexer.ImportFilestore(ctx, c.partitionManager); err != nil {
 		c.Logger().Printf("[WARNING] Failed to import filestore into indexer: %v", err)
 	}
+	c.logger.Printf("Finished runIndexerImport\n")
 	<-ctx.Done()
 }
 
@@ -842,7 +849,9 @@ func (c *Cluster) runPartitionReindex(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			c.logger.Printf("Started RunReindex\n")
 			pm.RunReindex(ctx)
+			c.logger.Printf("Finished RunReindex\n")
 			ticker.Reset(c.partitionReIndexInterval)
 		}
 	}

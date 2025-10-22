@@ -1295,6 +1295,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 
 	// Loop forever, checking for partitions to sync
 	for {
+		pm.logf("Started PeriodicPartitionCheck\n")
 		select {
 		case <-ctx.Done():
 			return
@@ -1331,6 +1332,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 				}
 			}
 		}
+		pm.logf("Finished PeriodicPartitionCheck\n")
 	}
 }
 

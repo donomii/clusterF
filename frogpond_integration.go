@@ -251,10 +251,15 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			c.logger.Printf("Started updateNodeMetadata\n")
 			// Update our node metadata
 			c.updateNodeMetadata()
+			c.logger.Printf("Finish updateNodeMetadata\n")
+
+			c.logger.Printf("Started persistCRDTToFile\n")
 			// Persist CRDT state to KV
 			c.persistCRDTToFile()
+			c.logger.Printf("Finish persistCRDTToFile\n")
 		}
 	}
 }
@@ -417,7 +422,9 @@ func (c *Cluster) periodicNodePruning(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			c.logger.Printf("Started pruneOldNodes\n")
 			c.pruneOldNodes()
+			c.logger.Printf("Finished pruneOldNodes\n")
 		}
 	}
 }
