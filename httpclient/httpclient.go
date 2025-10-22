@@ -219,3 +219,28 @@ func Put(ctx context.Context, client *http.Client, url string, body io.Reader, o
 func Post(ctx context.Context, client *http.Client, url string, body io.Reader, opts ...RequestOption) (*Response, error) {
 	return DoMethod(ctx, client, http.MethodPost, url, body, opts...)
 }
+
+// Delete issues a DELETE request.
+func Delete(ctx context.Context, client *http.Client, url string, opts ...RequestOption) (*Response, error) {
+	return DoMethod(ctx, client, http.MethodDelete, url, nil, opts...)
+}
+
+// SimpleDelete issues a DELETE request and returns the response body, headers, and status code.
+func SimpleDelete(ctx context.Context, client *http.Client, url string, opts ...RequestOption) ([]byte, http.Header, int, error) {
+	resp, err := Delete(ctx, client, url, opts...)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if resp == nil {
+		return nil, nil, 0, errors.New("httpclient: nil response")
+	}
+
+	headers := resp.Header.Clone()
+	status := resp.StatusCode
+
+	data, err := resp.ReadAllAndClose()
+	if err != nil {
+		return data, headers, status, err
+	}
+	return data, headers, status, nil
+}

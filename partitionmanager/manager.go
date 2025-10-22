@@ -382,7 +382,8 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 
 	// Store metadata in filesKV (metadata store)
 	if err := pm.deps.FileStore.Put(fileKey, metadataJSON, fileContent); err != nil {
-		pm.deps.Logger.Panicf("failed to store file: %v", err)
+		//pm.deps.Logger.Panicf("failed to store file: %v", err)
+		return fmt.Errorf("failed to store file: %v", err)
 	}
 
 	pm.logf("[PARTITION] Stored file %s  (%d bytes)", fileKey, len(fileContent))
@@ -782,7 +783,6 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 		pm.deps.Indexer.AddFile(path, metadata)
 	}
 
-	
 	// Mark the partition for re-scan
 	pm.MarkForReindex(partitionID)
 

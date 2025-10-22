@@ -677,17 +677,91 @@ func parseHeaderTimestamp(value string) (time.Time, error) {
 }
 
 func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path string) {
-	if err := c.FileSystem.DeleteFile(c.AppContext(), path); err != nil {
-		if errors.Is(err, types.ErrFileNotFound) {
-			http.Error(w, fmt.Sprintf("File not found for deletion: %s", path), http.StatusNotFound)
-			return
-		}
-		http.Error(w, fmt.Sprintf("Failed to delete file: %v", err), http.StatusInternalServerError)
+	c.debugf("[FILES] External DELETE request for path: %s", path)
+
+	partitionID := c.PartitionManager().CalculatePartitionName(path)
+	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
+
+	if partitionInfo == nil {
+		c.debugf("[FILES] No partition info found for %s (partition %s)", path, partitionID)
+		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition info found for partition %s)", path, partitionID), http.StatusNotFound)
 		return
 	}
 
-	c.debugf("[FILES] Deleted %s", path)
-	w.WriteHeader(http.StatusNoContent)
+	if len(partitionInfo.Holders) == 0 {
+		c.debugf("[FILES] No holders registered for partition %s (file %s)", partitionID, path)
+		http.Error(w, fmt.Sprintf("File not found in cluster: %s (partition %s has no holders registered)", path, partitionID), http.StatusNotFound)
+		return
+	}
+
+	peers := c.DiscoveryManager().GetPeers()
+	peerLookup := make(map[types.NodeID]*types.PeerInfo)
+	for _, peer := range peers {
+		peerLookup[types.NodeID(peer.NodeID)] = peer
+	}
+
+	var (
+		successful bool
+		notFounds  int
+		errors     []string
+	)
+
+	for _, holderID := range partitionInfo.Holders {
+		var peer *types.PeerInfo
+		if holderID == c.ID() {
+			peer = &types.PeerInfo{
+				NodeID:   c.ID(),
+				Address:  c.DiscoveryManager().GetLocalAddress(),
+				HTTPPort: c.HTTPPort(),
+			}
+		} else if p, ok := peerLookup[holderID]; ok {
+			peer = p
+		} else {
+			errors = append(errors, fmt.Sprintf("%s: no peer info", holderID))
+			continue
+		}
+
+		deleteURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: URL build failed: %v", peer.NodeID, err))
+			continue
+		}
+
+		body, _, status, err := httpclient.SimpleDelete(r.Context(), c.HttpDataClient, deleteURL,
+			httpclient.WithHeader("X-ClusterF-Internal", "1"),
+		)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
+			continue
+		}
+
+		if status == http.StatusNoContent || status == http.StatusOK {
+			successful = true
+			continue
+		}
+
+		if status == http.StatusNotFound {
+			notFounds++
+			errors = append(errors, fmt.Sprintf("%s: %d %s", peer.NodeID, status, strings.TrimSpace(string(body))))
+			continue
+		}
+
+		errors = append(errors, fmt.Sprintf("%s: %d %s", peer.NodeID, status, strings.TrimSpace(string(body))))
+	}
+
+	if successful {
+		c.debugf("[FILES] Deleted %s across holders", path)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if notFounds == len(partitionInfo.Holders) {
+		http.Error(w, fmt.Sprintf("File not found for deletion: %s", path), http.StatusNotFound)
+		return
+	}
+
+	message := fmt.Sprintf("Failed to delete %s: %s", path, strings.Join(errors, ", "))
+	http.Error(w, message, http.StatusInternalServerError)
 }
 
 func (c *Cluster) handleFilePost(w http.ResponseWriter, r *http.Request, path string) {
