@@ -1219,12 +1219,12 @@ func (pm *PartitionManager) getPartitionSyncInterval() time.Duration {
 
 	dp := pm.deps.Frogpond.GetDataPoint("cluster/partition_sync_interval_seconds")
 	if dp.Deleted || len(dp.Value) == 0 {
-		return 1 * time.Second
+		return 300 * time.Second
 	}
 
 	var seconds int
 	if err := json.Unmarshal(dp.Value, &seconds); err != nil {
-		return 1 * time.Second
+		return 300 * time.Second
 	}
 
 	if seconds < 1 {

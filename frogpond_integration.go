@@ -243,7 +243,7 @@ func (c *Cluster) getAvailableNodes() []types.NodeID {
 
 // periodicFrogpondSync regularly updates our node metadata
 func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(300 * time.Second)
 	defer ticker.Stop()
 
 	for {
