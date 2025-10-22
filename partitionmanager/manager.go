@@ -1471,7 +1471,9 @@ func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types
 		// Parse metadata
 		var metadata types.FileMetadata
 		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-			panic("no")
+			message := fmt.Sprintf("Unable to parse json for file: %v, because %v, input data was %v\n", key, err, string(metadataBytes))
+			pm.logf("%v", message)
+			panic(message)
 		}
 
 		return fn(filePath, metadata)
