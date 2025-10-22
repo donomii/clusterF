@@ -161,26 +161,8 @@ func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, 
 func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path string) {
 	c.debugf("[FILES] External GET request for path: %s", path)
 
-	serveDirectory := func() {
-		c.debugf("[FILES] Directory request for: %s", path)
-		entries, err := c.FileSystem.ListDirectory(path)
-		if err != nil {
-			c.debugf("[FILES] Failed to list directory %s: %v", path, err)
-			http.Error(w, fmt.Sprintf("Directory not found or listing failed: %s", path), http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		response := map[string]interface{}{
-			"path":    path,
-			"entries": entries,
-			"count":   len(entries),
-		}
-		json.NewEncoder(w).Encode(response)
-	}
-
 	if strings.HasSuffix(path, "/") {
-		serveDirectory()
+		c.serveDirectoryListing(w, path)
 		return
 	}
 
@@ -287,8 +269,34 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 	http.Error(w, errorSummary, http.StatusNotFound)
 }
 
+func (c *Cluster) serveDirectoryListing(w http.ResponseWriter, path string) {
+	c.debugf("[FILES] Directory request for: %s", path)
+	entries, err := c.FileSystem.ListDirectory(path)
+	if err != nil {
+		c.debugf("[FILES] Failed to list directory %s: %v", path, err)
+		http.Error(w, fmt.Sprintf("Directory not found or listing failed: %s", path), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"path":    path,
+		"entries": entries,
+		"count":   len(entries),
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
 func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path string) {
 	c.debugf("[FILES] HEAD request for path: %s", path)
+
+	// FIXME we should do a basic search here to see if there are any files in this directory tree
+	if strings.HasSuffix(path, "/") {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-ClusterF-Is-Directory", "true")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	partitionID := c.PartitionManager().CalculatePartitionName(path)
 	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
@@ -341,7 +349,7 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 			continue
 		}
 
-		resp, err := httpclient.Head(r.Context(), c.HttpDataClient, fileURL,
+		headers, status, err := httpclient.SimpleHead(r.Context(), c.HttpDataClient, fileURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		)
 		if err != nil {
@@ -350,22 +358,18 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 			continue
 		}
 
-		func() {
-			defer resp.Close()
-			if resp.StatusCode == http.StatusOK {
-				for key, values := range resp.Header {
-					for _, value := range values {
-						w.Header().Add(key, value)
-					}
+		if status == http.StatusOK {
+			for key, values := range headers {
+				for _, value := range values {
+					w.Header().Add(key, value)
 				}
-				w.WriteHeader(http.StatusOK)
-				return
 			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 
-			errorMsg := fmt.Sprintf("Expected 200, got %d", resp.StatusCode)
-			holderErrors = append(holderErrors, fmt.Sprintf("%s: %s", peer.NodeID, errorMsg))
-			c.debugf("[FILES] Holder %s returned status %d for HEAD %s", peer.NodeID, resp.StatusCode, path)
-		}()
+		holderErrors = append(holderErrors, fmt.Sprintf("%s: %d", peer.NodeID, status))
+		c.debugf("[FILES] Holder %s returned %d for HEAD %s", peer.NodeID, status, path)
 
 		if w.Header().Get("Content-Type") != "" || w.Header().Get("X-ClusterF-Is-Directory") != "" {
 			return

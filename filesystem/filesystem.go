@@ -410,7 +410,7 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 				return
 			}
 
-			resp, err := httpclient.Put(ctx, fs.cluster.DataClient(), fileURL, bytes.NewReader(content),
+			respBody, _, status, err := httpclient.SimplePut(ctx, fs.cluster.DataClient(), fileURL, bytes.NewReader(content),
 				httpclient.WithHeader("Content-Type", contentType),
 				httpclient.WithHeader("X-Forwarded-From", string(fs.cluster.ID())),
 				httpclient.WithHeader("X-ClusterF-Metadata", metaHeader),
@@ -420,16 +420,14 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 				return
 			}
 			// Treat only 2xx responses as a successful replica write.
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				resp.Close()
+			if status >= 200 && status < 300 {
 				fs.debugf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
 				results <- forwardResult{node: types.NodeID(nodeID)}
 				return
 			}
-			respBody, _ := resp.ReadAllAndClose()
 			results <- forwardResult{
 				node: types.NodeID(nodeID),
-				err:  fmt.Errorf("peer (%v) store query returned %v(%v) '%v'", peer.NodeID, resp.StatusCode, resp.Status, respBody),
+				err:  fmt.Errorf("peer %s returned %d for PUT %s: %s", peer.NodeID, status, path, strings.TrimSpace(string(respBody))),
 			}
 		}(nodeID)
 	}
@@ -612,17 +610,16 @@ func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *types.PeerInfo, path stri
 	if err != nil {
 		return false, err
 	}
-	resp, err := httpclient.Head(context.Background(), fs.cluster.DataClient(), fileURL)
+	headers, status, err := httpclient.SimpleHead(context.Background(), fs.cluster.DataClient(), fileURL)
 	if err != nil {
 		return false, err
 	}
-	defer resp.Close()
-	switch resp.StatusCode {
+	switch status {
 	case http.StatusNotFound:
 		return false, nil
 	case http.StatusOK:
 		remoteMod := time.Time{}
-		if lm := resp.Header.Get("X-ClusterF-Modified-At"); lm != "" {
+		if lm := headers.Get("X-ClusterF-Modified-At"); lm != "" {
 			if t, err := time.Parse(time.RFC3339, lm); err == nil {
 				remoteMod = t
 			}
@@ -631,7 +628,7 @@ func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *types.PeerInfo, path stri
 			panic("no")
 		}
 		remoteSize := int64(-1)
-		if cl := resp.Header.Get("Content-Length"); cl != "" {
+		if cl := headers.Get("Content-Length"); cl != "" {
 			if n, err := strconv.ParseInt(cl, 10, 64); err == nil {
 				remoteSize = n
 			}
@@ -643,6 +640,6 @@ func (fs *ClusterFileSystem) peerHasUpToDateFile(peer *types.PeerInfo, path stri
 		}
 		return false, nil
 	default:
-		return false, fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return false, fmt.Errorf("unexpected status %d", status)
 	}
 }

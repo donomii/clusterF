@@ -24,8 +24,7 @@ type DiskFileStore struct {
 	metadataDir string
 	contentDir  string
 
-	// Keep method signature compatibility; encryption is not applied in this implementation.
-	encryptionKey []byte
+	encryptionKey []byte // XOR encryption key (nil = no encryption)
 }
 
 // NewDiskFileStore creates a new disk-backed filestore rooted at baseDir.
@@ -43,9 +42,35 @@ func NewDiskFileStore(baseDir string) *DiskFileStore {
 // Close implements FileStoreLike; nothing to clean up for plain disk storage.
 func (fs *DiskFileStore) Close() {}
 
-// SetEncryptionKey accepts the interface method but does not apply encryption.
+// SetEncryptionKey configures the XOR encryption key.
 func (fs *DiskFileStore) SetEncryptionKey(key []byte) {
 	fs.encryptionKey = key
+}
+
+// xorEncrypt performs XOR encryption/decryption on data.
+func (fs *DiskFileStore) xorEncrypt(data []byte) []byte {
+	if len(fs.encryptionKey) == 0 || len(data) == 0 {
+		return data
+	}
+	result := make([]byte, len(data))
+	for i := range data {
+		result[i] = data[i] ^ fs.encryptionKey[i%len(fs.encryptionKey)]
+	}
+	return result
+}
+
+func (fs *DiskFileStore) encrypt(metadata, content []byte) ([]byte, []byte) {
+	if len(fs.encryptionKey) == 0 {
+		return metadata, content
+	}
+	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
+}
+
+func (fs *DiskFileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
+	if len(fs.encryptionKey) == 0 {
+		return metadata, content
+	}
+	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
 }
 
 // Get loads both metadata and content for a key.
@@ -73,6 +98,8 @@ func (fs *DiskFileStore) Get(key string) (*types.FileData, error) {
 		return nil, contentErr
 	}
 
+	metadata, content = fs.decrypt(metadata, content)
+
 	return &types.FileData{
 		Key:      key,
 		Metadata: metadata,
@@ -94,7 +121,7 @@ func (fs *DiskFileStore) GetMetadata(key string) ([]byte, error) {
 		}
 		return nil, readErr
 	}
-	return data, nil
+	return fs.xorEncrypt(data), nil
 }
 
 // GetContent loads only content for a key.
@@ -110,7 +137,7 @@ func (fs *DiskFileStore) GetContent(key string) ([]byte, error) {
 		}
 		return nil, readErr
 	}
-	return data, nil
+	return fs.xorEncrypt(data), nil
 }
 
 // Put stores both metadata and content.
@@ -137,13 +164,15 @@ func (fs *DiskFileStore) Put(key string, metadata, content []byte) error {
 	}
 	modTime := meta.ModifiedAt
 
-	if err := os.WriteFile(metaPath, metadata, 0o644); err != nil {
+	encMetadata, encContent := fs.encrypt(metadata, content)
+
+	if err := os.WriteFile(metaPath, encMetadata, 0o644); err != nil {
 		return err
 	}
 	if !modTime.IsZero() {
 		_ = os.Chtimes(metaPath, modTime, modTime)
 	}
-	if err := os.WriteFile(contentPath, content, 0o644); err != nil {
+	if err := os.WriteFile(contentPath, encContent, 0o644); err != nil {
 		return err
 	}
 	if !modTime.IsZero() {
@@ -161,7 +190,8 @@ func (fs *DiskFileStore) PutMetadata(key string, metadata []byte) error {
 	if err := ensureParentDir(metaPath); err != nil {
 		return err
 	}
-	if err := os.WriteFile(metaPath, metadata, 0o644); err != nil {
+	encMetadata, _ := fs.encrypt(metadata, nil)
+	if err := os.WriteFile(metaPath, encMetadata, 0o644); err != nil {
 		return err
 	}
 
@@ -223,6 +253,7 @@ func (fs *DiskFileStore) Scan(prefix string, fn func(key string, metadata, conte
 			return err
 		}
 
+		metadata, content = fs.decrypt(metadata, content)
 		return fn(key, metadata, content)
 	})
 }
@@ -244,7 +275,7 @@ func (fs *DiskFileStore) ScanMetadata(prefix string, fn func(key string, metadat
 			return err
 		}
 
-		return fn(types.ExtractFilePath(key), metadata)
+		return fn(types.ExtractFilePath(key), fs.xorEncrypt(metadata))
 	})
 }
 
@@ -265,7 +296,7 @@ func (fs *DiskFileStore) ScanMetadataFullKeys(prefix string, fn func(key string,
 			return err
 		}
 
-		return fn(key, metadata)
+		return fn(key, fs.xorEncrypt(metadata))
 	})
 }
 
@@ -284,7 +315,7 @@ func (fs *DiskFileStore) ScanPartitionMetaData(partitionStore types.PartitionSto
 			return err
 		}
 
-		return fn([]byte(key), metadata)
+		return fn([]byte(key), fs.xorEncrypt(metadata))
 	})
 }
 

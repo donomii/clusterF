@@ -782,8 +782,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 		pm.deps.Indexer.AddFile(path, metadata)
 	}
 
-	// Note: We don't delete the entry entirely, just mark as deleted
-
+	
 	// Mark the partition for re-scan
 	pm.MarkForReindex(partitionID)
 

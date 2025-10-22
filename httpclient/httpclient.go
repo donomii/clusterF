@@ -146,6 +146,65 @@ func SimpleGet(ctx context.Context, client *http.Client, url string, opts ...Req
 	return body, headers, status, nil
 }
 
+// SimpleHead issues a HEAD request and returns headers and status code.
+func SimpleHead(ctx context.Context, client *http.Client, url string, opts ...RequestOption) (http.Header, int, error) {
+	resp, err := Head(ctx, client, url, opts...)
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp == nil {
+		return nil, 0, errors.New("httpclient: nil response")
+	}
+
+	headers := resp.Header.Clone()
+	status := resp.StatusCode
+
+	if err := resp.Close(); err != nil {
+		return headers, status, err
+	}
+	return headers, status, nil
+}
+
+// SimplePut issues a PUT request and returns the response body, headers, and status code.
+func SimplePut(ctx context.Context, client *http.Client, url string, body io.Reader, opts ...RequestOption) ([]byte, http.Header, int, error) {
+	resp, err := Put(ctx, client, url, body, opts...)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if resp == nil {
+		return nil, nil, 0, errors.New("httpclient: nil response")
+	}
+
+	headers := resp.Header.Clone()
+	status := resp.StatusCode
+
+	data, err := resp.ReadAllAndClose()
+	if err != nil {
+		return data, headers, status, err
+	}
+	return data, headers, status, nil
+}
+
+// SimplePost issues a POST request and returns the response body, headers, and status code.
+func SimplePost(ctx context.Context, client *http.Client, url string, body io.Reader, opts ...RequestOption) ([]byte, http.Header, int, error) {
+	resp, err := Post(ctx, client, url, body, opts...)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if resp == nil {
+		return nil, nil, 0, errors.New("httpclient: nil response")
+	}
+
+	headers := resp.Header.Clone()
+	status := resp.StatusCode
+
+	data, err := resp.ReadAllAndClose()
+	if err != nil {
+		return data, headers, status, err
+	}
+	return data, headers, status, nil
+}
+
 // Head issues a HEAD request.
 func Head(ctx context.Context, client *http.Client, url string, opts ...RequestOption) (*Response, error) {
 	return DoMethod(ctx, client, http.MethodHead, url, nil, opts...)
