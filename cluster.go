@@ -450,7 +450,9 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	}
 
 	// Initialize indexer first (needed by partition manager)
-	c.indexer = indexer.NewIndexer(c.Logger())
+	idx := indexer.NewIndexer(c.Logger())
+	idx.ConfigurePartitionMembership(c.frogpond, types.NodeID(c.NodeId), c.sendUpdatesToPeers, c.noStore)
+	c.indexer = idx
 	c.debugf("Initialized indexer\n")
 
 	// Initialize partition manager
