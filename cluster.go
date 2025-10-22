@@ -770,7 +770,7 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 
 	checkPeers()
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(time.Duration(c.GetPartitionSyncInterval()))
 	defer ticker.Stop()
 
 	for {
@@ -778,9 +778,10 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.logger.Printf("Started checkPeers\n")
+			c.logger.Printf("Started requestFullStoreFromPeer\n")
 			checkPeers()
-			c.logger.Printf("Finished checkPeers\n")
+			c.logger.Printf("Finished requestFullStoreFromPeer\n")
+			ticker.Reset(time.Duration(c.GetPartitionSyncInterval()))
 		}
 	}
 }
@@ -1547,7 +1548,7 @@ func (c *Cluster) handlePartitionSyncPause(w http.ResponseWriter, r *http.Reques
 func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 	fullStoreURL, err := urlutil.BuildHTTPURL(peer.Address, peer.HTTPPort, "/frogpond/fullstore")
 	if err != nil {
-		c.Logger().Printf("[INITIAL_SYNC] Failed to build full store URL for %s: %v", peer.NodeID, err)
+		c.Logger().Printf("[FULL_SYNC] Failed to build full store URL for %s: %v", peer.NodeID, err)
 		return false
 	}
 
@@ -1558,7 +1559,7 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 
 	resp, err := client.Get(fullStoreURL)
 	if err != nil {
-		c.Logger().Printf("[INITIAL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
+		c.Logger().Printf("[FULL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
 		return false
 	}
 	defer func() {
@@ -1567,20 +1568,20 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		c.Logger().Printf("[INITIAL_SYNC] Peer %s returned %s", peer.NodeID, resp.Status)
+		c.Logger().Printf("[FULL_SYNC] Peer %s returned %s", peer.NodeID, resp.Status)
 		return false
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.Logger().Printf("[INITIAL_SYNC] Failed to read response from %s: %v", peer.NodeID, err)
+		c.Logger().Printf("[FULL_SYNC] Failed to read response from %s: %v", peer.NodeID, err)
 		return false
 	}
 
 	// Parse and apply the full store
 	var peerData []frogpond.DataPoint
 	if err := json.Unmarshal(body, &peerData); err != nil {
-		c.Logger().Printf("[INITIAL_SYNC] Failed to parse data from %s: %v", peer.NodeID, err)
+		c.Logger().Printf("[FULL_SYNC] Failed to parse data from %s: %v", peer.NodeID, err)
 		return false
 	}
 
@@ -1588,7 +1589,7 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 	resultingUpdates := c.frogpond.AppendDataPoints(peerData)
 	c.sendUpdatesToPeers(resultingUpdates)
 
-	c.Logger().Printf("[INITIAL_SYNC] Successfully synced %d data points from %s", len(peerData), peer.NodeID)
+	c.Logger().Printf("[FULL_SYNC] Successfully synced %d data points from %s", len(peerData), peer.NodeID)
 	return true
 }
 
