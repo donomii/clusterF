@@ -770,7 +770,7 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 
 	checkPeers()
 
-	ticker := time.NewTicker(time.Duration(c.GetPartitionSyncInterval()))
+	ticker := time.NewTicker(time.Duration(c.GetPartitionSyncInterval()) * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -781,7 +781,7 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 			c.logger.Printf("Started requestFullStoreFromPeer\n")
 			checkPeers()
 			c.logger.Printf("Finished requestFullStoreFromPeer\n")
-			ticker.Reset(time.Duration(c.GetPartitionSyncInterval()))
+			ticker.Reset(time.Duration(c.GetPartitionSyncInterval()) * time.Second)
 		}
 	}
 }

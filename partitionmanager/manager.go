@@ -1231,7 +1231,9 @@ func (pm *PartitionManager) getPartitionSyncInterval() time.Duration {
 		seconds = 1
 	}
 
-	return time.Duration(seconds) * time.Second
+	dur := time.Duration(seconds) * time.Second
+	fmt.Printf("getPartitionSyncInterval: %v", dur)
+	return dur
 }
 
 // getPartitionSyncPaused returns whether partition sync is paused from CRDT
@@ -1304,7 +1306,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			if pm.getPartitionSyncPaused() {
 				// Sync is paused, wait a bit before checking again
 				syncInterval := pm.getPartitionSyncInterval()
-				//pm.debugf("Waiting syncInterval %v", syncInterval)
+				pm.debugf("Waiting syncInterval %v", syncInterval)
 				select {
 				case <-ctx.Done():
 					return
@@ -1324,7 +1326,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 			} else {
 				// Nothing to sync, wait a bit before checking again
 				syncInterval := pm.getPartitionSyncInterval()
-				//pm.debugf("Waiting syncInterval %v", syncInterval)
+				pm.debugf("Waiting syncInterval %v", syncInterval)
 				select {
 				case <-ctx.Done():
 					return
