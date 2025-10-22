@@ -248,38 +248,34 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			options = append(options, httpclient.WithQueryParam("download", download))
 		}
 
-		resp, err := httpclient.Get(r.Context(), c.HttpDataClient, fileURL, options...)
+		body, headers, status, err := httpclient.SimpleGet(r.Context(), c.HttpDataClient, fileURL, options...)
 		if err != nil {
 			c.debugf("[FILES] Failed to get file from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
 		}
 
-		if resp.StatusCode == http.StatusOK {
+		if status == http.StatusOK {
 			c.debugf("[FILES] Found file %s on holder %s", path, peer.NodeID)
 
 			// Copy all headers from peer response
-			for key, values := range resp.Header {
+			for key, values := range headers {
 				for _, value := range values {
 					w.Header().Add(key, value)
 				}
 			}
 
 			w.WriteHeader(http.StatusOK)
-			if _, err := resp.CopyToAndClose(w); err != nil {
+			if _, err := w.Write(body); err != nil {
 				c.debugf("[FILES] Failed streaming response body from %s: %v", peer.NodeID, err)
 			}
 			return
 		}
 
 		// Read error response body for more detailed error information
-		errorBody, _ := resp.ReadAllAndClose()
-		errorMsg := fmt.Sprintf("Expected 200, got %d", resp.StatusCode)
-		if len(errorBody) > 0 {
-			errorMsg += fmt.Sprintf(": %s", string(errorBody))
-		}
-		holderErrors = append(holderErrors, fmt.Sprintf("%s: %s", peer.NodeID, errorMsg))
-		c.debugf("[FILES] Holder %s returned status %d for file %s: %s", peer.NodeID, resp.StatusCode, path, string(errorBody))
+		msg := strings.TrimSpace(string(body))
+		holderErrors = append(holderErrors, strings.TrimSpace(fmt.Sprintf("%s: %d %s", peer.NodeID, status, msg)))
+		c.debugf("[FILES] Holder %s returned %d for file %s: %s", peer.NodeID, status, path, msg)
 	}
 
 	// File not found on any registered holder

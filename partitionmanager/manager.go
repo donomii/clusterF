@@ -435,7 +435,7 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename str
 	}
 
 	// Create request with internal header to prevent recursion
-	resp, err := httpclient.Get(context.Background(), pm.httpClient(), fileURL,
+	content, _, status, err := httpclient.SimpleGet(context.Background(), pm.httpClient(), fileURL,
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
 	)
 	if err != nil {
@@ -443,20 +443,12 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename str
 		return nil, err
 	}
 
-	// Check response
-	if resp.StatusCode != http.StatusOK {
-		body, _ := resp.ReadAllAndClose()
-		pm.debugf("[PARTITION] Peer %s returned %s for file %s", peer.NodeID, resp.Status, filename)
-		if len(body) > 0 {
-			return nil, fmt.Errorf("peer %s returned %s for file %s: %s", peer.NodeID, resp.Status, filename, string(body))
+	if status != http.StatusOK {
+		pm.debugf("[PARTITION] Peer %s returned %d for file %s", peer.NodeID, status, filename)
+		if len(content) > 0 {
+			return nil, fmt.Errorf("peer %s returned %d for file %s: %s", peer.NodeID, status, filename, string(content))
 		}
-		return nil, fmt.Errorf("peer %s returned %s for file %s", peer.NodeID, resp.Status, filename)
-	}
-	// Read content
-	content, err := resp.ReadAllAndClose()
-	if err != nil {
-		pm.debugf("[PARTITION] Failed to read file %s from %s: %v", filename, peer.NodeID, err)
-		return nil, err
+		return nil, fmt.Errorf("peer %s returned %d for file %s", peer.NodeID, status, filename)
 	}
 	return content, nil
 }
@@ -476,25 +468,19 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 		return types.FileMetadata{}, err
 	}
 
-	resp, err := httpclient.Get(context.Background(), pm.httpClient(), metadataURL)
+	body, _, status, err := httpclient.SimpleGet(context.Background(), pm.httpClient(), metadataURL)
 	if err != nil {
 		return types.FileMetadata{}, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := resp.ReadAllAndClose()
+	if status != http.StatusOK {
 		if len(body) > 0 {
-			return types.FileMetadata{}, fmt.Errorf("peer %s returned %s for metadata %s: %s", peer.NodeID, resp.Status, filename, string(body))
+			return types.FileMetadata{}, fmt.Errorf("peer %s returned %d for metadata %s: %s", peer.NodeID, status, filename, string(body))
 		}
-		return types.FileMetadata{}, fmt.Errorf("peer %s returned %s for metadata %s", peer.NodeID, resp.Status, filename)
+		return types.FileMetadata{}, fmt.Errorf("peer %s returned %d for metadata %s", peer.NodeID, status, filename)
 	}
 
 	var metadata types.FileMetadata
-	body, err := resp.ReadAllAndClose()
-	if err != nil {
-		return types.FileMetadata{}, fmt.Errorf("failed to read response body from peer %s: %v", peer.NodeID, err)
-	}
-
 	if err := json.Unmarshal(body, &metadata); err != nil {
 		return types.FileMetadata{}, fmt.Errorf("failed to decode metadata from peer %s: %v, response body (first 500 chars): %s", peer.NodeID, err, string(body[:min(500, len(body))]))
 	}
@@ -1507,7 +1493,6 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 		return
 	}
 
-	// Get all unique partition IDs from the local store
 	pm.deps.FileStore.ScanMetadataFullKeys("", func(key string, metadata []byte) error {
 		if ctx.Err() != nil {
 			return ctx.Err()

@@ -1287,7 +1287,7 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		resp, err := httpclient.Get(r.Context(), c.HttpDataClient, metadataURL,
+		body, headers, status, err := httpclient.SimpleGet(r.Context(), c.HttpDataClient, metadataURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		)
 		if err != nil {
@@ -1296,31 +1296,27 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if resp.StatusCode == http.StatusOK {
+		if status == http.StatusOK {
 			c.debugf("[METADATA_API] Found metadata for %s on holder %s", path, peer.NodeID)
 
 			// Copy all headers from peer response
-			for key, values := range resp.Header {
+			for key, values := range headers {
 				for _, value := range values {
 					w.Header().Add(key, value)
 				}
 			}
 
 			w.WriteHeader(http.StatusOK)
-			if _, err := resp.CopyToAndClose(w); err != nil {
+			if _, err := w.Write(body); err != nil {
 				c.debugf("[METADATA_API] Failed streaming metadata from %s: %v", peer.NodeID, err)
 			}
 			return
 		}
 
 		// Read error response body for more detailed error information
-		errorBody, _ := resp.ReadAllAndClose()
-		errorMsg := fmt.Sprintf("Expected 200, got %d", resp.StatusCode)
-		if len(errorBody) > 0 {
-			errorMsg += fmt.Sprintf(": %s", string(errorBody))
-		}
-		holderErrors = append(holderErrors, fmt.Sprintf("%s: %s", peer.NodeID, errorMsg))
-		c.debugf("[METADATA_API] Holder %s returned status %d for metadata %s: %s", peer.NodeID, resp.StatusCode, path, string(errorBody))
+		msg := strings.TrimSpace(string(body))
+		holderErrors = append(holderErrors, strings.TrimSpace(fmt.Sprintf("%s: %d %s", peer.NodeID, status, msg)))
+		c.debugf("[METADATA_API] Holder %s returned %d for metadata %s: %s", peer.NodeID, status, path, msg)
 	}
 
 	// Metadata not found on any registered holder
@@ -1552,29 +1548,14 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 		return false
 	}
 
-	// Create a client with no timeout for full sync
-	client := &http.Client{
-		Timeout: 0, // No timeout
-	}
-
-	resp, err := client.Get(fullStoreURL)
+	body, _, status, err := httpclient.SimpleGet(context.Background(), c.HttpDataClient, fullStoreURL)
 	if err != nil {
 		c.Logger().Printf("[FULL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
 		return false
 	}
-	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
 
-	if resp.StatusCode != http.StatusOK {
-		c.Logger().Printf("[FULL_SYNC] Peer %s returned %s", peer.NodeID, resp.Status)
-		return false
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.Logger().Printf("[FULL_SYNC] Failed to read response from %s: %v", peer.NodeID, err)
+	if status != http.StatusOK {
+		c.Logger().Printf("[FULL_SYNC] Peer %s returned status %d", peer.NodeID, status)
 		return false
 	}
 

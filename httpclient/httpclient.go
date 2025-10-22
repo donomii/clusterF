@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 )
@@ -122,6 +123,27 @@ func DoMethod(ctx context.Context, client *http.Client, method, url string, body
 // Get issues a GET request.
 func Get(ctx context.Context, client *http.Client, url string, opts ...RequestOption) (*Response, error) {
 	return DoMethod(ctx, client, http.MethodGet, url, nil, opts...)
+}
+
+// SimpleGet issues a GET request and returns the response body, headers, and status code.
+// It automatically drains and closes the response body.
+func SimpleGet(ctx context.Context, client *http.Client, url string, opts ...RequestOption) ([]byte, http.Header, int, error) {
+	resp, err := Get(ctx, client, url, opts...)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if resp == nil {
+		return nil, nil, 0, errors.New("httpclient: nil response")
+	}
+
+	headers := resp.Header.Clone()
+	status := resp.StatusCode
+
+	body, err := resp.ReadAllAndClose()
+	if err != nil {
+		return body, headers, status, err
+	}
+	return body, headers, status, nil
 }
 
 // Head issues a HEAD request.
