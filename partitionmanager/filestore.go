@@ -1,6 +1,7 @@
 package partitionmanager
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -118,6 +119,26 @@ func (fs *FileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
 	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
 }
 
+const storeKeySeparator byte = 0x00
+
+func encodeStoreKey(partition types.PartitionID, path string) []byte {
+	key := make([]byte, 0, len(partition)+1+len(path))
+	key = append(key, []byte(partition)...)
+	key = append(key, storeKeySeparator)
+	key = append(key, path...)
+	return key
+}
+
+func decodeStoreKey(key []byte) (types.PartitionID, string, error) {
+	sep := bytes.IndexByte(key, storeKeySeparator)
+	if sep <= 0 || sep >= len(key)-1 {
+		return "", "", fmt.Errorf("invalid store key: %q", key)
+	}
+	partition := types.PartitionID(key[:sep])
+	path := string(key[sep+1:])
+	return partition, path, nil
+}
+
 func (fs *FileStore) debugf(format string, args ...interface{}) {
 	if !fs.debugLog {
 		return
@@ -184,29 +205,24 @@ func (fs *FileStore) closePartitionStores(metadataKV, contentKV ensemblekv.KvLik
 }
 
 // Get retrieves both metadata and content atomically
-func (fs *FileStore) Get(key string) (*types.FileData, error) {
-	partitionID := types.ExtractPartitionStoreID(key)
-	if partitionID == "" {
-		panic("fuck ai")
-		return &types.FileData{Key: key, Exists: false}, fmt.Errorf("Unable to locate storage for partition '%v'", partitionID)
-	}
+func (fs *FileStore) Get(partition types.PartitionID, path string) (*types.FileData, error) {
+	storeID := types.ExtractPartitionStoreID(partition)
 
-	//fs.debugf("Get: acquiring read lock for partition %s, key %s", partitionID, key)
 	start := time.Now()
-	fs.rLockPartition(partitionID)
-	fs.debugf("Get: acquired read lock for partition %s after %v", partitionID, time.Since(start))
+	fs.rLockPartition(storeID)
+	fs.debugf("Get: acquired read lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.runLockPartition(partitionID)
-		fs.debugf("Get: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
+		fs.runLockPartition(storeID)
+		fs.debugf("Get: released read lock for partition store %s after %v", storeID, time.Since(start))
 	}()
 
-	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 	if err != nil {
-		return &types.FileData{Key: key, Exists: false}, err
+		return &types.FileData{Partition: partition, Path: path, Exists: false}, err
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
-	keyBytes := []byte(key)
+	keyBytes := encodeStoreKey(partition, path)
 
 	metadata, metaErr := metadataKV.Get(keyBytes)
 	content, contentErr := contentKV.Get(keyBytes)
@@ -214,19 +230,21 @@ func (fs *FileStore) Get(key string) (*types.FileData, error) {
 	// If neither exists, file doesn't exist
 	if metaErr != nil && contentErr != nil {
 		return &types.FileData{
-			Key:    key,
-			Exists: false,
-		}, fmt.Errorf("File not found in store: %v, %v", metaErr, contentErr)
+			Partition: partition,
+			Path:      path,
+			Exists:    false,
+		}, fmt.Errorf("file not found in store: %v, %v", metaErr, contentErr)
 	}
 
 	// Decrypt data
 	metadata, content = fs.decrypt(metadata, content)
 
 	return &types.FileData{
-		Key:      key,
-		Metadata: metadata,
-		Content:  content,
-		Exists:   true,
+		Partition: partition,
+		Path:      path,
+		Metadata:  metadata,
+		Content:   content,
+		Exists:    true,
 	}, nil
 }
 
@@ -251,38 +269,31 @@ func (fs *FileStore) unLockPartition(partitionStoreID types.PartitionStore) {
 }
 
 // GetMetadata retrieves only metadata
-func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
-	//fs.debugf("Starting FileStore.GetMetadata for key %v", key)
-	//defer fs.debugf("Leaving FileStore.GetMetadata for key %v", key)
+func (fs *FileStore) GetMetadata(partition types.PartitionID, path string) ([]byte, error) {
+	storeID := types.ExtractPartitionStoreID(partition)
 
-	partitionID := types.ExtractPartitionStoreID(key)
-	if partitionID == "" {
-		panic("fuck ai")
-		return nil, fmt.Errorf("invalid key format")
-	}
-
-	//fs.debugf("GetMetadata: acquiring read lock for partition %s, key %s", partitionID, key)
 	start := time.Now()
-	fs.rLockPartition(partitionID)
-	fs.debugf("GetMetadata: acquired read lock for partition %s after %v", partitionID, time.Since(start))
+	fs.rLockPartition(storeID)
+	fs.debugf("GetMetadata: acquired read lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.runLockPartition(partitionID)
-		fs.debugf("GetMetadata: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
+		fs.runLockPartition(storeID)
+		fs.debugf("GetMetadata: released read lock for partition store %s after %v", storeID, time.Since(start))
 	}()
 
-	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 	if err != nil {
 		return nil, err
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
 	// Exists can be significantly faster depending on the store, so check that first
-	exists := metadataKV.Exists([]byte(key))
+	keyBytes := encodeStoreKey(partition, path)
+	exists := metadataKV.Exists(keyBytes)
 	if !exists {
-		return nil, fmt.Errorf("not found: %v", key)
+		return nil, fmt.Errorf("not found: %s", path)
 	}
 
-	metadata, err := metadataKV.Get([]byte(key))
+	metadata, err := metadataKV.Get(keyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -296,23 +307,19 @@ func (fs *FileStore) GetMetadata(key string) ([]byte, error) {
 }
 
 // GetContent retrieves only content
-func (fs *FileStore) GetContent(key string) ([]byte, error) {
-	partitionID := types.ExtractPartitionStoreID(key)
-	if partitionID == "" {
-		panic("fuck ai")
-		return nil, fmt.Errorf("invalid key format")
-	}
+func (fs *FileStore) GetContent(partition types.PartitionID, path string) ([]byte, error) {
+	storeID := types.ExtractPartitionStoreID(partition)
 
-	fs.rLockPartition(partitionID)
-	defer fs.runLockPartition(partitionID)
+	fs.rLockPartition(storeID)
+	defer fs.runLockPartition(storeID)
 
-	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 	if err != nil {
 		return nil, err
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
-	content, err := contentKV.Get([]byte(key))
+	content, err := contentKV.Get(encodeStoreKey(partition, path))
 	if err != nil {
 		return nil, err
 	}
@@ -326,34 +333,26 @@ func (fs *FileStore) GetContent(key string) ([]byte, error) {
 }
 
 // Put stores both metadata and content atomically
-func (fs *FileStore) Put(key string, metadata, content []byte) error {
-	if strings.HasPrefix(key, "/") {
-		panic("no")
-	}
-	partitionStoreName := types.ExtractPartitionStoreID(key)
-	if partitionStoreName == "" {
-		panic("fuck ai")
-		return fmt.Errorf("invalid key format")
-	}
-	partitionId := types.ExtractPartitionID(key)
+func (fs *FileStore) Put(partition types.PartitionID, path string, metadata, content []byte) error {
+	storeID := types.ExtractPartitionStoreID(partition)
 
-	fs.debugf("Put: acquiring write lock for partition %s, key %s", partitionStoreName, key)
+	fs.debugf("Put: acquiring write lock for partition store %s, path %s", storeID, path)
 	start := time.Now()
-	fs.lockPartition(partitionStoreName)
+	fs.lockPartition(storeID)
 
-	fs.debugf("Put: acquired write lock for partition %s after %v", partitionStoreName, time.Since(start))
+	fs.debugf("Put: acquired write lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.unLockPartition(partitionStoreName)
-		fs.debugf("Put: released write lock for partition %s", partitionStoreName)
+		fs.unLockPartition(storeID)
+		fs.debugf("Put: released write lock for partition store %s", storeID)
 	}()
 
-	metadataKV, contentKV, err := fs.openPartitionStores(partitionStoreName)
+	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 	if err != nil {
 		return err
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
-	keyBytes := []byte(key)
+	keyBytes := encodeStoreKey(partition, path)
 
 	// Encrypt data before storing
 	encMetadata, encContent := fs.encrypt(metadata, content)
@@ -361,85 +360,75 @@ func (fs *FileStore) Put(key string, metadata, content []byte) error {
 	if err := metadataKV.Put(keyBytes, encMetadata); err != nil {
 		return fmt.Errorf("failed to store metadata: %v", err)
 	}
-	fs.debugf("Wrote file metadata %v to partition %v", key, partitionId)
+	fs.debugf("Wrote file metadata %s to partition %s", path, partition)
 
 	if err := contentKV.Put(keyBytes, encContent); err != nil {
 		// Try to rollback metadata
 		metadataKV.Delete(keyBytes)
 		return fmt.Errorf("failed to store content: %v", err)
 	}
-	fs.debugf("Wrote file %v to partition %v", key, partitionId)
+	fs.debugf("Wrote file %s to partition %s", path, partition)
 
 	return nil
 }
 
 // PutMetadata stores only metadata
-func (fs *FileStore) PutMetadata(key string, metadata []byte) error {
-	if strings.HasPrefix(key, "/") {
-		panic("no")
-	}
-	partitionID := types.ExtractPartitionStoreID(key)
-	if partitionID == "" {
-		panic("fuck ai")
-		return fmt.Errorf("invalid key format")
-	}
+func (fs *FileStore) PutMetadata(partition types.PartitionID, path string, metadata []byte) error {
+	storeID := types.ExtractPartitionStoreID(partition)
 
-	fs.debugf("PutMetadata: acquiring write lock for partition %s, key %s", partitionID, key)
+	fs.debugf("PutMetadata: acquiring write lock for partition store %s, path %s", storeID, path)
 	start := time.Now()
-	fs.lockPartition(partitionID)
+	fs.lockPartition(storeID)
 
-	fs.debugf("PutMetadata: acquired write lock for partition %s after %v", partitionID, time.Since(start))
+	fs.debugf("PutMetadata: acquired write lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.unLockPartition(partitionID)
-		fs.debugf("PutMetadata: released write lock for partition %s", partitionID)
+		fs.unLockPartition(storeID)
+		fs.debugf("PutMetadata: released write lock for partition store %s", storeID)
 	}()
 
-	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 	if err != nil {
 		return err
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
+
+	keyBytes := encodeStoreKey(partition, path)
 
 	// Encrypt metadata
 	if len(fs.encryptionKey) > 0 {
 		metadata = fs.xorEncrypt(metadata)
 	}
 
-	err = metadataKV.Put([]byte(key), metadata)
-	if err != nil {
+	if err := metadataKV.Put(keyBytes, metadata); err != nil {
 		return err
 	}
 
-	return err
+	return nil
 }
 
 // Delete removes both metadata and content atomically
-func (fs *FileStore) Delete(key string) error {
+func (fs *FileStore) Delete(partition types.PartitionID, path string) error {
 	checkForRecursiveScan()
 
-	partitionID := types.ExtractPartitionStoreID(key)
-	if partitionID == "" {
-		panic("fuck ai")
-		return fmt.Errorf("invalid key format")
-	}
+	storeID := types.ExtractPartitionStoreID(partition)
 
-	fs.debugf("Delete: acquiring write lock for partition %s, key %s", partitionID, key)
+	fs.debugf("Delete: acquiring write lock for partition store %s, path %s", storeID, path)
 	start := time.Now()
-	fs.lockPartition(partitionID)
+	fs.lockPartition(storeID)
 
-	fs.debugf("Delete: acquired write lock for partition %s after %v", partitionID, time.Since(start))
+	fs.debugf("Delete: acquired write lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.unLockPartition(partitionID)
-		fs.debugf("Delete: released write lock for partition %s", partitionID)
+		fs.unLockPartition(storeID)
+		fs.debugf("Delete: released write lock for partition store %s", storeID)
 	}()
 
-	metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 	if err != nil {
 		return err
 	}
 	defer fs.closePartitionStores(metadataKV, contentKV)
 
-	keyBytes := []byte(key)
+	keyBytes := encodeStoreKey(partition, path)
 
 	// Delete from both stores - ignore individual errors
 	metadataKV.Delete(keyBytes)
@@ -448,219 +437,182 @@ func (fs *FileStore) Delete(key string) error {
 	return nil
 }
 
-// Scan calls fn for each file with the given prefix
-func (fs *FileStore) Scan(prefix string, fn func(key string, metadata, content []byte) error) error {
+// Scan calls fn for each file that matches the provided filters.
+func (fs *FileStore) Scan(partition types.PartitionID, pathPrefix string, fn func(partition types.PartitionID, path string, metadata, content []byte) error) error {
 	checkForRecursiveScan()
 
 	// Determine which partitions to scan based on prefix
-	partitions, err := fs.getAllPartitionStores(prefix)
+	partitions, err := fs.getAllPartitionStores(partition)
 	if err != nil {
 		return err
 	}
 
-	fs.debugf("Scan: scanning %d partitions for prefix %s", len(partitions), prefix)
+	fs.debugf("Scan: scanning %d partitions (filter partition=%s prefix=%s)", len(partitions), partition, pathPrefix)
 
-	for _, partitionID := range partitions {
-		fs.debugf("Scan: acquiring read lock for partition %s", partitionID)
+	for _, storeID := range partitions {
+		fs.debugf("Scan: acquiring read lock for partition store %s", storeID)
 		start := time.Now()
-		fs.rLockPartition(partitionID)
-		fs.debugf("Scan: acquired read lock for partition %s after %v", partitionID, time.Since(start))
+		fs.rLockPartition(storeID)
+		fs.debugf("Scan: acquired read lock for partition store %s after %v", storeID, time.Since(start))
 
-		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+		metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 		if err != nil {
-			fs.runLockPartition(partitionID)
+			fs.runLockPartition(storeID)
 			continue // Skip this partition if it can't be opened
 		}
 
-		// Collect keys and metadata from this partition
-		var keys []string
-		var metadataValues [][]byte
+		// Collect entries from this partition
+		type entry struct {
+			partition types.PartitionID
+			path      string
+			keyBytes  []byte
+			metadata  []byte
+		}
+		var entries []entry
 
 		_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
-			keyStr := string(k)
-			if prefix == "" || strings.HasPrefix(keyStr, prefix) {
-				keys = append(keys, keyStr)
-				metaCopy := make([]byte, len(v))
-				copy(metaCopy, v)
-				metadataValues = append(metadataValues, metaCopy)
+			part, filePath, err := decodeStoreKey(k)
+			if err != nil {
+				return err
 			}
+			if partition != "" && part != partition {
+				return nil
+			}
+			if pathPrefix != "" && !strings.HasPrefix(filePath, pathPrefix) {
+				return nil
+			}
+
+			metaCopy := make([]byte, len(v))
+			copy(metaCopy, v)
+			keyCopy := make([]byte, len(k))
+			copy(keyCopy, k)
+
+			entries = append(entries, entry{
+				partition: part,
+				path:      filePath,
+				keyBytes:  keyCopy,
+				metadata:  metaCopy,
+			})
 			return nil
 		})
 
 		if mapErr != nil {
 			fs.closePartitionStores(metadataKV, contentKV)
-			fs.runLockPartition(partitionID)
+			fs.runLockPartition(storeID)
 			return mapErr
 		}
 
 		// Get content for each key and call fn
-		for i, key := range keys {
-			content, _ := contentKV.Get([]byte(key))
+		for _, entry := range entries {
+			content, _ := contentKV.Get(entry.keyBytes)
+			contentCopy := make([]byte, len(content))
+			copy(contentCopy, content)
 
-			// Decrypt data before passing to callback
-			decMetadata, decContent := fs.decrypt(metadataValues[i], content)
+			decMetadata, decContent := fs.decrypt(entry.metadata, contentCopy)
 
-			if err := fn(key, decMetadata, decContent); err != nil {
+			if err := fn(entry.partition, entry.path, decMetadata, decContent); err != nil {
 				fs.closePartitionStores(metadataKV, contentKV)
-				fs.runLockPartition(partitionID)
+				fs.runLockPartition(storeID)
 				return err
 			}
 		}
 
 		fs.closePartitionStores(metadataKV, contentKV)
-		fs.runLockPartition(partitionID)
-		fs.debugf("Scan: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
+		fs.runLockPartition(storeID)
+		fs.debugf("Scan: released read lock for partition store %s after %v", storeID, time.Since(start))
 	}
 
 	return nil
 }
 
-// ScanMetadata calls fn for each metadata entry with the given prefix
-func (fs *FileStore) ScanMetadata(prefix string, fn func(key string, metadata []byte) error) error {
+// ScanMetadata calls fn for each metadata entry matching the provided filters.
+func (fs *FileStore) ScanMetadata(partition types.PartitionID, pathPrefix string, fn func(partition types.PartitionID, path string, metadata []byte) error) error {
 	start := time.Now()
 	checkForRecursiveScan()
 
-	// Determine which partitions to scan based on prefix
-	partitions, err := fs.getAllPartitionStores(prefix)
+	// Determine which partitions to scan based on partition filter
+	partitions, err := fs.getAllPartitionStores(partition)
 	if err != nil {
 		return err
 	}
 
-	fs.debugf("ScanMetadata: scanning %d partitions for prefix %s", len(partitions), prefix)
+	fs.debugf("ScanMetadata: scanning %d partitions (filter partition=%s prefix=%s)", len(partitions), partition, pathPrefix)
 
-	for _, partitionID := range partitions {
-		fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
-		fs.rLockPartition(partitionID)
+	for _, storeID := range partitions {
+		fs.debugf("ScanMetadata: acquiring read lock for partition store %s", storeID)
+		fs.rLockPartition(storeID)
 
-		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
+		metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 		if err != nil {
-			fs.runLockPartition(partitionID)
+			fs.runLockPartition(storeID)
 			continue // Skip this partition if it can't be opened
 		}
 
-		// Collect keys and metadata from this partition
-		var keys []string
-		var metadataValues [][]byte
+		type entry struct {
+			partition types.PartitionID
+			path      string
+			metadata  []byte
+		}
+		var entries []entry
 
 		_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
-			keyStr := string(k)
-			if prefix == "" || strings.HasPrefix(keyStr, prefix) {
-				// Extract file path from composite key
-				filePath := types.ExtractFilePath(keyStr)
-				keys = append(keys, filePath)
-				metaCopy := make([]byte, len(v))
-				copy(metaCopy, v)
-				metadataValues = append(metadataValues, metaCopy)
+			part, filePath, err := decodeStoreKey(k)
+			if err != nil {
+				return err
 			}
+			if partition != "" && part != partition {
+				return nil
+			}
+			if pathPrefix != "" && !strings.HasPrefix(filePath, pathPrefix) {
+				return nil
+			}
+
+			metaCopy := make([]byte, len(v))
+			copy(metaCopy, v)
+
+			entries = append(entries, entry{
+				partition: part,
+				path:      filePath,
+				metadata:  metaCopy,
+			})
 			return nil
 		})
 
 		if mapErr != nil {
 			fs.closePartitionStores(metadataKV, contentKV)
-			fs.runLockPartition(partitionID)
+			fs.runLockPartition(storeID)
 			return mapErr
 		}
 
-		// Call fn for each key
-		for i, key := range keys {
-			// Decrypt metadata before passing to callback
-			decMetadata := metadataValues[i]
+		// Call fn for each entry
+		for _, entry := range entries {
+			decMetadata := entry.metadata
 			if len(fs.encryptionKey) > 0 {
-				decMetadata = fs.xorEncrypt(metadataValues[i])
+				decMetadata = fs.xorEncrypt(decMetadata)
 			}
 
-			if err := fn(key, decMetadata); err != nil {
+			if err := fn(entry.partition, entry.path, decMetadata); err != nil {
 				fs.closePartitionStores(metadataKV, contentKV)
-				fs.runLockPartition(partitionID)
+				fs.runLockPartition(storeID)
 				return err
 			}
 		}
 
 		fs.closePartitionStores(metadataKV, contentKV)
-		fs.runLockPartition(partitionID)
-		fs.debugf("ScanMetadata: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
+		fs.runLockPartition(storeID)
+		fs.debugf("ScanMetadata: released read lock for partition store %s after %v", storeID, time.Since(start))
 	}
 
-	fs.debugf("Finished ScanMetadata for prefix %v in %v seconds", prefix, time.Since(start).Seconds())
+	fs.debugf("Finished ScanMetadata for partition=%v prefix=%v in %v seconds", partition, pathPrefix, time.Since(start).Seconds())
 	return nil
 }
 
-// ScanMetadata calls fn for each metadata entry with the given prefix
-func (fs *FileStore) ScanMetadataFullKeys(prefix string, fn func(key string, metadata []byte) error) error {
-	start := time.Now()
-	checkForRecursiveScan()
-
-	// Determine which partitions to scan based on prefix
-	partitions, err := fs.getAllPartitionStores(prefix)
-	if err != nil {
-		return err
-	}
-
-	fs.debugf("ScanMetadata: scanning %d partitions for prefix %s", len(partitions), prefix)
-
-	for _, partitionID := range partitions {
-		fs.debugf("ScanMetadata: acquiring read lock for partition %s", partitionID)
-		fs.rLockPartition(partitionID)
-
-		metadataKV, contentKV, err := fs.openPartitionStores(partitionID)
-		if err != nil {
-			fs.runLockPartition(partitionID)
-			continue // Skip this partition if it can't be opened
-		}
-
-		// Collect keys and metadata from this partition
-		var keys []string
-		var metadataValues [][]byte
-
-		_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
-			keyStr := string(k)
-			if prefix == "" || strings.HasPrefix(keyStr, prefix) {
-
-				keys = append(keys, keyStr)
-				metaCopy := make([]byte, len(v))
-				copy(metaCopy, v)
-				metadataValues = append(metadataValues, metaCopy)
-			}
-			return nil
-		})
-
-		if mapErr != nil {
-			fs.closePartitionStores(metadataKV, contentKV)
-			fs.runLockPartition(partitionID)
-			return mapErr
-		}
-
-		// Call fn for each key
-		for i, key := range keys {
-			// Decrypt metadata before passing to callback
-			decMetadata := metadataValues[i]
-			if len(fs.encryptionKey) > 0 {
-				decMetadata = fs.xorEncrypt(metadataValues[i])
-			}
-
-			if err := fn(key, decMetadata); err != nil {
-				fs.closePartitionStores(metadataKV, contentKV)
-				fs.runLockPartition(partitionID)
-				return err
-			}
-		}
-
-		fs.closePartitionStores(metadataKV, contentKV)
-		fs.runLockPartition(partitionID)
-		fs.debugf("ScanMetadata: released read lock for partition %s after %v", partitionID, time.Now().Sub(start))
-	}
-
-	fs.debugf("Finished ScanMetadata for prefix %v in %v seconds", prefix, time.Since(start).Seconds())
-	return nil
+// ScanMetadataFullKeys calls fn for each metadata entry, providing partition and path.
+func (fs *FileStore) ScanMetadataFullKeys(partition types.PartitionID, pathPrefix string, fn func(partition types.PartitionID, path string, metadata []byte) error) error {
+	return fs.ScanMetadata(partition, pathPrefix, fn)
 }
 
-func makeKey(path string) string {
-	partitionID := HashToPartition(path)
-	key := fmt.Sprintf("partition:%v:file:%v", partitionID, path)
-	return key
-}
-
-func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, fn func(key []byte, metadata []byte) error) error {
+func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, fn func(partition types.PartitionID, path string, metadata []byte) error) error {
 	//start := time.Now()
 	//fs.debugf("[FILESTORE] Opening partitionStore %v", partitionStore)
 	metadataKV, contentKV, err := fs.openPartitionStores(partitionStore)
@@ -671,18 +623,32 @@ func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, 
 	}
 	//fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
 
-	_, err = metadataKV.MapFunc(fn)
+	_, err = metadataKV.MapFunc(func(k, v []byte) error {
+		partition, path, decodeErr := decodeStoreKey(k)
+		if decodeErr != nil {
+			return decodeErr
+		}
+
+		metaCopy := make([]byte, len(v))
+		copy(metaCopy, v)
+
+		if len(fs.encryptionKey) > 0 {
+			metaCopy = fs.xorEncrypt(metaCopy)
+		}
+
+		return fn(partition, path, metaCopy)
+	})
 	return err
 
 }
 
 // getAllPartitionStores determines which partition directories to scan
-func (fs *FileStore) getAllPartitionStores(prefix string) ([]types.PartitionStore, error) {
-	// If prefix specifies a specific partition, only scan that one
-	if prefix != "" {
-		partitionID := types.ExtractPartitionStoreID(prefix)
-		if partitionID != "" {
-			return []types.PartitionStore{partitionID}, nil
+func (fs *FileStore) getAllPartitionStores(partition types.PartitionID) ([]types.PartitionStore, error) {
+	// If a specific partition is provided, only scan its store
+	if partition != "" {
+		partitionStore := types.ExtractPartitionStoreID(partition)
+		if partitionStore != "" {
+			return []types.PartitionStore{partitionStore}, nil
 		}
 	}
 
@@ -706,30 +672,31 @@ func (fs *FileStore) getAllPartitionStores(prefix string) ([]types.PartitionStor
 }
 
 // CalculatePartitionChecksum computes a consistent checksum for all files in a partition
-func (fs *FileStore) CalculatePartitionChecksum(ctx context.Context, prefix string) (string, error) {
+func (fs *FileStore) CalculatePartitionChecksum(ctx context.Context, partition types.PartitionID, pathPrefix string) (string, error) {
 	// Collect all non-deleted entries atomically
 	type entry struct {
-		key      string
-		metadata []byte
-		content  []byte
+		partition types.PartitionID
+		path      string
+		metadata  []byte
+		content   []byte
 	}
 	var entries []entry
 
-	err := fs.Scan(prefix, func(key string, metadata, content []byte) error {
+	err := fs.Scan(partition, pathPrefix, func(part types.PartitionID, path string, metadata, content []byte) error {
 		if ctx.Err() != nil {
-			panic(fmt.Sprintf("Context finished: %v", ctx.Err()))
-		}
-		if !strings.HasPrefix(key, prefix) || !strings.Contains(key, ":file:") {
-			return nil
+			return ctx.Err()
 		}
 
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
 			if !parsedMetadata.Deleted {
+				metaCopy := append([]byte(nil), metadata...)
+				contentCopy := append([]byte(nil), content...)
 				entries = append(entries, entry{
-					key:      key,
-					metadata: metadata,
-					content:  content,
+					partition: part,
+					path:      path,
+					metadata:  metaCopy,
+					content:   contentCopy,
 				})
 			}
 		}
@@ -740,15 +707,20 @@ func (fs *FileStore) CalculatePartitionChecksum(ctx context.Context, prefix stri
 		return "", err
 	}
 
-	// Sort entries by key for deterministic ordering
+	// Sort entries deterministically by partition then path
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].key < entries[j].key
+		if entries[i].partition == entries[j].partition {
+			return entries[i].path < entries[j].path
+		}
+		return entries[i].partition < entries[j].partition
 	})
 
 	// Hash in sorted order
 	hash := sha256.New()
 	for _, e := range entries {
-		hash.Write([]byte(e.key))
+		hash.Write([]byte(e.partition))
+		hash.Write([]byte{storeKeySeparator})
+		hash.Write([]byte(e.path))
 		hash.Write(e.metadata)
 		hash.Write(e.content)
 	}

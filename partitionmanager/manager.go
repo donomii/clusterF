@@ -129,17 +129,16 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 		}
 
 		pm.debugf("[FULL_REINDEX] Scanning partition store %s", partitionStore)
-		err := pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(key_b []byte, metadata []byte) error {
+		err := pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(partitionID types.PartitionID, _ string, metadata []byte) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 
-			partitionID := types.ExtractPartitionID(string(key_b))
 			processedFiles++
 
 			var parsedMetadata types.FileMetadata
 			if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-				pm.errorf(metadata, "corrupt metadata for file: "+string(key_b))
+				pm.errorf(metadata, "corrupt metadata for partition: "+string(partitionID))
 				// Parse error - count as existing file
 				partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 				return nil
@@ -236,8 +235,8 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 // getAllPartitionStores returns all partition store names from the FileStore
 func (pm *PartitionManager) getAllPartitionStores() ([]types.PartitionStore, error) {
 	partitionSet := make(map[types.PartitionStore]struct{})
-	err := pm.deps.FileStore.ScanMetadataFullKeys("", func(key string, _ []byte) error {
-		storeID := types.ExtractPartitionStoreID(key)
+	err := pm.deps.FileStore.ScanMetadataFullKeys("", "", func(partitionID types.PartitionID, _ string, _ []byte) error {
+		storeID := types.ExtractPartitionStoreID(partitionID)
 		if storeID != "" {
 			partitionSet[storeID] = struct{}{}
 		}
@@ -376,17 +375,16 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	}
 
 	partitionID := HashToPartition(path)
-	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
 	pm.debugf("[PARTITION] Storing file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
 
 	// Store metadata in filesKV (metadata store)
-	if err := pm.deps.FileStore.Put(fileKey, metadataJSON, fileContent); err != nil {
+	if err := pm.deps.FileStore.Put(partitionID, path, metadataJSON, fileContent); err != nil {
 		//pm.deps.Logger.Panicf("failed to store file: %v", err)
 		return fmt.Errorf("failed to store file: %v", err)
 	}
 
-	pm.logf("[PARTITION] Stored file %s  (%d bytes)", fileKey, len(fileContent))
+	pm.logf("[PARTITION] Stored file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
 
 	// Update indexer with new file
 	if pm.deps.Indexer != nil {
@@ -399,14 +397,14 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 		}
 	}
 
-	pm.logf("[PARTITION] Updated indexer for %v", fileKey)
+	pm.logf("[PARTITION] Updated indexer for %s in partition %s", path, partitionID)
 
 	// Update partition metadata in CRDT
 	pm.MarkForReindex(partitionID)
 	//pm.logf("[PARTITION] Marked %v for reindex", partitionID)
 
 	// Debug: verify what we just stored
-	if storedData, err := pm.deps.FileStore.Get(fileKey); err == nil && storedData.Exists {
+	if storedData, err := pm.deps.FileStore.Get(partitionID, path); err == nil && storedData.Exists {
 		var parsedMeta types.FileMetadata
 		if json.Unmarshal(storedData.Metadata, &parsedMeta) == nil {
 			if parsedMeta.Checksum == "" {
@@ -497,22 +495,21 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	}
 
 	partitionID := HashToPartition(path)
-	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
 	// Get metadata and content atomically
-	fileData, err := pm.deps.FileStore.Get(fileKey)
+	fileData, err := pm.deps.FileStore.Get(partitionID, path)
 	if err != nil {
 		if fileData != nil && !fileData.Exists {
-			pm.debugf("[PARTITION] File %s not found locally (partition %s): %v", fileKey, partitionID, err)
-			return []byte{}, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, fileKey, err.Error())
+			pm.debugf("[PARTITION] File %s not found locally (partition %s): %v", path, partitionID, err)
+			return []byte{}, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, err.Error())
 		}
-		pm.logf("[PARTITION] Failed reading local store for %s (partition %s, key %s): %v", path, partitionID, fileKey, err)
-		return []byte{}, types.FileMetadata{}, fmt.Errorf("failed reading local store for %s (partition %s, key %s): %w", path, partitionID, fileKey, err)
+		pm.logf("[PARTITION] Failed reading local store for %s (partition %s): %v", path, partitionID, err)
+		return []byte{}, types.FileMetadata{}, fmt.Errorf("failed reading local store for %s (partition %s): %w", path, partitionID, err)
 	}
 
 	if !fileData.Exists {
-		pm.debugf("[PARTITION] File %s lookup returned empty record (partition %s)", fileKey, partitionID)
-		return []byte{}, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, fileKey, "store returned empty record")
+		pm.debugf("[PARTITION] File %s lookup returned empty record (partition %s)", path, partitionID)
+		return []byte{}, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, "store returned empty record")
 
 	}
 
@@ -524,8 +521,8 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 
 	// Check if file is marked as deleted
 	if metadata.Deleted {
-		pm.debugf("[PARTITION] File %s marked as deleted locally (partition %s)", fileKey, partitionID)
-		return nil, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, fileKey, "file is marked as deleted (tombstone present)")
+		pm.debugf("[PARTITION] File %s marked as deleted locally (partition %s)", path, partitionID)
+		return nil, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, "file is marked as deleted (tombstone present)")
 	}
 
 	// Verify checksum if available
@@ -544,11 +541,8 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	return fileData.Content, metadata, nil
 }
 
-func (pm *PartitionManager) localFileNotFound(path string, partitionID types.PartitionID, fileKey string, detail string) error {
+func (pm *PartitionManager) localFileNotFound(path string, partitionID types.PartitionID, detail string) error {
 	message := fmt.Sprintf("file %s is missing on holder %s (partition %s)", path, pm.deps.NodeID, partitionID)
-	if fileKey != "" {
-		message = fmt.Sprintf("%s, storage key %s", message, fileKey)
-	}
 	detail = strings.TrimSpace(detail)
 	if detail != "" {
 		message = fmt.Sprintf("%s: %s", message, detail)
@@ -649,9 +643,8 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 	}
 
 	partitionID := HashToPartition(path)
-	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
-	metadata, err := pm.deps.FileStore.GetMetadata(fileKey)
+	metadata, err := pm.deps.FileStore.GetMetadata(partitionID, path)
 	if err != nil {
 		// It's normal for a file not to be found locally
 		pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
@@ -750,10 +743,9 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 	}
 
 	partitionID := HashToPartition(path)
-	fileKey := fmt.Sprintf("partition:%s:file:%s", partitionID, path)
 
 	// Get existing metadata
-	existingMetadata, _ := pm.deps.FileStore.GetMetadata(fileKey)
+	existingMetadata, _ := pm.deps.FileStore.GetMetadata(partitionID, path)
 	var metadata types.FileMetadata
 	if existingMetadata != nil {
 		// Parse existing metadata
@@ -771,7 +763,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 
 	// Store tombstone metadata and delete content
 	tombstoneJSON, _ := json.Marshal(metadata)
-	if err := pm.deps.FileStore.PutMetadata(fileKey, tombstoneJSON); err != nil {
+	if err := pm.deps.FileStore.PutMetadata(partitionID, path, tombstoneJSON); err != nil {
 		return err
 	}
 
@@ -814,11 +806,10 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
 
 	// Use FileStore to scan files
-	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(key_b []byte, metadata []byte) error {
+	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(partitionID types.PartitionID, _ string, metadata []byte) error {
 		if ctx.Err() != nil {
 			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))
 		}
-		partitionID := types.ExtractPartitionID(string(key_b))
 		_, exists := partitionsChecksums[partitionID]
 		if !exists {
 			pm.ReindexList.Store(partitionID, false) // Cancel pending reindexes for any partitions we index here
@@ -828,7 +819,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-			pm.errorf(metadata, "corrupt metadata for file: "+string(key_b))
+			pm.errorf(metadata, "corrupt metadata for partition: "+string(partitionID))
 			// Parse error - count as existing file
 			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 			return nil
@@ -1107,12 +1098,7 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 	missingChecksums := 0
 	totalFiles := 0
 
-	pm.deps.FileStore.Scan("", func(k string, metadata_bytes, content_bytes []byte) error {
-		key := string(k)
-		if !strings.HasPrefix(key, "partition:") || !strings.Contains(key, ":file:") {
-			return nil // Skip non-file entries
-		}
-
+	pm.deps.FileStore.Scan("", "", func(partition types.PartitionID, filePath string, metadata_bytes, content_bytes []byte) error {
 		totalFiles++
 
 		// Parse metadata
@@ -1138,14 +1124,20 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 		content := content_bytes
 
 		// Verify checksum
-		if path, ok := metadata["path"].(string); ok {
-			if err := pm.verifyFileChecksum(content, checksum, path, pm.deps.NodeID); err != nil {
-				pm.logf("[INTEGRITY] Corruption detected in %s: %v", path, err)
-				corruptedFiles = append(corruptedFiles, path)
-				return nil
-			}
-			verifiedCount++
+		path := filePath
+		if metaPath, ok := metadata["path"].(string); ok && metaPath != "" {
+			path = metaPath
 		}
+		if path == "" {
+			return nil
+		}
+
+		if err := pm.verifyFileChecksum(content, checksum, path, pm.deps.NodeID); err != nil {
+			pm.logf("[INTEGRITY] Corruption detected in %s (partition %s): %v", path, partition, err)
+			corruptedFiles = append(corruptedFiles, path)
+			return nil
+		}
+		verifiedCount++
 
 		return nil
 	})
@@ -1162,10 +1154,11 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 
 // PartitionSyncEntry represents a single file entry for partition sync
 type PartitionSyncEntry struct {
-	Key      string `json:"key"`
-	Metadata []byte `json:"metadata"`
-	Content  []byte `json:"content"`
-	Checksum string `json:"checksum"`
+	Partition types.PartitionID `json:"partition"`
+	Path      string            `json:"path"`
+	Metadata  []byte            `json:"metadata"`
+	Content   []byte            `json:"content"`
+	Checksum  string            `json:"checksum"`
 }
 
 // PartitionSnapshot represents a consistent point-in-time view of a partition
@@ -1187,8 +1180,7 @@ func (pm *PartitionManager) calculateEntryChecksum(metadata, content []byte) str
 
 // calculatePartitionChecksum computes a checksum for all files in a partition
 func (pm *PartitionManager) calculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) string {
-	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
-	checksum, err := pm.deps.FileStore.CalculatePartitionChecksum(ctx, prefix)
+	checksum, err := pm.deps.FileStore.CalculatePartitionChecksum(ctx, partitionID, "")
 	if err != nil {
 		pm.debugf("[PARTITION] Failed to calculate checksum for %s: %v", partitionID, err)
 		return ""
@@ -1452,15 +1444,12 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 // ScanAllFiles scans all local partition stores and calls fn for each file
 func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types.FileMetadata) error) error {
 	start := time.Now()
-	res := pm.deps.FileStore.ScanMetadata("", func(key string, metadataBytes []byte) error {
-		// Extract file path from key (format: partition:pXXXXX:file:/path)
-
-		filePath := key
+	res := pm.deps.FileStore.ScanMetadata("", "", func(_ types.PartitionID, filePath string, metadataBytes []byte) error {
 
 		// Parse metadata
 		var metadata types.FileMetadata
 		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-			message := fmt.Sprintf("Unable to parse json for file: %v, because %v, input data was %v\n", key, err, string(metadataBytes))
+			message := fmt.Sprintf("Unable to parse json for file: %v, because %v, input data was %v\n", filePath, err, string(metadataBytes))
 			pm.logf("%v", message)
 			panic(message)
 		}
@@ -1492,15 +1481,11 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 		return
 	}
 
-	pm.deps.FileStore.ScanMetadataFullKeys("", func(key string, metadata []byte) error {
+	pm.deps.FileStore.ScanMetadataFullKeys("", "", func(partitionID types.PartitionID, _ string, _ []byte) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		if key == "" {
-			return nil
-		}
-		partitionID := types.ExtractPartitionID(key)
 		if partitionID != "" {
 			pm.MarkForReindex(partitionID)
 		}

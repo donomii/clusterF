@@ -62,17 +62,17 @@ type PartitionManagerLike interface {
 type FileStoreLike interface {
 	Close()
 	SetEncryptionKey(key []byte)
-	Get(key string) (*FileData, error)
-	GetMetadata(key string) ([]byte, error)
-	GetContent(key string) ([]byte, error)
-	Put(key string, metadata, content []byte) error
-	PutMetadata(key string, metadata []byte) error
-	Delete(key string) error
-	Scan(prefix string, fn func(key string, metadata, content []byte) error) error
-	ScanMetadata(prefix string, fn func(key string, metadata []byte) error) error
-	ScanMetadataFullKeys(prefix string, fn func(key string, metadata []byte) error) error
-	ScanPartitionMetaData(partitionStore PartitionStore, fn func(key []byte, metadata []byte) error) error
-	CalculatePartitionChecksum(ctx context.Context, prefix string) (string, error)
+	Get(partition PartitionID, path string) (*FileData, error)
+	GetMetadata(partition PartitionID, path string) ([]byte, error)
+	GetContent(partition PartitionID, path string) ([]byte, error)
+	Put(partition PartitionID, path string, metadata, content []byte) error
+	PutMetadata(partition PartitionID, path string, metadata []byte) error
+	Delete(partition PartitionID, path string) error
+	Scan(partition PartitionID, pathPrefix string, fn func(partition PartitionID, path string, metadata, content []byte) error) error
+	ScanMetadata(partition PartitionID, pathPrefix string, fn func(partition PartitionID, path string, metadata []byte) error) error
+	ScanMetadataFullKeys(partition PartitionID, pathPrefix string, fn func(partition PartitionID, path string, metadata []byte) error) error
+	ScanPartitionMetaData(partitionStore PartitionStore, fn func(partition PartitionID, path string, metadata []byte) error) error
+	CalculatePartitionChecksum(ctx context.Context, partition PartitionID, pathPrefix string) (string, error)
 }
 
 type PartitionInfo struct {
@@ -226,10 +226,11 @@ type SearchResult struct {
 
 // FileData represents a complete file entry.
 type FileData struct {
-	Key      string
-	Metadata []byte
-	Content  []byte
-	Exists   bool
+	Partition PartitionID
+	Path      string
+	Metadata  []byte
+	Content   []byte
+	Exists    bool
 }
 
 // Sent to the browser for display
@@ -404,47 +405,32 @@ func PartitionIDForPath(path string) PartitionID {
 	return PartitionID(fmt.Sprintf("p%05d", partitionNum))
 }
 
-// ExtractPartitionStoreID extracts the combined partition store name e.g. p12
-// Partitions are grouped together in files to avoid having 65k open files during operation
-func ExtractPartitionStoreID(key string) PartitionStore {
-	// Key format: partition:p12345:file:/path/to/file
-	parts := strings.Split(key, ":")
-	if len(parts) >= 2 && parts[0] == "partition" {
-		if len(parts[1]) >= 3 {
-			partId := parts[1][0:3] // Extract partition ID (first 3 characters)
-			return PartitionStore(partId)
-		}
+// ExtractPartitionStoreID derives the partition store identifier from a full partition ID.
+// Partitions are grouped to avoid maintaining tens of thousands of directories.
+func ExtractPartitionStoreID(partition PartitionID) PartitionStore {
+	if len(partition) < 3 {
+		log.Panicf("invalid partition id provided to ExtractPartitionStoreID: %v", partition)
 	}
-	log.Panicf("Invalid key provided to ExtractPartitionStoreID: %v", key)
-	return ""
+	return PartitionStore(string(partition)[:3])
 }
 
-// ExtractFilePath extracts the cluster file path e.g. /Desktop/
-func ExtractFilePath(key string) string {
-	// Key format: partition:p12345:file:/path/to/file
-	const marker = ":file:"
-	idx := strings.Index(key, marker)
-	if idx >= 0 && idx+len(marker) < len(key) {
-		return key[idx+len(marker):]
+// ExtractFilePath validates and returns the cluster file path.
+func ExtractFilePath(_ PartitionID, path string) string {
+	if path == "" {
+		log.Panicf("invalid empty path provided to ExtractFilePath")
 	}
-
-	log.Panicf("Invalid key provided to ExtractFilePath: %v", key)
-	return ""
+	if !strings.HasPrefix(path, "/") {
+		log.Panicf("path must be absolute in ExtractFilePath: %v", path)
+	}
+	return path
 }
 
 type PartitionID string
 
-// ExtractPartitionStoreID extracts the partition ID from a key e.g. p12345
-func ExtractPartitionID(key string) PartitionID {
-	parts := strings.Split(key, ":")
-	if len(parts) >= 2 && parts[0] == "partition" {
-		if len(parts[1]) >= 3 {
-			partId := parts[1]
-			return PartitionID(partId)
-		} else {
-			panic("no")
-		}
+// ExtractPartitionID validates and returns the provided partition identifier.
+func ExtractPartitionID(partition PartitionID, _ string) PartitionID {
+	if partition == "" {
+		log.Panicf("invalid empty partition provided to ExtractPartitionID")
 	}
-	log.Panicf("attempted to extract partition from something that isn't a key: %v", key)
-	panic("no")
+	return partition
 }
