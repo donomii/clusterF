@@ -164,6 +164,12 @@ func (m *MockClusterSearch) GetPartitionSyncPaused() bool {
 	return false
 }
 
+func (m *MockClusterSearch) RecordDiskActivity(level types.DiskActivityLevel) {}
+
+func (m *MockClusterSearch) CanRunNonEssentialDiskOp() bool {
+	return true
+}
+
 func setupSearchTest(t *testing.T) (*filesystem.ClusterFileSystem, string) {
 	tmpDir, err := os.MkdirTemp("", "search_test")
 	if err != nil {

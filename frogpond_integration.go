@@ -330,8 +330,18 @@ func (c *Cluster) updateNodeMetadata() {
 	nodeKey := fmt.Sprintf("nodes/%s", c.NodeId)
 
 	// Calculate disk usage information
-	bytesStored := c.calculateDataDirSize()
-	diskSize, diskFree := c.getDiskUsage()
+	metrics := c.loadDiskMetrics()
+	bytesStored := metrics.bytesStored
+	diskSize := metrics.diskSize
+	diskFree := metrics.diskFree
+
+	if c.CanRunNonEssentialDiskOp() {
+		bytesStored = c.calculateDataDirSize()
+		diskSize, diskFree = c.getDiskUsage()
+		c.recordDiskMetrics(bytesStored, diskSize, diskFree)
+	} else {
+		c.debugf("[DISK_ACTIVITY] Disk inactive; using cached disk metrics for metadata update")
+	}
 
 	// Get our external address from discovery
 	address := ""
@@ -428,6 +438,11 @@ func (c *Cluster) handleFrogpondFullStore(w http.ResponseWriter, r *http.Request
 
 // persistCRDTToFile saves the current CRDT state to a file
 func (c *Cluster) persistCRDTToFile() {
+	if !c.CanRunNonEssentialDiskOp() {
+		c.debugf("[DISK_ACTIVITY] Skipping CRDT persistence; disk inactive")
+		return
+	}
+
 	dataPoints := c.frogpond.DataPool.ToList()
 	dataJSON, err := json.Marshal(dataPoints)
 	if err != nil {
@@ -507,6 +522,7 @@ func (c *Cluster) pruneOldNodes() {
 
 // loadCRDTFromKV seeds the in-memory CRDT from the persistent KV
 func (c *Cluster) loadCRDTFromFile() {
+	c.RecordDiskActivity(types.DiskActivityEssential)
 	data, err := ioutil.ReadFile(filepath.Join(c.DataDir, "crdt_backup.json"))
 	if err != nil {
 		c.Logger().Printf("Could not read CRDT backup file: %v", err)

@@ -131,6 +131,9 @@ type Cluster struct {
 	currentFile atomic.Value // stores string
 
 	partitionReIndexInterval time.Duration // time in between scans for partitions to re-index
+
+	diskActiveUntil atomic.Int64
+	lastDiskMetrics atomic.Value
 }
 
 func (c *Cluster) SetTimings(partitionSyncInterval, partitionReIndexInterval time.Duration) {
@@ -279,6 +282,8 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		Debug:  opts.Debug,
 	}
 	c.debugf("Initialized cluster struct\n")
+	c.lastDiskMetrics.Store(diskMetricsSnapshot{})
+	c.markDiskActive()
 
 	// Treat DataDir as a base directory; always place data under a per-node subdir
 	{

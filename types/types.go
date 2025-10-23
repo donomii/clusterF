@@ -16,6 +16,13 @@ import (
 
 const DefaultPartitionSyncIntervalSeconds = 300
 
+type DiskActivityLevel int
+
+const (
+	DiskActivityNonEssential DiskActivityLevel = iota
+	DiskActivityEssential
+)
+
 // Shared sentinel errors for filesystem operations.
 var (
 	// ErrFileNotFound indicates that the requested file does not exist in any known partition.
@@ -39,6 +46,8 @@ type ClusterLike interface {
 	GetNodeInfo(nodeID NodeID) *NodeData                           // Get info about a specific node
 	GetPartitionSyncPaused() bool                                  // Partition sync activity
 	AppContext() context.Context                                   //Closed when the application shuts down
+	RecordDiskActivity(level DiskActivityLevel)                    // Track essential/non-essential disk activity
+	CanRunNonEssentialDiskOp() bool                                // Whether non-essential disk operations are allowed right now
 }
 
 // The partition manager, everything needed to access partitions and files

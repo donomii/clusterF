@@ -286,6 +286,7 @@ func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID
 		return false, nil
 	}
 
+	pm.recordEssentialDiskActivity()
 	if err := pm.deps.FileStore.Put(entry.Path, entry.Metadata, entry.Content); err != nil {
 		return false, fmt.Errorf("failed to store entry %s: %w", entry.Path, err)
 	}
@@ -335,6 +336,7 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 		return pm.deps.Indexer.FilesForPartition(partitionID), nil
 	}
 
+	pm.recordEssentialDiskActivity()
 	pm.debugf("[PARTITION] Indexer unavailable, falling back to metadata scan for %s", partitionID)
 	paths := []string{}
 	err := pm.deps.FileStore.ScanMetadata("", func(path string, _ []byte) error {
@@ -352,6 +354,7 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 }
 
 func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, path string) (PartitionSyncEntry, error) {
+	pm.recordEssentialDiskActivity()
 	data, err := pm.deps.FileStore.Get(path)
 	if err != nil {
 		return PartitionSyncEntry{}, err
@@ -493,6 +496,7 @@ func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peer
 
 // shouldUpdateEntry determines if we should update our local copy with the remote entry
 func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bool {
+	pm.recordEssentialDiskActivity()
 	// Get our current version
 	localData, err := pm.deps.FileStore.Get(remoteEntry.Path)
 	if err != nil || !localData.Exists {

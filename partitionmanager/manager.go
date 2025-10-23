@@ -58,6 +58,12 @@ func NewPartitionManager(deps Dependencies) *PartitionManager {
 	return &PartitionManager{deps: deps, ReindexList: syncmap.NewSyncMap[types.PartitionID, bool]()}
 }
 
+func (pm *PartitionManager) recordEssentialDiskActivity() {
+	if pm.deps.Cluster != nil {
+		pm.deps.Cluster.RecordDiskActivity(types.DiskActivityEssential)
+	}
+}
+
 func (pm *PartitionManager) MarkForReindex(pId types.PartitionID) {
 	pm.ReindexList.Store(pId, true)
 	//pm.debugf("[MarkForReindex] Marked partition %v for reindex.  List is now %v", pId, pm.ReindexList.Keys())
@@ -369,6 +375,7 @@ func (pm *PartitionManager) CalculatePartitionName(path string) string {
 
 // storeFileInPartition stores a file with metadata and content in separate stores
 func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error {
+	pm.recordEssentialDiskActivity()
 	// If in no-store mode, don't store locally
 	if pm.deps.NoStore {
 		//FIXME panic here
@@ -491,6 +498,7 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 
 // getFileAndMetaFromPartition retrieves metadata and content from separate stores
 func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, types.FileMetadata, error) {
+	pm.recordEssentialDiskActivity()
 	// If in no-store mode, always try peers first
 	if pm.deps.NoStore {
 		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path))
@@ -637,6 +645,7 @@ func (pm *PartitionManager) GetFileFromPeers(path string) ([]byte, types.FileMet
 }
 
 func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMetadata, error) {
+	pm.recordEssentialDiskActivity()
 	//pm.debugf("Starting GetMetadataFromPartition for path %v", path)
 	//defer pm.debugf("Leaving GetMetadataFromPartition for path %v", path)
 	if pm.deps.NoStore {
@@ -735,6 +744,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadat
 
 // deleteFileFromPartition removes a file from its partition
 func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path string) error {
+	pm.recordEssentialDiskActivity()
 	// If in no-store mode, don't delete locally (we don't have it anyway)
 	if pm.deps.NoStore {
 		//FIXME panic here

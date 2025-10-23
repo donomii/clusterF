@@ -62,6 +62,32 @@ func (m *MockCluster) ID() types.NodeID {
 	return types.NodeID("test-node")
 }
 
+func (m *MockCluster) GetAllNodes() map[types.NodeID]*types.NodeData {
+	return map[types.NodeID]*types.NodeData{}
+}
+
+func (m *MockCluster) GetNodesForPartition(partitionName string) []types.NodeID {
+	return nil
+}
+
+func (m *MockCluster) GetNodeInfo(nodeID types.NodeID) *types.NodeData {
+	return nil
+}
+
+func (m *MockCluster) GetPartitionSyncPaused() bool {
+	return false
+}
+
+func (m *MockCluster) AppContext() context.Context {
+	return context.Background()
+}
+
+func (m *MockCluster) RecordDiskActivity(level types.DiskActivityLevel) {}
+
+func (m *MockCluster) CanRunNonEssentialDiskOp() bool {
+	return true
+}
+
 func TestChecksumFunctionality(t *testing.T) {
 	// Create temporary directory for test data
 	tmpDir, err := os.MkdirTemp("", "checksum_test")

@@ -106,6 +106,9 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 
 // StoreFileWithModTime stores a file using an explicit modification time and returns the node that handled the write.
 func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
+	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {
+		return "", fmt.Errorf("invalid path: %s", path)
+	}
 	// Calculate checksum for file integrity
 	checksum := calculateChecksum(content)
 	//fs.debugf("[CHECKSUM_DEBUG] Calculated checksum for %s: %s", path, checksum)
