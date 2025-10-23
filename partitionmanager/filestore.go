@@ -1,7 +1,6 @@
 package partitionmanager
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -119,26 +118,6 @@ func (fs *FileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
 	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
 }
 
-const storeKeySeparator byte = 0x00
-
-func encodeStoreKey(partition types.PartitionID, path string) []byte {
-	key := make([]byte, 0, len(partition)+1+len(path))
-	key = append(key, []byte(partition)...)
-	key = append(key, storeKeySeparator)
-	key = append(key, path...)
-	return key
-}
-
-func decodeStoreKey(key []byte) (types.PartitionID, string, error) {
-	sep := bytes.IndexByte(key, storeKeySeparator)
-	if sep <= 0 || sep >= len(key)-1 {
-		return "", "", fmt.Errorf("invalid store key: %q", key)
-	}
-	partition := types.PartitionID(key[:sep])
-	path := string(key[sep+1:])
-	return partition, path, nil
-}
-
 func (fs *FileStore) debugf(format string, args ...interface{}) {
 	if !fs.debugLog {
 		return
@@ -202,6 +181,14 @@ func (fs *FileStore) openPartitionStores(partitionStoreID types.PartitionStore) 
 // closePartitionStores does nothing now - handles are cached
 func (fs *FileStore) closePartitionStores(metadataKV, contentKV ensemblekv.KvLike) {
 	// Handles are now cached and not closed after each operation
+}
+
+func encodeStoreKey(_ types.PartitionID, path string) []byte {
+	return []byte(path)[:]
+}
+
+func decodeStoreKey(key []byte) (types.PartitionID, string, error) {
+	return types.PartitionIDForPath(string(key)), string(key), nil
 }
 
 // Get retrieves both metadata and content atomically
@@ -711,7 +698,6 @@ func (fs *FileStore) CalculatePartitionChecksum(ctx context.Context, pathPrefix 
 	hash := sha256.New()
 	for _, e := range entries {
 		hash.Write([]byte(e.partition))
-		hash.Write([]byte{storeKeySeparator})
 		hash.Write([]byte(e.path))
 		hash.Write(e.metadata)
 		hash.Write(e.content)

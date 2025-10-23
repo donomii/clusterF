@@ -371,7 +371,6 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPre
 	hash := sha256.New()
 	for _, e := range entries {
 		hash.Write([]byte(e.partition))
-		hash.Write([]byte{storeKeySeparator})
 		hash.Write([]byte(e.path))
 		hash.Write(e.metadata)
 		hash.Write(e.content)
