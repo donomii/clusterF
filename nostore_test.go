@@ -33,7 +33,8 @@ func TestCluster_NoStoreMode(t *testing.T) {
 			NoStore:       false, // Normal storage nodes
 		})
 		nodes[i].Debug = true
-		nodes[i].DiscoveryManager().SetTimings(1*time.Second, 5*time.Second)
+		nodes[i].DiscoveryManager().SetTimings(1*time.Second, 1*time.Second)
+		nodes[i].SetPartitionSyncInterval(1)
 		t.Logf("Created storage node %s", nodeID)
 	}
 
@@ -47,7 +48,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 		NoStore:       true,  // No-store client mode
 	})
 	nodes[2].Debug = true
-	nodes[2].DiscoveryManager().SetTimings(1*time.Second, 5*time.Second)
+	nodes[2].DiscoveryManager().SetTimings(1*time.Second, 1*time.Second)
 	t.Logf("Created no-store client node %s", clientNodeID)
 
 	// Start all nodes
