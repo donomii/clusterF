@@ -417,7 +417,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	var fileStore types.FileStoreLike
 	switch opts.StorageMajor {
 	case "rawfile":
-		fileStore = partitionmanager.NewDiskFileStore(filepath.Join(opts.DataDir, "partitions"))
+		fileStore = partitionmanager.NewDiskFileStore(filepath.Join(opts.DataDir, "rawfiles"))
 	default:
 		fileStore = partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug, opts.StorageMajor, opts.StorageMinor)
 	}
