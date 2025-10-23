@@ -129,7 +129,8 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 		}
 
 		pm.debugf("[FULL_REINDEX] Scanning partition store %s", partitionStore)
-		err := pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(partitionID types.PartitionID, _ string, metadata []byte) error {
+		err := pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(path string, metadata []byte) error {
+			partitionID := types.PartitionIDForPath(path)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -235,7 +236,8 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 // getAllPartitionStores returns all partition store names from the FileStore
 func (pm *PartitionManager) getAllPartitionStores() ([]types.PartitionStore, error) {
 	partitionSet := make(map[types.PartitionStore]struct{})
-	err := pm.deps.FileStore.ScanMetadataFullKeys("", "", func(partitionID types.PartitionID, _ string, _ []byte) error {
+	err := pm.deps.FileStore.ScanMetadataFullKeys("", func(path string, _ []byte) error {
+		partitionID := types.PartitionIDForPath(path)
 		storeID := types.ExtractPartitionStoreID(partitionID)
 		if storeID != "" {
 			partitionSet[storeID] = struct{}{}
@@ -379,7 +381,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	pm.debugf("[PARTITION] Storing file %s in partition %s (%d bytes)", path, partitionID, len(fileContent))
 
 	// Store metadata in filesKV (metadata store)
-	if err := pm.deps.FileStore.Put(partitionID, path, metadataJSON, fileContent); err != nil {
+	if err := pm.deps.FileStore.Put(path, metadataJSON, fileContent); err != nil {
 		//pm.deps.Logger.Panicf("failed to store file: %v", err)
 		return fmt.Errorf("failed to store file: %v", err)
 	}
@@ -404,7 +406,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	//pm.logf("[PARTITION] Marked %v for reindex", partitionID)
 
 	// Debug: verify what we just stored
-	if storedData, err := pm.deps.FileStore.Get(partitionID, path); err == nil && storedData.Exists {
+	if storedData, err := pm.deps.FileStore.Get(path); err == nil && storedData.Exists {
 		var parsedMeta types.FileMetadata
 		if json.Unmarshal(storedData.Metadata, &parsedMeta) == nil {
 			if parsedMeta.Checksum == "" {
@@ -497,7 +499,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	partitionID := HashToPartition(path)
 
 	// Get metadata and content atomically
-	fileData, err := pm.deps.FileStore.Get(partitionID, path)
+	fileData, err := pm.deps.FileStore.Get(path)
 	if err != nil {
 		if fileData != nil && !fileData.Exists {
 			pm.debugf("[PARTITION] File %s not found locally (partition %s): %v", path, partitionID, err)
@@ -642,9 +644,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 		return types.FileMetadata{}, fmt.Errorf("[PARTITION] No-store mode: getting metadata %s from peers", path)
 	}
 
-	partitionID := HashToPartition(path)
-
-	metadata, err := pm.deps.FileStore.GetMetadata(partitionID, path)
+	metadata, err := pm.deps.FileStore.GetMetadata(path)
 	if err != nil {
 		// It's normal for a file not to be found locally
 		pm.debugf("[PARTITION] Metadata %s not found locally: %v", path, err)
@@ -745,7 +745,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 	partitionID := HashToPartition(path)
 
 	// Get existing metadata
-	existingMetadata, _ := pm.deps.FileStore.GetMetadata(partitionID, path)
+	existingMetadata, _ := pm.deps.FileStore.GetMetadata(path)
 	var metadata types.FileMetadata
 	if existingMetadata != nil {
 		// Parse existing metadata
@@ -763,7 +763,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 
 	// Store tombstone metadata and delete content
 	tombstoneJSON, _ := json.Marshal(metadata)
-	if err := pm.deps.FileStore.PutMetadata(partitionID, path, tombstoneJSON); err != nil {
+	if err := pm.deps.FileStore.PutMetadata(path, tombstoneJSON); err != nil {
 		return err
 	}
 
@@ -806,7 +806,8 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
 
 	// Use FileStore to scan files
-	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(partitionID types.PartitionID, _ string, metadata []byte) error {
+	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(path string, metadata []byte) error {
+		partitionID := types.PartitionIDForPath(path)
 		if ctx.Err() != nil {
 			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))
 		}
@@ -1098,7 +1099,7 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 	missingChecksums := 0
 	totalFiles := 0
 
-	pm.deps.FileStore.Scan("", "", func(partition types.PartitionID, filePath string, metadata_bytes, content_bytes []byte) error {
+	pm.deps.FileStore.Scan("", func(filePath string, metadata_bytes, content_bytes []byte) error {
 		totalFiles++
 
 		// Parse metadata
@@ -1133,7 +1134,7 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 		}
 
 		if err := pm.verifyFileChecksum(content, checksum, path, pm.deps.NodeID); err != nil {
-			pm.logf("[INTEGRITY] Corruption detected in %s (partition %s): %v", path, partition, err)
+			pm.logf("[INTEGRITY] Corruption detected in %s (partition %s): %v", path, types.PartitionIDForPath(path), err)
 			corruptedFiles = append(corruptedFiles, path)
 			return nil
 		}
@@ -1154,11 +1155,10 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 
 // PartitionSyncEntry represents a single file entry for partition sync
 type PartitionSyncEntry struct {
-	Partition types.PartitionID `json:"partition"`
-	Path      string            `json:"path"`
-	Metadata  []byte            `json:"metadata"`
-	Content   []byte            `json:"content"`
-	Checksum  string            `json:"checksum"`
+	Path     string `json:"path"`
+	Metadata []byte `json:"metadata"`
+	Content  []byte `json:"content"`
+	Checksum string `json:"checksum"`
 }
 
 // PartitionSnapshot represents a consistent point-in-time view of a partition
@@ -1180,12 +1180,49 @@ func (pm *PartitionManager) calculateEntryChecksum(metadata, content []byte) str
 
 // calculatePartitionChecksum computes a checksum for all files in a partition
 func (pm *PartitionManager) calculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) string {
-	checksum, err := pm.deps.FileStore.CalculatePartitionChecksum(ctx, partitionID, "")
-	if err != nil {
+	entries := []struct {
+		path     string
+		metadata []byte
+		content  []byte
+	}{}
+
+	if err := pm.deps.FileStore.Scan("", func(path string, metadata, content []byte) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if types.PartitionIDForPath(path) != partitionID {
+			return nil
+		}
+		var parsed types.FileMetadata
+		if err := json.Unmarshal(metadata, &parsed); err == nil && !parsed.Deleted {
+			metaCopy := append([]byte(nil), metadata...)
+			contentCopy := append([]byte(nil), content...)
+			entries = append(entries, struct {
+				path     string
+				metadata []byte
+				content  []byte
+			}{path: path, metadata: metaCopy, content: contentCopy})
+		}
+		return nil
+	}); err != nil {
 		pm.debugf("[PARTITION] Failed to calculate checksum for %s: %v", partitionID, err)
 		return ""
 	}
-	return checksum
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].path < entries[j].path
+	})
+
+	hash := sha256.New()
+	for _, e := range entries {
+		hash.Write([]byte(types.PartitionIDForPath(e.path)))
+		hash.Write([]byte{0})
+		hash.Write([]byte(e.path))
+		hash.Write(e.metadata)
+		hash.Write(e.content)
+	}
+
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // getPartitionSyncInterval returns the partition sync interval from CRDT, or default
@@ -1444,7 +1481,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 // ScanAllFiles scans all local partition stores and calls fn for each file
 func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types.FileMetadata) error) error {
 	start := time.Now()
-	res := pm.deps.FileStore.ScanMetadata("", "", func(_ types.PartitionID, filePath string, metadataBytes []byte) error {
+	res := pm.deps.FileStore.ScanMetadata("", func(filePath string, metadataBytes []byte) error {
 
 		// Parse metadata
 		var metadata types.FileMetadata
@@ -1481,11 +1518,12 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 		return
 	}
 
-	pm.deps.FileStore.ScanMetadataFullKeys("", "", func(partitionID types.PartitionID, _ string, _ []byte) error {
+	pm.deps.FileStore.ScanMetadataFullKeys("", func(path string, _ []byte) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
+		partitionID := types.PartitionIDForPath(path)
 		if partitionID != "" {
 			pm.MarkForReindex(partitionID)
 		}

@@ -73,12 +73,9 @@ func (fs *DiskFileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
 	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
 }
 
-// Get loads both metadata and content for a partition/path pair.
-func (fs *DiskFileStore) Get(partition types.PartitionID, path string) (*types.FileData, error) {
-	if err := ensurePartitionMatchesPath(partition, path); err != nil {
-		return nil, err
-	}
-
+// Get loads both metadata and content for a path.
+func (fs *DiskFileStore) Get(path string) (*types.FileData, error) {
+	partition := types.PartitionIDForPath(path)
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
 		return nil, err
@@ -113,12 +110,8 @@ func (fs *DiskFileStore) Get(partition types.PartitionID, path string) (*types.F
 	}, nil
 }
 
-// GetMetadata loads only metadata for a partition/path pair.
-func (fs *DiskFileStore) GetMetadata(partition types.PartitionID, path string) ([]byte, error) {
-	if err := ensurePartitionMatchesPath(partition, path); err != nil {
-		return nil, err
-	}
-
+// GetMetadata loads only metadata for a path.
+func (fs *DiskFileStore) GetMetadata(path string) ([]byte, error) {
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
 		return nil, err
@@ -133,12 +126,8 @@ func (fs *DiskFileStore) GetMetadata(partition types.PartitionID, path string) (
 	return fs.xorEncrypt(data), nil
 }
 
-// GetContent loads only content for a partition/path pair.
-func (fs *DiskFileStore) GetContent(partition types.PartitionID, path string) ([]byte, error) {
-	if err := ensurePartitionMatchesPath(partition, path); err != nil {
-		return nil, err
-	}
-
+// GetContent loads only content for a path.
+func (fs *DiskFileStore) GetContent(path string) ([]byte, error) {
 	contentPath, err := fs.contentPath(path)
 	if err != nil {
 		return nil, err
@@ -154,11 +143,7 @@ func (fs *DiskFileStore) GetContent(partition types.PartitionID, path string) ([
 }
 
 // Put stores both metadata and content.
-func (fs *DiskFileStore) Put(partition types.PartitionID, path string, metadata, content []byte) error {
-	if err := ensurePartitionMatchesPath(partition, path); err != nil {
-		return err
-	}
-
+func (fs *DiskFileStore) Put(path string, metadata, content []byte) error {
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
 		return err
@@ -199,11 +184,7 @@ func (fs *DiskFileStore) Put(partition types.PartitionID, path string, metadata,
 }
 
 // PutMetadata stores metadata only.
-func (fs *DiskFileStore) PutMetadata(partition types.PartitionID, path string, metadata []byte) error {
-	if err := ensurePartitionMatchesPath(partition, path); err != nil {
-		return err
-	}
-
+func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
 		return err
@@ -227,12 +208,8 @@ func (fs *DiskFileStore) PutMetadata(partition types.PartitionID, path string, m
 	return nil
 }
 
-// Delete removes metadata and content for a partition/path pair.
-func (fs *DiskFileStore) Delete(partition types.PartitionID, path string) error {
-	if err := ensurePartitionMatchesPath(partition, path); err != nil {
-		return err
-	}
-
+// Delete removes metadata and content for a path.
+func (fs *DiskFileStore) Delete(path string) error {
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
 		return err
@@ -252,16 +229,11 @@ func (fs *DiskFileStore) Delete(partition types.PartitionID, path string) error 
 }
 
 // Scan iterates all entries matching the provided filters and provides metadata and content.
-func (fs *DiskFileStore) Scan(partition types.PartitionID, pathPrefix string, fn func(partition types.PartitionID, path string, metadata, content []byte) error) error {
+func (fs *DiskFileStore) Scan(pathPrefix string, fn func(path string, metadata, content []byte) error) error {
 	checkForRecursiveScan()
 
 	return fs.walkMetadataFiles(func(path, metaPath string) error {
 		if pathPrefix != "" && !strings.HasPrefix(path, pathPrefix) {
-			return nil
-		}
-
-		part := HashToPartition(path)
-		if partition != "" && part != partition {
 			return nil
 		}
 
@@ -284,21 +256,16 @@ func (fs *DiskFileStore) Scan(partition types.PartitionID, pathPrefix string, fn
 		}
 
 		metadata, content = fs.decrypt(metadata, content)
-		return fn(part, path, metadata, content)
+		return fn(path, metadata, content)
 	})
 }
 
-// ScanMetadata iterates metadata entries and passes the partition/path to fn.
-func (fs *DiskFileStore) ScanMetadata(partition types.PartitionID, pathPrefix string, fn func(partition types.PartitionID, path string, metadata []byte) error) error {
+// ScanMetadata iterates metadata entries and passes the path to fn.
+func (fs *DiskFileStore) ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error {
 	checkForRecursiveScan()
 
 	return fs.walkMetadataFiles(func(path, metaPath string) error {
 		if pathPrefix != "" && !strings.HasPrefix(path, pathPrefix) {
-			return nil
-		}
-
-		part := HashToPartition(path)
-		if partition != "" && part != partition {
 			return nil
 		}
 
@@ -310,17 +277,17 @@ func (fs *DiskFileStore) ScanMetadata(partition types.PartitionID, pathPrefix st
 			return err
 		}
 
-		return fn(part, path, fs.xorEncrypt(metadata))
+		return fn(path, fs.xorEncrypt(metadata))
 	})
 }
 
-// ScanMetadataFullKeys iterates metadata entries and passes partition/path to fn.
-func (fs *DiskFileStore) ScanMetadataFullKeys(partition types.PartitionID, pathPrefix string, fn func(partition types.PartitionID, path string, metadata []byte) error) error {
-	return fs.ScanMetadata(partition, pathPrefix, fn)
+// ScanMetadataFullKeys iterates metadata entries and passes the path to fn.
+func (fs *DiskFileStore) ScanMetadataFullKeys(pathPrefix string, fn func(path string, metadata []byte) error) error {
+	return fs.ScanMetadata(pathPrefix, fn)
 }
 
 // ScanPartitionMetaData iterates metadata for a specific partition store.
-func (fs *DiskFileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, fn func(partition types.PartitionID, path string, metadata []byte) error) error {
+func (fs *DiskFileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, fn func(path string, metadata []byte) error) error {
 	return fs.walkMetadataFiles(func(path, metaPath string) error {
 		partitionID := HashToPartition(path)
 		if types.ExtractPartitionStoreID(partitionID) != partitionStore {
@@ -335,18 +302,12 @@ func (fs *DiskFileStore) ScanPartitionMetaData(partitionStore types.PartitionSto
 			return err
 		}
 
-		return fn(partitionID, path, fs.xorEncrypt(metadata))
+		return fn(path, fs.xorEncrypt(metadata))
 	})
 }
 
 // getAllPartitionStores returns all known partition store IDs.
-func (fs *DiskFileStore) getAllPartitionStores(partition types.PartitionID) ([]types.PartitionStore, error) {
-	if partition != "" {
-		if store := types.ExtractPartitionStoreID(partition); store != "" {
-			return []types.PartitionStore{store}, nil
-		}
-	}
-
+func (fs *DiskFileStore) getAllPartitionStores() ([]types.PartitionStore, error) {
 	partitionSet := make(map[types.PartitionStore]struct{})
 	err := fs.walkMetadataFiles(func(path, _ string) error {
 		partitionID := HashToPartition(path)
@@ -366,7 +327,7 @@ func (fs *DiskFileStore) getAllPartitionStores(partition types.PartitionID) ([]t
 }
 
 // CalculatePartitionChecksum reproduces the checksum calculation used by the existing store.
-func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, partition types.PartitionID, pathPrefix string) (string, error) {
+func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPrefix string) (string, error) {
 	type entry struct {
 		partition types.PartitionID
 		path      string
@@ -376,7 +337,7 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, partiti
 
 	var entries []entry
 
-	err := fs.Scan(partition, pathPrefix, func(part types.PartitionID, path string, metadata, content []byte) error {
+	err := fs.Scan(pathPrefix, func(path string, metadata, content []byte) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -387,7 +348,7 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, partiti
 				metaCopy := append([]byte(nil), metadata...)
 				contentCopy := append([]byte(nil), content...)
 				entries = append(entries, entry{
-					partition: part,
+					partition: types.PartitionIDForPath(path),
 					path:      path,
 					metadata:  metaCopy,
 					content:   contentCopy,
@@ -501,20 +462,6 @@ func relativePathFromCluster(filePath string) (string, error) {
 	}
 
 	return filepath.FromSlash(strings.Join(builder, "/")), nil
-}
-
-func ensurePartitionMatchesPath(partition types.PartitionID, path string) error {
-	if partition == "" {
-		return fmt.Errorf("empty partition id for path %s", path)
-	}
-	if path == "" {
-		return fmt.Errorf("empty path for partition %s", partition)
-	}
-	expected := HashToPartition(path)
-	if expected != partition {
-		return fmt.Errorf("partition mismatch for path %s: expected %s, got %s", path, expected, partition)
-	}
-	return nil
 }
 
 func ensureParentDir(path string) error {

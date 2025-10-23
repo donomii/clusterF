@@ -128,9 +128,9 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 			break
 		}
 
-		ok, err := pm.applyPartitionEntry(entry, sourceNode, partitionID)
+		ok, err := pm.applyPartitionEntry(entry, sourceNode)
 		if err != nil {
-			pm.logf("[PARTITION] Failed to apply streamed entry %s:%s from %s: %v", entry.Partition, entry.Path, sourceNode, err)
+			pm.logf("[PARTITION] Failed to apply streamed entry %s (partition %s) from %s: %v", entry.Path, types.PartitionIDForPath(entry.Path), sourceNode, err)
 			continue
 		}
 		if ok {
@@ -260,9 +260,9 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 			break
 		}
 
-		applied, err := pm.applyPartitionEntry(entry, peerID, partitionID)
+		applied, err := pm.applyPartitionEntry(entry, peerID)
 		if err != nil {
-			pm.logf("[PARTITION] Failed to apply sync entry '%s:%s' from %s: %v", entry.Partition, entry.Path, peerID, err)
+			pm.logf("[PARTITION] Failed to apply sync entry '%s' (partition %s) from %s: %v", entry.Path, types.PartitionIDForPath(entry.Path), peerID, err)
 			continue
 		}
 		if applied {
@@ -276,26 +276,23 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 	return syncCount, nil
 }
 
-func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID types.NodeID, partitionID types.PartitionID) (bool, error) {
+func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID types.NodeID) (bool, error) {
 	expectedChecksum := pm.calculateEntryChecksum(entry.Metadata, entry.Content)
 	if entry.Checksum != expectedChecksum {
-		return false, fmt.Errorf("checksum mismatch for %s:%s from %s: expected %s, got %s", entry.Partition, entry.Path, peerID, expectedChecksum, entry.Checksum)
+		return false, fmt.Errorf("checksum mismatch for %s from %s: expected %s, got %s", entry.Path, peerID, expectedChecksum, entry.Checksum)
 	}
 
 	if !pm.shouldUpdateEntry(entry) {
 		return false, nil
 	}
 
-	if entry.Partition == "" {
-		entry.Partition = partitionID
-	}
-	if err := pm.deps.FileStore.Put(entry.Partition, entry.Path, entry.Metadata, entry.Content); err != nil {
-		return false, fmt.Errorf("failed to store entry %s:%s: %w", entry.Partition, entry.Path, err)
+	if err := pm.deps.FileStore.Put(entry.Path, entry.Metadata, entry.Content); err != nil {
+		return false, fmt.Errorf("failed to store entry %s: %w", entry.Path, err)
 	}
 
 	var metadata types.FileMetadata
 	if err := json.Unmarshal(entry.Metadata, &metadata); err != nil {
-		return true, pm.errorf(entry.Metadata, fmt.Sprintf("corrupt metadata for entry %s:%s: %v", entry.Partition, entry.Path, err))
+		return true, pm.errorf(entry.Metadata, fmt.Sprintf("corrupt metadata for entry %s: %v", entry.Path, err))
 	}
 	if metadata.Path == "" {
 		metadata.Path = entry.Path
@@ -340,8 +337,8 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 
 	pm.debugf("[PARTITION] Indexer unavailable, falling back to metadata scan for %s", partitionID)
 	paths := []string{}
-	err := pm.deps.FileStore.ScanMetadata(partitionID, "", func(part types.PartitionID, path string, _ []byte) error {
-		if part != partitionID {
+	err := pm.deps.FileStore.ScanMetadata("", func(path string, _ []byte) error {
+		if types.PartitionIDForPath(path) != partitionID {
 			return nil
 		}
 		paths = append(paths, path)
@@ -355,27 +352,26 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 }
 
 func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, path string) (PartitionSyncEntry, error) {
-	data, err := pm.deps.FileStore.Get(partitionID, path)
+	data, err := pm.deps.FileStore.Get(path)
 	if err != nil {
 		return PartitionSyncEntry{}, err
 	}
 	if data == nil || !data.Exists {
-		return PartitionSyncEntry{}, fmt.Errorf("entry %s:%s missing", partitionID, path)
+		return PartitionSyncEntry{}, fmt.Errorf("entry %s missing", path)
 	}
 	metadata := data.Metadata
 	if len(metadata) == 0 {
-		return PartitionSyncEntry{}, fmt.Errorf("entry %s:%s has no metadata", partitionID, path)
+		return PartitionSyncEntry{}, fmt.Errorf("entry %s has no metadata", path)
 	}
 	content := data.Content
 	if content == nil {
 		content = []byte{}
 	}
 	return PartitionSyncEntry{
-		Partition: partitionID,
-		Path:      path,
-		Metadata:  metadata,
-		Content:   content,
-		Checksum:  pm.calculateEntryChecksum(metadata, content),
+		Path:     path,
+		Metadata: metadata,
+		Content:  content,
+		Checksum: pm.calculateEntryChecksum(metadata, content),
 	}, nil
 }
 
@@ -498,11 +494,7 @@ func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peer
 // shouldUpdateEntry determines if we should update our local copy with the remote entry
 func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bool {
 	// Get our current version
-	partition := remoteEntry.Partition
-	if partition == "" && remoteEntry.Path != "" {
-		partition = HashToPartition(remoteEntry.Path)
-	}
-	localData, err := pm.deps.FileStore.Get(partition, remoteEntry.Path)
+	localData, err := pm.deps.FileStore.Get(remoteEntry.Path)
 	if err != nil || !localData.Exists {
 		// We don't have this entry, accept it
 		return true

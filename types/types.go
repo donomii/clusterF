@@ -62,17 +62,17 @@ type PartitionManagerLike interface {
 type FileStoreLike interface {
 	Close()
 	SetEncryptionKey(key []byte)
-	Get(partition PartitionID, path string) (*FileData, error)
-	GetMetadata(partition PartitionID, path string) ([]byte, error)
-	GetContent(partition PartitionID, path string) ([]byte, error)
-	Put(partition PartitionID, path string, metadata, content []byte) error
-	PutMetadata(partition PartitionID, path string, metadata []byte) error
-	Delete(partition PartitionID, path string) error
-	Scan(partition PartitionID, pathPrefix string, fn func(partition PartitionID, path string, metadata, content []byte) error) error
-	ScanMetadata(partition PartitionID, pathPrefix string, fn func(partition PartitionID, path string, metadata []byte) error) error
-	ScanMetadataFullKeys(partition PartitionID, pathPrefix string, fn func(partition PartitionID, path string, metadata []byte) error) error
-	ScanPartitionMetaData(partitionStore PartitionStore, fn func(partition PartitionID, path string, metadata []byte) error) error
-	CalculatePartitionChecksum(ctx context.Context, partition PartitionID, pathPrefix string) (string, error)
+	Get(path string) (*FileData, error)
+	GetMetadata(path string) ([]byte, error)
+	GetContent(path string) ([]byte, error)
+	Put(path string, metadata, content []byte) error
+	PutMetadata(path string, metadata []byte) error
+	Delete(path string) error
+	Scan(pathPrefix string, fn func(path string, metadata, content []byte) error) error
+	ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error
+	ScanMetadataFullKeys(pathPrefix string, fn func(path string, metadata []byte) error) error
+	ScanPartitionMetaData(partitionStore PartitionStore, fn func(path string, metadata []byte) error) error
+	CalculatePartitionChecksum(ctx context.Context, pathPrefix string) (string, error)
 }
 
 type PartitionInfo struct {

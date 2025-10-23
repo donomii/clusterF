@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/testenv"
-	"github.com/donomii/clusterF/types"
 )
 
 func TestCluster_NoStoreMode(t *testing.T) {
@@ -114,8 +113,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	// Test 3: Check that no-store client does NOT have file locally
 	t.Logf("📋 Test 3: Verifying no-store client has no local storage")
 	// Check actual local storage via partition manager
-	clientPartition := types.PartitionIDForPath(testFileName)
-	_, err = nodes[2].partitionManager.FileStore().GetMetadata(clientPartition, testFileName)
+	_, err = nodes[2].partitionManager.FileStore().GetMetadata(testFileName)
 	clientHasFile := (err == nil)
 
 	t.Logf("No-store client has file in local KV: %v", clientHasFile)
@@ -186,8 +184,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 	// Test 6: Verify file uploaded via no-store client is NOT stored locally on client
 	t.Logf("📋 Test 6: Verifying file uploaded via no-store client is not stored locally")
 	// Check actual local storage via partition manager
-	clientUploadedPartition := types.PartitionIDForPath(clientStoreFileName)
-	_, err = nodes[2].partitionManager.FileStore().GetMetadata(clientUploadedPartition, clientStoreFileName)
+	_, err = nodes[2].partitionManager.FileStore().GetMetadata(clientStoreFileName)
 	clientHasUploadedFile := (err == nil)
 
 	if clientHasUploadedFile {
