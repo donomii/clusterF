@@ -11,6 +11,8 @@ github.com/donomii/ensemblekv v0.0.0-20251018202937-37d3d95ea284 h1:SFTxOYymInl4
 github.com/donomii/ensemblekv v0.0.0-20251018202937-37d3d95ea284/go.mod h1:tttuJjvoNMGxxCrC13JmlBO34sbJZ0V+eX3Lv0o+bpc=
 github.com/donomii/ensemblekv v0.0.0-20251019174700-e43bb5eb6ccf h1:hMnKx3FoFt4fJjvZOE4VNJQTj5qQPT355keoAH/eRpI=
 github.com/donomii/ensemblekv v0.0.0-20251019174700-e43bb5eb6ccf/go.mod h1:tttuJjvoNMGxxCrC13JmlBO34sbJZ0V+eX3Lv0o+bpc=
+github.com/donomii/ensemblekv v0.0.0-20251024142805-4b44c23aa4bd h1:pCyPjZH0plvc7nauYGKsrENseoNxU6Atz+iPJQ3RDF0=
+github.com/donomii/ensemblekv v0.0.0-20251024142805-4b44c23aa4bd/go.mod h1:tttuJjvoNMGxxCrC13JmlBO34sbJZ0V+eX3Lv0o+bpc=
 github.com/donomii/frogpond v0.0.0-20251018170253-f2571ed50b51 h1:kdGluKUDujk1eVr1QCdNF0OpvZLoJ60nOpb5BvJZH30=
 github.com/donomii/frogpond v0.0.0-20251018170253-f2571ed50b51/go.mod h1:oBeVu0d/IKMY2PemElAIg1HxilcjKlooW1bJo92nfAs=
 github.com/donomii/go-webdav v0.0.0-20240304173232-8e8f80405603 h1:HRiyOGzVcZXTPYoVvgQXvGkihQm6EkoySvn1kwDjm9w=
