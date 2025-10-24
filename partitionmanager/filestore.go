@@ -66,18 +66,20 @@ func (fs *FileStore) Close() {
 	fs.handleMutex.Lock()
 	defer fs.handleMutex.Unlock()
 
-	fs.debugf("Closing all cached metadata handles")
+	fs.debugf("Flushing and closing all cached metadata handles")
 	fs.metadataHandles.Range(func(key, value interface{}) bool {
 		if kv, ok := value.(ensemblekv.KvLike); ok {
+			kv.Flush()
 			kv.Close()
 		}
 		fs.metadataHandles.Delete(key)
 		return true
 	})
 
-	fs.debugf("Closing all cached content handles")
+	fs.debugf("Flushing and closing all cached content handles")
 	fs.contentHandles.Range(func(key, value interface{}) bool {
 		if kv, ok := value.(ensemblekv.KvLike); ok {
+			kv.Flush()
 			kv.Close()
 		}
 		fs.contentHandles.Delete(key)
