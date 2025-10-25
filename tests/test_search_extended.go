@@ -194,7 +194,7 @@ func setupSearchTest(t *testing.T) (*filesystem.ClusterFileSystem, string) {
 	if err := os.MkdirAll(fileStorePath, 0o755); err != nil {
 		t.Fatalf("Failed to create filestore directory: %v", err)
 	}
-	fileStore := partitionmanager.NewFileStore(fileStorePath, false, "extentmmap", "")
+	fileStore := partitionmanager.NewFileStore(fileStorePath, false, "mmapsingle", "")
 
 	fp := frogpond.NewNode()
 

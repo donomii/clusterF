@@ -298,7 +298,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 	// Set default storage options if not specified
 	if opts.StorageMajor == "" {
-		opts.StorageMajor = "extentmmap"
+		opts.StorageMajor = "mmapsingle"
 	}
 	if opts.StorageMinor == "" {
 		opts.StorageMinor = ""

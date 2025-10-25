@@ -50,7 +50,7 @@ func checkForRecursiveScan() {
 // NewFileStore creates a new FileStore with per-partition storage
 func NewFileStore(baseDir string, debug bool, storageMajor, storageMinor string) *FileStore {
 	if storageMajor == "" {
-		storageMajor = "extentmmap"
+		storageMajor = "mmapsingle"
 	}
 	return &FileStore{
 		baseDir:      baseDir,
