@@ -137,18 +137,20 @@
     </div>
 
     <div class="controls">
-        <button class="btn" onclick="addTestData()">📝 Add Test Data</button>
         <button class="btn" onclick="refreshStats()">🔄 Refresh</button>
-        <button class="btn" onclick="openVisualizer()">📊 Open Visualizer</button>
         <input type="number" id="rfInput" min="1" max="20"
             style="margin: 0 10px; padding: 8px; border-radius: 4px; border: 1px solid #3b82f6; background: #1a1a2e; color: white; width: 60px;"
             placeholder="RF">
         <button class="btn" onclick="setReplicationFactor()">🔧 Set RF</button>
         <button class="btn" id="pauseBtn" onclick="togglePartitionSyncPause()">⏸️ Pause Sync</button>
         <input type="number" id="partitionSyncIntervalInput" min="1"
-            style="margin: 0 10px; padding: 8px; border-radius: 4px; border: 1px solid #3b82f6; background: #1a1a2e; color: white; width: 80px;"
+            style="margin: 0 10px; padding: 8px; border-radius: 4px; border: 1px solid #3b82f6; background: #1a1a2e; color: white; width: 60px;"
             placeholder="Sync s">
         <button class="btn" onclick="setPartitionSyncInterval()">⏱️ Set Sync Interval</button>
+        <label style="margin-left: 20px; color: white; cursor: pointer;">
+            <input type="checkbox" id="sleepModeCheckbox" onchange="toggleSleepMode()" style="margin-right: 5px; cursor: pointer;">
+            💤 Sleep Mode
+        </label>
     </div>
 
     <div class="info">
@@ -161,6 +163,7 @@
         <div>Disk Free: <span id="node_disk_free">-</span></div>
         <div>Partition Sync: <span id="sync_status" style="font-weight: bold;">-</span></div>
         <div>Sync Interval: <span id="partition_sync_interval">-</span> seconds</div>
+        <div>Sleep Mode: <span id="sleep_mode_status" style="font-weight: bold;">-</span></div>
         
         <div style="margin-top: 10px;">
             <div>Data Directory:</div>

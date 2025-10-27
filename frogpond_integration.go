@@ -167,6 +167,30 @@ func (c *Cluster) setPartitionSyncPaused(paused bool) {
 	c.Logger().Printf("[PARTITION] Set partition sync paused to %v", paused)
 }
 
+// GetSleepMode returns whether sleep mode is enabled
+func (c *Cluster) GetSleepMode() bool {
+	data := c.frogpond.GetDataPoint("cluster/sleep_mode")
+	if data.Deleted || len(data.Value) == 0 {
+		return false
+	}
+
+	var sleepMode bool
+	if err := json.Unmarshal(data.Value, &sleepMode); err != nil {
+		return false
+	}
+
+	return sleepMode
+}
+
+// setSleepMode updates the cluster sleep mode state
+func (c *Cluster) setSleepMode(sleepMode bool) {
+	sleepModeJSON, _ := json.Marshal(sleepMode)
+	updates := c.frogpond.SetDataPoint("cluster/sleep_mode", sleepModeJSON)
+	c.sendUpdatesToPeers(updates)
+
+	c.Logger().Printf("[SLEEP_MODE] Set sleep mode to %v", sleepMode)
+}
+
 // setReplicationFactor updates the cluster replication factor
 func (c *Cluster) setReplicationFactor(rf int) {
 	if rf < 1 {

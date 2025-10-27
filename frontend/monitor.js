@@ -56,6 +56,16 @@ async function refreshStats() {
             isPaused = pauseData.paused || false;
         }
         
+        // Get sleep mode state
+        const sleepResponse = await fetch('/api/crdt/get?key=cluster/sleep_mode');
+        let isSleepMode = false;
+        if (sleepResponse.ok) {
+            const sleepData = await sleepResponse.json();
+            if (sleepData.value_json !== undefined && sleepData.value_json !== null) {
+                isSleepMode = sleepData.value_json;
+            }
+        }
+        
         debugDiv.textContent = 'Fetching cluster stats...';
         const clusterResponse = await fetch('/api/cluster-stats');
         let clusterStats = {};
@@ -106,7 +116,7 @@ async function refreshStats() {
                 intervalInput.value = partitionSyncInterval;
             }
         } else {
-            document.getElementById('partition_sync_interval').textContent = 'ERR';
+            document.getElementById('partition_sync_interval').textContent = 'WAIT';
         }
         
         document.getElementById('tombstones').textContent = 0;
@@ -180,6 +190,9 @@ async function refreshStats() {
         // Update sync status display
         updateSyncStatusDisplay(isPaused);
         
+        // Update sleep mode display
+        updateSleepModeDisplay(isSleepMode);
+        
         // Update all nodes information
         updateAllNodesInfo(clusterStats);
         
@@ -189,24 +202,24 @@ async function refreshStats() {
         const debugDiv = document.getElementById('debug-info');
         debugDiv.textContent = 'API Error: ' + error.message;
         
-        document.getElementById('peers').textContent = 'ERR';
-        document.getElementById('current_file_name').textContent = 'ERR';
-        document.getElementById('current_file_path').textContent = 'ERR';
-        document.getElementById('replication_factor').textContent = 'ERR';
-        document.getElementById('tombstones').textContent = 'ERR';
-        document.getElementById('under_replicated').textContent = 'ERR';
-        document.getElementById('local_partitions').textContent = 'ERR';
-        document.getElementById('total_files').textContent = 'ERR';
-        document.getElementById('pending_sync').textContent = 'ERR';
-        document.getElementById('cluster_bytes_stored').textContent = 'ERR';
-        document.getElementById('cluster_disk_usage').textContent = 'ERR';
-        document.getElementById('cluster_disk_free').textContent = 'ERR';
-        document.getElementById('node_bytes_stored').textContent = 'ERR';
-        document.getElementById('node_disk_usage').textContent = 'ERR';
-        document.getElementById('node_disk_free').textContent = 'ERR';
+        document.getElementById('peers').textContent = 'WAIT';
+        document.getElementById('current_file_name').textContent = 'WAIT';
+        document.getElementById('current_file_path').textContent = 'WAIT';
+        document.getElementById('replication_factor').textContent = 'WAIT';
+        document.getElementById('tombstones').textContent = 'WAIT';
+        document.getElementById('under_replicated').textContent = 'WAIT';
+        document.getElementById('local_partitions').textContent = 'WAIT';
+        document.getElementById('total_files').textContent = 'WAIT';
+        document.getElementById('pending_sync').textContent = 'WAIT';
+        document.getElementById('cluster_bytes_stored').textContent = 'WAIT';
+        document.getElementById('cluster_disk_usage').textContent = 'WAIT';
+        document.getElementById('cluster_disk_free').textContent = 'WAIT';
+        document.getElementById('node_bytes_stored').textContent = 'WAIT';
+        document.getElementById('node_disk_usage').textContent = 'WAIT';
+        document.getElementById('node_disk_free').textContent = 'WAIT';
         
         // Update all nodes info with error
-        document.getElementById('all-nodes-info').innerHTML = '<div style="color: #ef4444;">Error loading node information</div>';
+        document.getElementById('all-nodes-info').innerHTML = '<div style="color: #94a3b8;">Waiting for cluster data...</div>';
     }
 }
 
@@ -305,6 +318,59 @@ function updateSyncStatusDisplay(isPaused) {
         statusSpan.textContent = 'RUNNING';
         statusSpan.style.color = '#22c55e';
         pauseBtn.textContent = '⏸️ Pause Sync';
+    }
+}
+
+function updateSleepModeDisplay(isSleepMode) {
+    const statusSpan = document.getElementById('sleep_mode_status');
+    const checkbox = document.getElementById('sleepModeCheckbox');
+    
+    if (isSleepMode) {
+        statusSpan.textContent = 'ENABLED';
+        statusSpan.style.color = '#f59e0b';
+        checkbox.checked = true;
+    } else {
+        statusSpan.textContent = 'DISABLED';
+        statusSpan.style.color = '#22c55e';
+        checkbox.checked = false;
+    }
+}
+
+async function toggleSleepMode() {
+    try {
+        const checkbox = document.getElementById('sleepModeCheckbox');
+        const newSleepMode = checkbox.checked;
+        
+        const response = await fetch('/api/crdt/get?key=cluster/sleep_mode');
+        let currentDataPoint = null;
+        if (response.ok) {
+            currentDataPoint = await response.json();
+        }
+        
+        const putResponse = await fetch('/frogpond/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([{
+                key: 'cluster/sleep_mode',
+                value: btoa(JSON.stringify(newSleepMode)),
+                timestamp: Date.now() * 1000000,
+                deleted: false
+            }])
+        });
+        
+        if (putResponse.ok) {
+            updateSleepModeDisplay(newSleepMode);
+            const action = newSleepMode ? 'enabled' : 'disabled';
+            alert('✅ Sleep mode ' + action);
+        } else {
+            const error = await putResponse.text();
+            alert('❌ Failed to toggle sleep mode: ' + error);
+            checkbox.checked = !newSleepMode;
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+        const checkbox = document.getElementById('sleepModeCheckbox');
+        checkbox.checked = !checkbox.checked;
     }
 }
 

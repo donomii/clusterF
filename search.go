@@ -132,6 +132,12 @@ func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 
 // searchPeer performs a search on a specific peer
 func (c *Cluster) searchPeer(peer *types.PeerInfo, req SearchRequest) []types.SearchResult {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		c.debugf("[PEER_QUERY_TIMING] Query to peer %s took %v", peer.NodeID, duration)
+	}()
+
 	endpointURL, err := urlutil.BuildInternalSearchURL(peer.Address, peer.HTTPPort)
 	if err != nil {
 		c.debugf("Failed to build search URL for peer %s: %v", peer.NodeID, err)

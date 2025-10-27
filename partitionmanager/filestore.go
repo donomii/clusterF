@@ -200,7 +200,7 @@ func (fs *FileStore) Get(path string) (*types.FileData, error) {
 
 	start := time.Now()
 	fs.rLockPartition(storeID)
-	fs.debugf("Get: acquired read lock for partition store %s after %v", storeID, time.Since(start))
+	//fs.debugf("Get: acquired read lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
 		fs.runLockPartition(storeID)
 		fs.debugf("Get: released read lock for partition store %s after %v", storeID, time.Since(start))
@@ -265,7 +265,7 @@ func (fs *FileStore) GetMetadata(path string) ([]byte, error) {
 
 	start := time.Now()
 	fs.rLockPartition(storeID)
-	fs.debugf("GetMetadata: acquired read lock for partition store %s after %v", storeID, time.Since(start))
+	//fs.debugf("GetMetadata: acquired read lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
 		fs.runLockPartition(storeID)
 		fs.debugf("GetMetadata: released read lock for partition store %s after %v", storeID, time.Since(start))
@@ -330,10 +330,10 @@ func (fs *FileStore) Put(path string, metadata, content []byte) error {
 	storeID := types.ExtractPartitionStoreID(partition)
 
 	fs.debugf("Put: acquiring write lock for partition store %s, path %s", storeID, path)
-	start := time.Now()
+	//start := time.Now()
 	fs.lockPartition(storeID)
 
-	fs.debugf("Put: acquired write lock for partition store %s after %v", storeID, time.Since(start))
+	//fs.debugf("Put: acquired write lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
 		fs.unLockPartition(storeID)
 		fs.debugf("Put: released write lock for partition store %s", storeID)
@@ -408,10 +408,10 @@ func (fs *FileStore) Delete(path string) error {
 	storeID := types.ExtractPartitionStoreID(partition)
 
 	fs.debugf("Delete: acquiring write lock for partition store %s, path %s", storeID, path)
-	start := time.Now()
+	//start := time.Now()
 	fs.lockPartition(storeID)
 
-	fs.debugf("Delete: acquired write lock for partition store %s after %v", storeID, time.Since(start))
+	//fs.debugf("Delete: acquired write lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
 		fs.unLockPartition(storeID)
 		fs.debugf("Delete: released write lock for partition store %s", storeID)
@@ -448,7 +448,7 @@ func (fs *FileStore) Scan(pathPrefix string, fn func(path string, metadata, cont
 		fs.debugf("Scan: acquiring read lock for partition store %s", storeID)
 		start := time.Now()
 		fs.rLockPartition(storeID)
-		fs.debugf("Scan: acquired read lock for partition store %s after %v", storeID, time.Since(start))
+		//fs.debugf("Scan: acquired read lock for partition store %s after %v", storeID, time.Since(start))
 
 		metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 		if err != nil {
