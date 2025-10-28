@@ -352,8 +352,9 @@ async function toggleSleepMode() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify([{
                 key: 'cluster/sleep_mode',
-                value: btoa(JSON.stringify(newSleepMode)),
-                timestamp: Date.now() * 1000000,
+                value: JSON.stringify(newSleepMode),
+                name: 'cluster/sleep_mode',
+                updated: new Date().toISOString(),
                 deleted: false
             }])
         });
@@ -371,6 +372,51 @@ async function toggleSleepMode() {
         alert('Error: ' + error.message);
         const checkbox = document.getElementById('sleepModeCheckbox');
         checkbox.checked = !checkbox.checked;
+    }
+}
+
+async function clusterRestart() {
+    console.log('[DEBUG] clusterRestart function called');
+    if (!confirm('⚠️ This will restart ALL nodes in the cluster. Are you sure?')) {
+        console.log('[DEBUG] User cancelled restart');
+        return;
+    }
+    
+    try {
+        const restartTime = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
+        console.log('[DEBUG] Generated restart time:', restartTime);
+        
+        const now = Date.now();
+        const payload = [{
+            key: 'tasks/restart',
+            value: JSON.stringify(restartTime),
+            name: 'tasks/restart',
+            updated: new Date(now).toISOString(),
+            deleted: false
+        }];
+        console.log('[DEBUG] Sending payload:', JSON.stringify(payload, null, 2));
+        
+        const response = await fetch('/frogpond/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        console.log('[DEBUG] Response status:', response.status);
+        console.log('[DEBUG] Response ok:', response.ok);
+        
+        if (response.ok) {
+            const responseText = await response.text();
+            console.log('[DEBUG] Response text:', responseText);
+            alert('✅ Cluster restart initiated. All nodes will restart shortly.');
+        } else {
+            const error = await response.text();
+            console.log('[DEBUG] Error response:', error);
+            alert('❌ Failed to initiate cluster restart: ' + error);
+        }
+    } catch (error) {
+        console.log('[DEBUG] Exception caught:', error);
+        alert('Error: ' + error.message);
     }
 }
 
@@ -485,6 +531,41 @@ async function togglePartitionSyncPause() {
             alert('❌ Failed to toggle partition sync: ' + error);
         }
     } catch (error) {
+        alert('Error: ' + error.message);
+    }
+}
+
+async function debugRestartTask() {
+    console.log('[DEBUG] debugRestartTask called');
+    try {
+        // Check what's in the tasks/restart key
+        const response = await fetch('/api/crdt/get?key=tasks/restart');
+        console.log('[DEBUG] CRDT GET response status:', response.status);
+        
+        if (response.ok) {
+            const data = await response.json();
+            console.log('[DEBUG] CRDT GET response data:', JSON.stringify(data, null, 2));
+            alert('tasks/restart content:\n' + JSON.stringify(data, null, 2));
+        } else {
+            const error = await response.text();
+            console.log('[DEBUG] CRDT GET error:', error);
+            alert('Error getting tasks/restart: ' + error);
+        }
+        
+        // Also check what's in the tasks/ prefix
+        const listResponse = await fetch('/api/crdt/list?prefix=tasks/');
+        console.log('[DEBUG] CRDT LIST response status:', listResponse.status);
+        
+        if (listResponse.ok) {
+            const listData = await listResponse.json();
+            console.log('[DEBUG] CRDT LIST response data:', JSON.stringify(listData, null, 2));
+            alert('tasks/ prefix content:\n' + JSON.stringify(listData, null, 2));
+        } else {
+            const listError = await listResponse.text();
+            console.log('[DEBUG] CRDT LIST error:', listError);
+        }
+    } catch (error) {
+        console.log('[DEBUG] Exception in debugRestartTask:', error);
         alert('Error: ' + error.message);
     }
 }

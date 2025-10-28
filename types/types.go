@@ -217,6 +217,7 @@ type NodeData struct {
 	ClusterDir    string    `json:"cluster_dir"`
 	ImportDir     string    `json:"import_dir"`
 	Debug         bool      `json:"debug"`
+	StartTime     time.Time `json:"start_time"`
 }
 
 type NodeID string

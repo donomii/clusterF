@@ -464,7 +464,7 @@ func (fs *FileStore) Scan(pathPrefix string, fn func(path string, metadata, cont
 		}
 		var entries []entry
 
-		_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
+		_, mapErr := metadataKV.MapPrefixFunc([]byte(pathPrefix), func(k, v []byte) error {
 			_, filePath, err := decodeStoreKey(k)
 			if err != nil {
 				return err
@@ -544,7 +544,7 @@ func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metada
 		}
 		var entries []entry
 
-		_, mapErr := metadataKV.MapFunc(func(k, v []byte) error {
+		_, mapErr := metadataKV.MapPrefixFunc([]byte(pathPrefix), func(k, v []byte) error {
 			_, filePath, err := decodeStoreKey(k)
 			if err != nil {
 				return err

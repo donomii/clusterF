@@ -424,28 +424,41 @@ func (c *Cluster) updateNodeMetadata() {
 
 // handleFrogpondUpdate handles incoming frogpond updates from peers
 func (c *Cluster) handleFrogpondUpdate(w http.ResponseWriter, r *http.Request) {
+	c.Logger().Printf("[DEBUG] handleFrogpondUpdate called, method: %s", r.Method)
 	if r.Method != http.MethodPost {
+		c.Logger().Printf("[DEBUG] Method not allowed: %s", r.Method)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		c.Logger().Printf("[DEBUG] Failed to read request body: %v", err)
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
+	c.Logger().Printf("[DEBUG] Request body: %s", string(body))
 
 	var updates []frogpond.DataPoint
 	if err := json.Unmarshal(body, &updates); err != nil {
+		c.Logger().Printf("[DEBUG] Failed to parse updates: %v", err)
 		http.Error(w, "Failed to parse updates", http.StatusBadRequest)
 		return
+	}
+	c.Logger().Printf("[DEBUG] Parsed %d updates", len(updates))
+
+	// Log each update
+	for i, update := range updates {
+		c.Logger().Printf("[DEBUG] Update %d: key=%s, deleted=%v, value=%s", i, update.Key, update.Deleted, string(update.Value))
 	}
 
 	// Apply the updates to our frogpond and get any resulting updates to propagate
 	resultingUpdates := c.frogpond.AppendDataPoints(updates)
+	c.Logger().Printf("[DEBUG] Applied updates, got %d resulting updates", len(resultingUpdates))
 	c.sendUpdatesToPeers(resultingUpdates)
 
 	w.WriteHeader(http.StatusOK)
+	c.Logger().Printf("[DEBUG] handleFrogpondUpdate completed successfully")
 }
 
 // handleFrogpondFullStore serves our complete frogpond store to requesting peers

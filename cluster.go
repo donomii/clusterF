@@ -136,6 +136,7 @@ type Cluster struct {
 	lastDiskMetrics atomic.Value
 
 	shuttingDown atomic.Bool
+	startTime    time.Time
 }
 
 func (c *Cluster) SetTimings(partitionSyncInterval, partitionReIndexInterval time.Duration) {
@@ -286,6 +287,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Initialized cluster struct\n")
 	c.lastDiskMetrics.Store(diskMetricsSnapshot{})
 	c.markDiskActive()
+	c.startTime = time.Now()
 
 	// Treat DataDir as a base directory; always place data under a per-node subdir
 	{
@@ -741,6 +743,7 @@ func (c *Cluster) Start() {
 	c.threadManager.StartThread("peer-fullstore-sync", c.runPeerFullStoreSync)
 	c.threadManager.StartThread("http-server", c.startHTTPServer)
 	c.threadManager.StartThread("partition-reindex", c.runPartitionReindex)
+	c.threadManager.StartThread("restart-monitor", c.runRestartMonitor)
 	c.debugf("Started all threads")
 }
 
@@ -1606,4 +1609,42 @@ func (c *Cluster) initialPartitionMetadataUpdate(ctx context.Context) {
 	c.Logger().Printf("[INITIAL_METADATA] Starting initial partition metadata update for all local partitions")
 	c.partitionManager.UpdateAllLocalPartitionsMetadata(ctx)
 	c.Logger().Printf("[INITIAL_METADATA] Completed initial partition metadata update")
+}
+
+// runRestartMonitor monitors tasks/restart in CRDT and restarts if needed
+func (c *Cluster) runRestartMonitor(ctx context.Context) {
+	c.Logger().Printf("[DEBUG] runRestartMonitor started, node start time: %d", c.startTime.Unix())
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			c.Logger().Printf("[DEBUG] runRestartMonitor context cancelled")
+			return
+		case <-ticker.C:
+			c.Logger().Printf("[DEBUG] runRestartMonitor checking tasks/restart")
+			dp := c.frogpond.GetDataPoint("tasks/restart")
+			c.Logger().Printf("[DEBUG] tasks/restart data point: deleted=%v, value_len=%d", dp.Deleted, len(dp.Value))
+			if dp.Deleted || len(dp.Value) == 0 {
+				c.Logger().Printf("[DEBUG] No restart task found, continuing")
+				continue
+			}
+
+			c.Logger().Printf("[DEBUG] Found restart task, value: %s", string(dp.Value))
+			var restartTime int64
+			if err := json.Unmarshal(dp.Value, &restartTime); err != nil {
+				c.Logger().Printf("[DEBUG] Failed to parse restart time: %v", err)
+				continue
+			}
+
+			c.Logger().Printf("[DEBUG] Parsed restart time: %d, node start time: %d", restartTime, c.startTime.Unix())
+			if c.startTime.Unix() < restartTime {
+				c.Logger().Printf("[DEBUG] Restart requested, restarting node (start: %d < restart: %d)", c.startTime.Unix(), restartTime)
+				os.Exit(0)
+			} else {
+				c.Logger().Printf("[DEBUG] Restart time is in the past, ignoring (start: %d >= restart: %d)", c.startTime.Unix(), restartTime)
+			}
+		}
+	}
 }

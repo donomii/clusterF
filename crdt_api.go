@@ -116,7 +116,9 @@ func (c *Cluster) handleCRDTGetAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing required 'key' parameter in CRDT get request", http.StatusBadRequest)
 		return
 	}
+	c.Logger().Printf("[DEBUG] CRDT GET API request for key: %s", key)
 	dp := c.frogpond.GetDataPoint(key)
+	c.Logger().Printf("[DEBUG] CRDT GET API found data point: deleted=%v, value_len=%d, value=%s", dp.Deleted, len(dp.Value), string(dp.Value))
 	val := dp.Value
 	var parsed interface{}
 	_ = json.Unmarshal(val, &parsed)
