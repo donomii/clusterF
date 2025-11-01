@@ -454,11 +454,6 @@ func (c *Cluster) handleFrogpondUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Log each update
-	for i, update := range updates {
-		c.Logger().Printf("[DEBUG] Update %d: key=%s, deleted=%v, value=%s", i, update.Key, update.Deleted, string(update.Value))
-	}
-
 	// Apply the updates to our frogpond and get any resulting updates to propagate
 	resultingUpdates := c.frogpond.AppendDataPoints(updates)
 
