@@ -185,12 +185,27 @@ func (fs *FileStore) closePartitionStores(metadataKV, contentKV ensemblekv.KvLik
 	// Handles are now cached and not closed after each operation
 }
 
-func encodeStoreKey(_ types.PartitionID, path string) []byte {
-	return []byte(path)[:]
+func encodeStoreKey(partitionID types.PartitionID, path string) []byte {
+	storeID := types.ExtractPartitionStoreID(partitionID)
+	key := fmt.Sprintf("partition:%s:file:%s", storeID, path)
+	return []byte(key)
 }
 
 func decodeStoreKey(key []byte) (types.PartitionID, string, error) {
-	return types.PartitionIDForPath(string(key)), string(key), nil
+	keyStr := string(key)
+	
+	// Check for new format: partition:pxxxxx:file:path
+	if strings.HasPrefix(keyStr, "partition:") {
+		parts := strings.SplitN(keyStr, ":", 4)
+		if len(parts) == 4 && parts[0] == "partition" && parts[2] == "file" {
+			path := parts[3]
+			return types.PartitionIDForPath(path), path, nil
+		}
+		return "", "", fmt.Errorf("invalid partition key format: %s", keyStr)
+	}
+	
+	// Fallback to old format for compatibility
+	return types.PartitionIDForPath(keyStr), keyStr, nil
 }
 
 // Get retrieves both metadata and content atomically
@@ -608,8 +623,10 @@ func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, 
 	}
 	//fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
 
-	_, err = metadataKV.MapFunc(func(k, v []byte) error {
-		partition, path, decodeErr := decodeStoreKey(k)
+	// Use prefix search for the specific partition
+	prefix := fmt.Sprintf("partition:%s:file:", partitionStore)
+	_, err = metadataKV.MapPrefixFunc([]byte(prefix), func(k, v []byte) error {
+		_, path, decodeErr := decodeStoreKey(k)
 		if decodeErr != nil {
 			return decodeErr
 		}
@@ -619,10 +636,6 @@ func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, 
 
 		if len(fs.encryptionKey) > 0 {
 			metaCopy = fs.xorEncrypt(metaCopy)
-		}
-
-		if types.ExtractPartitionStoreID(partition) != partitionStore {
-			return nil
 		}
 
 		return fn(path, metaCopy)

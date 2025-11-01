@@ -202,7 +202,16 @@ func (c *Cluster) setReplicationFactor(rf int) {
 	c.sendUpdatesToPeers(updates)
 
 	c.Logger().Printf("[RF] Set replication factor to %d", rf)
+}
 
+// setClusterRestart sets the cluster restart task with current timestamp
+func (c *Cluster) setClusterRestart() {
+	restartTime := time.Now().Unix() // Unix timestamp in seconds
+	restartJSON, _ := json.Marshal(restartTime)
+	updates := c.frogpond.SetDataPoint("tasks/restart", restartJSON)
+	c.sendUpdatesToPeers(updates)
+
+	c.Logger().Printf("[RESTART] Set cluster restart task with timestamp %d", restartTime)
 }
 
 // GetAllNodes returns all nodes from CRDT

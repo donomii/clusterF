@@ -383,31 +383,19 @@ async function clusterRestart() {
     }
     
     try {
-        const restartTime = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
-        console.log('[DEBUG] Generated restart time:', restartTime);
+        console.log('[DEBUG] Calling /api/cluster-restart endpoint');
         
-        const now = Date.now();
-        const payload = [{
-            key: 'tasks/restart',
-            value: JSON.stringify(restartTime),
-            name: 'tasks/restart',
-            updated: new Date(now).toISOString(),
-            deleted: false
-        }];
-        console.log('[DEBUG] Sending payload:', JSON.stringify(payload, null, 2));
-        
-        const response = await fetch('/frogpond/update', {
+        const response = await fetch('/api/cluster-restart', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            headers: { 'Content-Type': 'application/json' }
         });
         
         console.log('[DEBUG] Response status:', response.status);
         console.log('[DEBUG] Response ok:', response.ok);
         
         if (response.ok) {
-            const responseText = await response.text();
-            console.log('[DEBUG] Response text:', responseText);
+            const responseData = await response.json();
+            console.log('[DEBUG] Response data:', responseData);
             alert('✅ Cluster restart initiated. All nodes will restart shortly.');
         } else {
             const error = await response.text();

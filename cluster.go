@@ -879,10 +879,10 @@ func (c *Cluster) AppContext() context.Context {
 
 func (c *Cluster) Stop() {
 	c.Logger().Printf("Stopping node %s", c.NodeId)
-	
+
 	// Set shutdown flag immediately to block new API requests
 	c.shuttingDown.Store(true)
-	
+
 	// Cancel context
 	c.cancel()
 
@@ -935,7 +935,7 @@ func corsMiddleware(debug bool, logger *log.Logger, cluster *Cluster, next http.
 			http.Error(w, "Node is shutting down", http.StatusServiceUnavailable)
 			return
 		}
-		
+
 		if debug {
 			//logger.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 		}
@@ -1078,6 +1078,8 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/api/transcode-stats", corsMiddleware(c.Debug, c.Logger(), c, c.handleTranscodeStats))
 	// Partition sync pause API
 	mux.HandleFunc("/api/partition-sync-pause", corsMiddleware(c.Debug, c.Logger(), c, c.handlePartitionSyncPause))
+	// Cluster restart API
+	mux.HandleFunc("/api/cluster-restart", corsMiddleware(c.Debug, c.Logger(), c, c.handleClusterRestart))
 
 	server = &http.Server{
 		Handler:           mux,
@@ -1569,6 +1571,22 @@ func (c *Cluster) handlePartitionSyncPause(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// handleClusterRestart handles POST requests to restart the cluster
+func (c *Cluster) handleClusterRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	c.setClusterRestart()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Cluster restart initiated",
+	})
+}
+
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
 // Returns true on success, false on failure
 func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
@@ -1613,7 +1631,6 @@ func (c *Cluster) initialPartitionMetadataUpdate(ctx context.Context) {
 
 // runRestartMonitor monitors tasks/restart in CRDT and restarts if needed
 func (c *Cluster) runRestartMonitor(ctx context.Context) {
-	c.Logger().Printf("[DEBUG] runRestartMonitor started, node start time: %d", c.startTime.Unix())
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -1623,27 +1640,27 @@ func (c *Cluster) runRestartMonitor(ctx context.Context) {
 			c.Logger().Printf("[DEBUG] runRestartMonitor context cancelled")
 			return
 		case <-ticker.C:
-			c.Logger().Printf("[DEBUG] runRestartMonitor checking tasks/restart")
+			
 			dp := c.frogpond.GetDataPoint("tasks/restart")
-			c.Logger().Printf("[DEBUG] tasks/restart data point: deleted=%v, value_len=%d", dp.Deleted, len(dp.Value))
+			
 			if dp.Deleted || len(dp.Value) == 0 {
-				c.Logger().Printf("[DEBUG] No restart task found, continuing")
+				
 				continue
 			}
 
-			c.Logger().Printf("[DEBUG] Found restart task, value: %s", string(dp.Value))
+			
 			var restartTime int64
 			if err := json.Unmarshal(dp.Value, &restartTime); err != nil {
-				c.Logger().Printf("[DEBUG] Failed to parse restart time: %v", err)
+				
 				continue
 			}
 
-			c.Logger().Printf("[DEBUG] Parsed restart time: %d, node start time: %d", restartTime, c.startTime.Unix())
+			
 			if c.startTime.Unix() < restartTime {
 				c.Logger().Printf("[DEBUG] Restart requested, restarting node (start: %d < restart: %d)", c.startTime.Unix(), restartTime)
 				os.Exit(0)
 			} else {
-				c.Logger().Printf("[DEBUG] Restart time is in the past, ignoring (start: %d >= restart: %d)", c.startTime.Unix(), restartTime)
+				
 			}
 		}
 	}
