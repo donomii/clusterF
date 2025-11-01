@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/donomii/clusterF/discovery"
@@ -1658,7 +1659,25 @@ func (c *Cluster) runRestartMonitor(ctx context.Context) {
 			
 			if c.startTime.Unix() < restartTime {
 				c.Logger().Printf("[DEBUG] Restart requested, restarting node (start: %d < restart: %d)", c.startTime.Unix(), restartTime)
-				os.Exit(0)
+				
+				// Get the current executable path
+				executable, err := os.Executable()
+				if err != nil {
+					c.Logger().Printf("[DEBUG] Failed to get executable path: %v", err)
+					os.Exit(1)
+					return
+				}
+				
+				// Get current command line arguments
+				args := os.Args[1:] // Skip the program name
+				c.Logger().Printf("[DEBUG] Restarting with executable: %s, args: %v", executable, args)
+				
+				// Replace current process with new instance
+				err = syscall.Exec(executable, append([]string{executable}, args...), os.Environ())
+				if err != nil {
+					c.Logger().Printf("[DEBUG] Failed to exec restart: %v", err)
+					os.Exit(1)
+				}
 			} else {
 				
 			}
