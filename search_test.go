@@ -33,8 +33,9 @@ func TestPerformLocalSearch(t *testing.T) {
 		"/images/screenshot.png":     []byte("Screenshot data"),
 	}
 
+	now := time.Now()
 	for path, content := range testFiles {
-		if _, err := fs.StoreFileWithModTime(context.TODO(), path, content, "text/plain", time.Now()); err != nil {
+		if _, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), path, content, "text/plain", now, now); err != nil {
 			t.Fatalf("Failed to store test file %s: %v", path, err)
 		}
 	}
@@ -135,7 +136,7 @@ func TestPerformLocalSearch_DeletedFiles(t *testing.T) {
 	fs := cluster.FileSystem
 
 	filePath := "/test-file.txt"
-	if _, err := fs.StoreFileWithModTime(context.TODO(), filePath, []byte("test content"), "text/plain", time.Now()); err != nil {
+	if _, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, []byte("test content"), "text/plain", time.Now(), time.Now()); err != nil {
 		t.Fatalf("Failed to store test file: %v", err)
 	}
 

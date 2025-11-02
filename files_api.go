@@ -462,10 +462,19 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
 			return
 		}
-		// Internal requests use current time for LastClusterUpdate
-		now := time.Now()
-		if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime, now); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
+		// Internal requests should use cluster update time from header
+		if clusterHeader := r.Header.Get("X-ClusterF-Last-Cluster-Update"); clusterHeader != "" {
+			if clusterUpdateTime, err := parseHeaderTimestamp(clusterHeader); err == nil {
+				if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime, clusterUpdateTime); err != nil {
+					http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
+					return
+				}
+			} else {
+				http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Last-Cluster-Update header: %v", err), http.StatusBadRequest)
+				return
+			}
+		} else {
+			http.Error(w, fmt.Sprintf("Missing X-ClusterF-Last-Cluster-Update header for internal file upload: %s", path), http.StatusBadRequest)
 			return
 		}
 	}
@@ -483,20 +492,23 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 func (c *Cluster) handleFileDeleteInternal(w http.ResponseWriter, r *http.Request, path string) {
 	c.debugf("[FILES] Internal DELETE request for path: %s", path)
 
-	// Check for forwarded delete time header
-	deleteTime := time.Now()
-	if deleteTimeHeader := r.Header.Get("X-ClusterF-Delete-Time"); deleteTimeHeader != "" {
-		if parsedTime, err := time.Parse(time.RFC3339, deleteTimeHeader); err == nil {
-			deleteTime = parsedTime
-		}
-	}
-
-	if err := c.FileSystem.DeleteFileWithTimestamp(c.AppContext(), path, deleteTime); err != nil {
-		if errors.Is(err, types.ErrFileNotFound) {
-			http.Error(w, fmt.Sprintf("File not found for internal deletion: %s", path), http.StatusNotFound)
+	// Internal requests should use cluster update time from header
+	if clusterHeader := r.Header.Get("X-ClusterF-Last-Cluster-Update"); clusterHeader != "" {
+		if deleteTime, err := parseHeaderTimestamp(clusterHeader); err == nil {
+			if err := c.FileSystem.DeleteFileWithTimestamp(c.AppContext(), path, deleteTime); err != nil {
+				if errors.Is(err, types.ErrFileNotFound) {
+					http.Error(w, fmt.Sprintf("File not found for internal deletion: %s", path), http.StatusNotFound)
+					return
+				}
+				http.Error(w, fmt.Sprintf("Failed to delete internal file: %v", err), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Last-Cluster-Update header: %v", err), http.StatusBadRequest)
 			return
 		}
-		http.Error(w, fmt.Sprintf("Failed to delete internal file: %v", err), http.StatusInternalServerError)
+	} else {
+		http.Error(w, fmt.Sprintf("Missing X-ClusterF-Last-Cluster-Update header for internal file deletion: %s", path), http.StatusBadRequest)
 		return
 	}
 
