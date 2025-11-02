@@ -303,7 +303,7 @@ func (e *Syncer) startWatcher(ctx context.Context) error {
 						if err == nil {
 							ct := contentTypeFromExt(ev.Name)
 							modT := st.ModTime()
-							if _, err := e.fs.StoreFileWithModTime(ctx, clusterPath, data, ct, modT); err != nil {
+							if _, err := e.fs.StoreFileWithModTimeAndClusterUpdate(ctx, clusterPath, data, ct, modT, time.Now()); err != nil {
 								e.logger.Printf("[EXPORT] StoreFile error for %s: %v", clusterPath, err)
 							}
 						}
@@ -473,7 +473,7 @@ func (e *Syncer) importAll(ctx context.Context) error {
 			return nil
 		}
 		ct := contentTypeFromExt(p)
-		_, _ = e.fs.StoreFileWithModTime(ctx, clusterPath, data, ct, st.ModTime())
+		_, _ = e.fs.StoreFileWithModTimeAndClusterUpdate(ctx, clusterPath, data, ct, st.ModTime(), time.Now())
 		return nil
 	})
 }
@@ -640,7 +640,7 @@ func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs
 	}
 
 	ct := contentTypeFromExt(p)
-	targetNode, err := e.fs.StoreFileWithModTime(ctx, clusterPath, data, ct, st.ModTime())
+	targetNode, err := e.fs.StoreFileWithModTimeAndClusterUpdate(ctx, clusterPath, data, ct, st.ModTime(), time.Now())
 	if err != nil {
 		e.logger.Printf("[IMPORT] Synchronisation failed for %v: %v", clusterPath, err)
 	} else {
