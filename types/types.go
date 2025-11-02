@@ -53,11 +53,12 @@ type ClusterLike interface {
 // The partition manager, everything needed to access partitions and files
 // The FileStore should not be accessed directly, except by partitionManager
 type PartitionManagerLike interface {
-	StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
-	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)                                // Get file and metadata from partition, including from other nodes
-	DeleteFileFromPartition(ctx context.Context, path string) error                                       // Delete file from partition, does not send to network
-	GetMetadataFromPartition(path string) (FileMetadata, error)                                           // Get file metadata from partition
-	GetMetadataFromPeers(path string) (FileMetadata, error)                                               // Get file metadata from other nodes
+	StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error     // Store file in appropriate partition based on path, does not send to network
+	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)                                    // Get file and metadata from partition, including from other nodes
+	DeleteFileFromPartition(ctx context.Context, path string) error                                           // Delete file from partition, does not send to network
+	DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, lastClusterUpdate time.Time) error // Delete file from partition with explicit timestamp
+	GetMetadataFromPartition(path string) (FileMetadata, error)                                               // Get file metadata from partition
+	GetMetadataFromPeers(path string) (FileMetadata, error)                                                   // Get file metadata from other nodes
 	GetFileFromPeers(path string) ([]byte, FileMetadata, error)
 	CalculatePartitionName(path string) string                                // Calculate partition name for a given path
 	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error // Scan all files in all partitions, calling fn for each file
@@ -142,8 +143,9 @@ type IndexerLike interface {
 type FileSystemLike interface {
 	CreateDirectory(path string) error
 	CreateDirectoryWithModTime(path string, modTime time.Time) error
-	StoreFileWithModTime(ctx context.Context, path string, data []byte, contentType string, modTime time.Time) (NodeID, error)
+	StoreFileWithModTimeAndClusterUpdate(ctx context.Context, path string, data []byte, contentType string, modTime time.Time, lastClusterUpdate time.Time) (NodeID, error)
 	DeleteFile(ctx context.Context, path string) error
+	DeleteFileWithTimestamp(ctx context.Context, path string, lastClusterUpdate time.Time) error
 	MetadataForPath(path string) (FileMetadata, error)
 	MetadataViaAPI(ctx context.Context, path string) (FileMetadata, error)
 	// Additional methods for WebDAV support
@@ -183,17 +185,18 @@ type NodeInfo struct {
 
 // FileMetadata represents metadata for a file stored in the cluster
 type FileMetadata struct {
-	Name        string    `json:"name"`
-	Path        string    `json:"path"` // Full path like "/docs/readme.txt"
-	Size        int64     `json:"size"` // Total file size in bytes
-	ContentType string    `json:"content_type"`
-	CreatedAt   time.Time `json:"created_at"`
-	ModifiedAt  time.Time `json:"modified_at"`
-	IsDirectory bool      `json:"is_directory"`
-	Checksum    string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
-	Holders     []NodeID  `json:"holders,omitempty"`
-	Deleted     bool      `json:"deleted,omitempty"`
-	DeletedAt   time.Time `json:"deleted_at,omitempty"`
+	Name              string    `json:"name"`
+	Path              string    `json:"path"` // Full path like "/docs/readme.txt"
+	Size              int64     `json:"size"` // Total file size in bytes
+	ContentType       string    `json:"content_type"`
+	CreatedAt         time.Time `json:"created_at"`
+	ModifiedAt        time.Time `json:"modified_at"`
+	LastClusterUpdate time.Time `json:"last_cluster_update"`
+	IsDirectory       bool      `json:"is_directory"`
+	Checksum          string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
+	Holders           []NodeID  `json:"holders,omitempty"`
+	Deleted           bool      `json:"deleted,omitempty"`
+	DeletedAt         time.Time `json:"deleted_at,omitempty"`
 }
 
 type NodeData struct {

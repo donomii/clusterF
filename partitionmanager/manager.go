@@ -157,8 +157,8 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 				partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 
 				// Track most recent modification time for this partition
-				if parsedMetadata.ModifiedAt.After(partitionsLastUpdate[partitionID]) {
-					partitionsLastUpdate[partitionID] = parsedMetadata.ModifiedAt
+				if parsedMetadata.LastClusterUpdate.After(partitionsLastUpdate[partitionID]) {
+					partitionsLastUpdate[partitionID] = parsedMetadata.LastClusterUpdate
 				}
 			}
 
@@ -744,6 +744,11 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadat
 
 // deleteFileFromPartition removes a file from its partition
 func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path string) error {
+	return pm.DeleteFileFromPartitionWithTimestamp(ctx, path, time.Now())
+}
+
+// DeleteFileFromPartitionWithTimestamp removes a file from its partition with explicit timestamp
+func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, lastClusterUpdate time.Time) error {
 	pm.recordEssentialDiskActivity()
 	// If in no-store mode, don't delete locally (we don't have it anyway)
 	if pm.deps.NoStore {
@@ -766,10 +771,11 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 
 	}
 
-	// Mark as deleted in metadata
+	// Mark as deleted in metadata and set LastClusterUpdate
 	metadata.Deleted = true
-	metadata.DeletedAt = time.Now()
-	metadata.ModifiedAt = time.Now()
+	metadata.DeletedAt = lastClusterUpdate
+	metadata.ModifiedAt = lastClusterUpdate
+	metadata.LastClusterUpdate = lastClusterUpdate
 
 	// Store tombstone metadata and delete content
 	tombstoneJSON, _ := json.Marshal(metadata)

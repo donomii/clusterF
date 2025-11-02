@@ -132,6 +132,7 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 			end = nodeCount
 		}
 
+		now := time.Now()
 		// Start this batch
 		for i := batch; i < end; i++ {
 			wg.Add(1)
@@ -154,7 +155,7 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 				// Store a demo file with node-specific content
 				demoTimestamp := time.Now()
 				demoContent := fmt.Sprintf("demo-data-from-%s-at-%d", nodeID, demoTimestamp.Unix())
-				if _, err := node.FileSystem.StoreFileWithModTime(context.TODO(), fmt.Sprintf("/demo-%03d.txt", index), []byte(demoContent), "text/plain", demoTimestamp); err != nil {
+				if _, err := node.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), fmt.Sprintf("/demo-%03d.txt", index), []byte(demoContent), "text/plain", demoTimestamp, now); err != nil {
 					log.Print(logerrf("Failed to store demo file on %s: %v", nodeID, err))
 				}
 

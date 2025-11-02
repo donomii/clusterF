@@ -1111,9 +1111,9 @@ func TestCluster_LocalStorage(t *testing.T) {
 
 	t.Logf("Storing file %s\n", filePath)
 	// Store file
-	_, err := cluster.FileSystem.StoreFileWithModTime(context.TODO(), filePath, testData, "text/plain", time.Now())
+	_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now(), time.Now())
 	if err != nil {
-		t.Fatalf("StoreFileWithModTime failed: %v", err)
+		t.Fatalf("StoreFileWithModTimeAndClusterUpdate failed: %v", err)
 	}
 	t.Logf("Stored file %s\n", filePath)
 
@@ -1190,7 +1190,7 @@ func TestCluster_Encryption(t *testing.T) {
 		testData := []byte("Sensitive encrypted data")
 		filePath := "/encrypted-file.txt"
 
-		_, err := cluster.FileSystem.StoreFileWithModTime(context.TODO(), filePath, testData, "text/plain", time.Now())
+		_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now(), time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store encrypted file: %v", err)
 		}
@@ -1270,7 +1270,7 @@ func TestCluster_Encryption(t *testing.T) {
 		testData := []byte("Unencrypted data")
 		filePath := "/unencrypted-file.txt"
 
-		_, err := cluster.FileSystem.StoreFileWithModTime(context.TODO(), filePath, testData, "text/plain", time.Now())
+		_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now(), time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store unencrypted file: %v", err)
 		}
@@ -1451,7 +1451,7 @@ func TestCluster_EncryptionOnDisk(t *testing.T) {
 		testData := []byte(distinctPhrase)
 		filePath := "/test-phrase-file.txt"
 
-		_, err := cluster.FileSystem.StoreFileWithModTime(context.TODO(), filePath, testData, "text/plain", time.Now())
+		_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now(), time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store file: %v", err)
 		}
@@ -1582,14 +1582,14 @@ func BenchmarkCluster_FileOperations(b *testing.B) {
 	b.Run("StoreFile", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			filePath := fmt.Sprintf("/bench-file-%d.txt", i)
-			_, _ = cluster.FileSystem.StoreFileWithModTime(context.TODO(), filePath, testData, "application/octet-stream", time.Now())
+			_, _ = cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "application/octet-stream", time.Now(), time.Now())
 		}
 	})
 
 	// Store some files for read benchmark
 	for i := 0; i < 100; i++ {
 		filePath := fmt.Sprintf("/read-bench-file-%d.txt", i)
-		_, _ = cluster.FileSystem.StoreFileWithModTime(context.TODO(), filePath, testData, "application/octet-stream", time.Now())
+		_, _ = cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "application/octet-stream", time.Now(), time.Now())
 	}
 
 	b.Run("GetFile", func(b *testing.B) {

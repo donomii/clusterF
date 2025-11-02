@@ -318,9 +318,9 @@ func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID
 		}
 	}
 
-	if metadata.ModifiedAt.After(currentHolderData.MostRecentModifiedTime) {
+	if metadata.LastClusterUpdate.After(currentHolderData.MostRecentModifiedTime) {
 		holderData := types.HolderData{
-			MostRecentModifiedTime: metadata.ModifiedAt,
+			MostRecentModifiedTime: metadata.LastClusterUpdate,
 			File_count:             currentHolderData.File_count,
 			Checksum:               "",
 		}
@@ -515,19 +515,9 @@ func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bo
 		return false // Reject remote if we can't parse it
 	}
 
-	// CRDT rule: use latest timestamp, break ties with version
-	remoteTime := remoteMetadata.ModifiedAt
-	localTime := localMetadata.ModifiedAt
-	remoteDeletedAt := remoteMetadata.DeletedAt
-	localDeletedAt := localMetadata.DeletedAt
-
-	// Use the latest of modified_at or deleted_at
-	if remoteDeletedAt.After(remoteTime) {
-		remoteTime = remoteDeletedAt
-	}
-	if localDeletedAt.After(localTime) {
-		localTime = localDeletedAt
-	}
+	// CRDT rule: use latest LastClusterUpdate timestamp, break ties with version
+	remoteTime := remoteMetadata.LastClusterUpdate
+	localTime := localMetadata.LastClusterUpdate
 
 	// Remote is newer
 	if remoteTime.After(localTime) {

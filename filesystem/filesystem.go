@@ -104,8 +104,8 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 	return meta.ModifiedAt, meta.Size, nil
 }
 
-// StoreFileWithModTime stores a file using an explicit modification time and returns the node that handled the write.
-func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
+// StoreFileWithModTimeAndClusterUpdate stores a file using explicit modification time and last cluster update time
+func (fs *ClusterFileSystem) StoreFileWithModTimeAndClusterUpdate(ctx context.Context, path string, content []byte, contentType string, modTime time.Time, lastClusterUpdate time.Time) (types.NodeID, error) {
 	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {
 		return "", fmt.Errorf("invalid path: %s", path)
 	}
@@ -115,14 +115,15 @@ func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path stri
 
 	// Create file metadata for the file system layer
 	metadata := types.FileMetadata{
-		Name:        filepath.Base(path),
-		Path:        path,
-		Size:        int64(len(content)),
-		ContentType: contentType,
-		CreatedAt:   modTime,
-		ModifiedAt:  modTime,
-		IsDirectory: false,
-		Checksum:    checksum,
+		Name:              filepath.Base(path),
+		Path:              path,
+		Size:              int64(len(content)),
+		ContentType:       contentType,
+		CreatedAt:         modTime,
+		ModifiedAt:        modTime,
+		LastClusterUpdate: lastClusterUpdate,
+		IsDirectory:       false,
+		Checksum:          checksum,
 	}
 
 	if metadata.ModifiedAt.IsZero() {
@@ -509,8 +510,13 @@ func (fs *ClusterFileSystem) ListDirectory(path string) ([]*types.FileMetadata, 
 
 // DeleteFile removes a file from the cluster
 func (fs *ClusterFileSystem) DeleteFile(ctx context.Context, path string) error {
+	return fs.DeleteFileWithTimestamp(ctx, path, time.Now())
+}
+
+// DeleteFileWithTimestamp removes a file from the cluster with explicit timestamp
+func (fs *ClusterFileSystem) DeleteFileWithTimestamp(ctx context.Context, path string, lastClusterUpdate time.Time) error {
 	// Delete from partition system
-	if err := fs.cluster.PartitionManager().DeleteFileFromPartition(ctx, path); err != nil {
+	if err := fs.cluster.PartitionManager().DeleteFileFromPartitionWithTimestamp(ctx, path, lastClusterUpdate); err != nil {
 		return fmt.Errorf("failed to delete file: %v", err)
 	}
 
