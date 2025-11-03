@@ -406,8 +406,6 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 		}
 	}
 
-	pm.logf("[PARTITION] Updated indexer for %s in partition %s", path, partitionID)
-
 	// Update partition metadata in CRDT
 	pm.MarkForReindex(partitionID)
 	//pm.logf("[PARTITION] Marked %v for reindex", partitionID)

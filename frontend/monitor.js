@@ -376,11 +376,7 @@ async function toggleSleepMode() {
 }
 
 async function clusterRestart() {
-    console.log('[DEBUG] clusterRestart function called');
-    if (!confirm('⚠️ This will restart ALL nodes in the cluster. Are you sure?')) {
-        console.log('[DEBUG] User cancelled restart');
-        return;
-    }
+ 
     
     try {
         console.log('[DEBUG] Calling /api/cluster-restart endpoint');
