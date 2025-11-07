@@ -536,32 +536,34 @@ func TestFileAPI_DirectErrorCases(t *testing.T) {
 	}
 	})
 
-	// Test PUT with forwarded metadata (simulating peer-to-peer transfer)
+	// Test PUT with forwarded metadata (simulating peer-to-peer transfer) via internal API
 	t.Run("ForwardedFile", func(t *testing.T) {
 		testData := []byte("Forwarded file content")
 		filePath := "/forwarded-file.txt"
 		
 		// Create metadata
 		metadata := types.FileMetadata{
-			Path:        filePath,
-			Name:        "forwarded-file.txt",
-			Size:        int64(len(testData)),
-			ContentType: "text/plain",
-			ModifiedAt:  time.Now(),
-			CreatedAt:   time.Now(),
-			Checksum:    "dummy-checksum",
+			Path:               filePath,
+			Name:               "forwarded-file.txt",
+			Size:               int64(len(testData)),
+			ContentType:        "text/plain",
+			ModifiedAt:         time.Now(),
+			CreatedAt:          time.Now(),
+			Checksum:           "dummy-checksum",
+			LastClusterUpdate:  time.Now(),
 		}
 		metadataJSON, _ := json.Marshal(metadata)
 		metadataB64 := base64.StdEncoding.EncodeToString(metadataJSON)
 		
 		body := bytes.NewReader(testData)
-		req := httptest.NewRequest(http.MethodPut, "/api/files"+filePath, body)
+		req := httptest.NewRequest(http.MethodPut, "/internal/files"+filePath, body)
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("X-Forwarded-From", "peer-node-123")
 		req.Header.Set("X-ClusterF-Metadata", metadataB64)
 		
 		w := httptest.NewRecorder()
-		cluster.handleFilePut(w, req, filePath)
+		// Use internal handler which supports forwarded metadata
+		cluster.handleFilePutInternal(w, req, filePath)
 
 		if w.Code != http.StatusCreated {
 			t.Fatalf("Expected status 201 for forwarded file, got %d. Response: %s", w.Code, w.Body.String())
@@ -575,17 +577,18 @@ func TestFileAPI_DirectErrorCases(t *testing.T) {
 		t.Logf("Forwarded file PUT response: %s", w.Body.String())
 	})
 
-	// Test PUT with invalid forwarded metadata
+	// Test PUT with invalid forwarded metadata via internal API
 	t.Run("InvalidForwardedMetadata", func(t *testing.T) {
 		body := bytes.NewReader([]byte("test"))
 		
-		req := httptest.NewRequest(http.MethodPut, "/api/files/invalid-meta.txt", body)
+		req := httptest.NewRequest(http.MethodPut, "/internal/files/invalid-meta.txt", body)
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("X-Forwarded-From", "peer-node-123")
 		req.Header.Set("X-ClusterF-Metadata", "invalid-base64-metadata")
 		
 		w := httptest.NewRecorder()
-		cluster.handleFilePut(w, req, "/invalid-meta.txt")
+		// Use internal handler which supports forwarded metadata
+		cluster.handleFilePutInternal(w, req, "/invalid-meta.txt")
 
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("Expected status 400 for invalid metadata, got %d. Response: %s", w.Code, w.Body.String())

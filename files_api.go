@@ -609,30 +609,8 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	forwardedFrom := r.Header.Get("X-Forwarded-From")
 	isForwarded := forwardedFrom != ""
 
-	var metadata types.FileMetadata
-
 	if isForwarded {
 		panic("Cannot forward to external api")
-		metaHeader := r.Header.Get("X-ClusterF-Metadata")
-		if metaHeader == "" {
-			http.Error(w, fmt.Sprintf("Missing forwarded metadata for file upload: %s", path), http.StatusBadRequest)
-			return
-		}
-		decoded, err := base64.StdEncoding.DecodeString(metaHeader)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Invalid forwarded metadata encoding for %s: %v", path, err), http.StatusBadRequest)
-			return
-		}
-		if err := json.Unmarshal(decoded, &metadata); err != nil {
-			http.Error(w, fmt.Sprintf("Invalid forwarded metadata payload for %s: %v", path, err), http.StatusBadRequest)
-			return
-		}
-
-		if metadata.ModifiedAt.IsZero() {
-			panic("no")
-			http.Error(w, fmt.Sprintf("ModifiedAt timestamp is zero in forwarded metadata for %s", path), http.StatusBadRequest)
-			return
-		}
 	}
 
 	contentType := r.Header.Get("Content-Type")
@@ -644,31 +622,22 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	now := time.Now()
 
 	if isForwarded {
+		panic("Cannot forward to external api")
+	}
 
-		if metadata.ContentType != "" {
-			contentType = metadata.ContentType
-		}
-
-		// Use the LastClusterUpdate from the forwarded metadata
-		if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, metadata.ModifiedAt, metadata.LastClusterUpdate); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		modHeader := r.Header.Get("X-ClusterF-Modified-At")
-		if modHeader == "" {
-			http.Error(w, fmt.Sprintf("Missing X-ClusterF-Modified-At header for file upload: %s", path), http.StatusBadRequest)
-			return
-		}
-		localModTime, err := parseHeaderTimestamp(modHeader)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
-			return
-		}
-		if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime, now); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
-			return
-		}
+	modHeader := r.Header.Get("X-ClusterF-Modified-At")
+	if modHeader == "" {
+		http.Error(w, fmt.Sprintf("Missing X-ClusterF-Modified-At header for file upload: %s", path), http.StatusBadRequest)
+		return
+	}
+	localModTime, err := parseHeaderTimestamp(modHeader)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
+		return
+	}
+	if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime, now); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	c.debugf("[FILES] Stored %s (%d bytes)", path, len(content))
@@ -694,6 +663,13 @@ func parseHeaderTimestamp(value string) (time.Time, error) {
 
 func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path string) {
 	c.debugf("[FILES] External DELETE request for path: %s", path)
+
+	forwardedFrom := r.Header.Get("X-Forwarded-From")
+	isForwarded := forwardedFrom != ""
+
+	if isForwarded {
+		panic("Cannot forward to external api")
+	}
 
 	// Set LastClusterUpdate timestamp for external DELETE requests
 	now := time.Now()
