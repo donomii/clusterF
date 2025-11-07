@@ -412,8 +412,22 @@ func (fs *DiskFileStore) walkMetadataFiles(fn func(path, metaPath string) error)
 			return nil
 		}
 
-		filePath := "/" + filepath.ToSlash(rel)
-		return fn(filePath, path)
+		// Extract original file path from hierarchical structure
+		// Path format: p1/p2/p3/p12345/original/file/path
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) < 5 {
+			return fmt.Errorf("malformed partition path %s: expected at least 5 parts, got %d", rel, len(parts))
+		}
+
+		// Enforce hierarchical structure (p1/p2/p3/p12345/...)
+		if len(parts[0]) != 1 || len(parts[1]) != 1 || len(parts[2]) != 1 || !strings.HasPrefix(parts[3], "p") {
+			return fmt.Errorf("malformed partition path %s: expected format p1/p2/p3/p12345/...", rel)
+		}
+
+		// Reconstruct original file path from parts[4:]
+		originalPath := "/" + strings.Join(parts[4:], "/")
+
+		return fn(originalPath, path)
 	})
 }
 
@@ -435,7 +449,7 @@ func (fs *DiskFileStore) contentPath(path string) (string, error) {
 	return filepath.Join(fs.contentDir, relative), nil
 }
 
-// relativePathFromCluster sanitises cluster paths and produces a safe relative path.
+// relativePathFromCluster sanitises cluster paths and produces a hierarchical partition-based path.
 func relativePathFromCluster(filePath string) (string, error) {
 	if filePath == "" {
 		return "", fmt.Errorf("empty file path")
@@ -460,7 +474,23 @@ func relativePathFromCluster(filePath string) (string, error) {
 		builder = append(builder, segment)
 	}
 
-	return filepath.FromSlash(strings.Join(builder, "/")), nil
+	// Calculate partition for the file
+	partitionID := string(types.PartitionIDForPath(filePath))
+
+	// Create hierarchical path: p1/2/3/p12345/original/file/path
+	if len(partitionID) < 6 { // Should be like "p12345"
+		return "", fmt.Errorf("invalid partition ID: %s", partitionID)
+	}
+
+	// Extract digits: p12345 -> 1, 2, 3, p12345
+	p1 := string(partitionID[1])
+	p2 := string(partitionID[2])
+	p3 := string(partitionID[3])
+
+	// Build hierarchical path
+	hierarchicalPath := filepath.Join(p1, p2, p3, partitionID, strings.Join(builder, "/"))
+
+	return hierarchicalPath, nil
 }
 
 func ensureParentDir(path string) error {

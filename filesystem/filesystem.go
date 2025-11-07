@@ -104,6 +104,11 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 	return meta.ModifiedAt, meta.Size, nil
 }
 
+// StoreFileWithModTime stores a file using explicit modification time
+func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
+	return fs.StoreFileWithModTimeAndClusterUpdate(ctx, path, content, contentType, modTime, modTime)
+}
+
 // StoreFileWithModTimeAndClusterUpdate stores a file using explicit modification time and last cluster update time
 func (fs *ClusterFileSystem) StoreFileWithModTimeAndClusterUpdate(ctx context.Context, path string, content []byte, contentType string, modTime time.Time, lastClusterUpdate time.Time) (types.NodeID, error) {
 	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {

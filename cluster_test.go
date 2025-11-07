@@ -502,13 +502,24 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 				req.Header.Set("Content-Type", "application/octet-stream")
 				req.Header.Set("X-ClusterF-Modified-At", uploadTime.Format(time.RFC3339))
 				resp, err = client.Do(req)
-				return err == nil && resp.StatusCode == http.StatusCreated
+				if err != nil {
+					t.Logf("PUT request error for file %d: %v", i, err)
+					return false
+				}
+				if resp.StatusCode != http.StatusCreated {
+					body, _ := io.ReadAll(resp.Body)
+					fmt.Printf("[ERROR] PUT request for file %d failed with status %d. Response body: %s\n", i, resp.StatusCode, string(body))
+					clearResponseBody(resp)
+					return false
+				}
+				return true
 			}, 2000, 20000) // Retry for up to 20 seconds
 			if !success {
 				if err != nil {
 					errCh <- fmt.Errorf("PUT request failed: %v", err)
 				} else if resp != nil {
-					errCh <- fmt.Errorf("PUT request failed with status %d", resp.StatusCode)
+					body, _ := io.ReadAll(resp.Body)
+					errCh <- fmt.Errorf("PUT request failed with status %d. Response body: %s", resp.StatusCode, string(body))
 				} else {
 					errCh <- fmt.Errorf("PUT request failed: no response")
 				}
@@ -522,22 +533,33 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 
 			// Verify retrieval from same node
 			success = CheckSuccessWithTimeout(func() bool {
-				resp, err = client.Get(baseURL + "/api/files" + filePath)
-				return err == nil && resp.StatusCode == http.StatusOK
+			resp, err = client.Get(baseURL + "/api/files" + filePath)
+			if err != nil {
+			  t.Logf("GET request error for file %d: %v", i, err)
+			  return false
+			}
+			if resp.StatusCode != http.StatusOK {
+			 body, _ := io.ReadAll(resp.Body)
+			t.Logf("GET request for file %d failed with status %d. Response body: %s", i, resp.StatusCode, string(body))
+			clearResponseBody(resp)
+			 return false
+			}
+			return true
 			}, 2000, 20000) // Retry for up to 20 seconds
 			if !success {
-				if err != nil {
-					errCh <- fmt.Errorf("GET request failed: %v", err)
-				} else if resp != nil {
-					errCh <- fmt.Errorf("GET request failed with status %d", resp.StatusCode)
-				} else {
-					errCh <- fmt.Errorf("GET request failed: no response")
+			if err != nil {
+			 errCh <- fmt.Errorf("GET request failed: %v", err)
+			 } else if resp != nil {
+						body, _ := io.ReadAll(resp.Body)
+						errCh <- fmt.Errorf("GET request failed with status %d. Response body: %s", resp.StatusCode, string(body))
+					} else {
+						errCh <- fmt.Errorf("GET request failed: no response")
+					}
+					if resp != nil {
+						clearResponseBody(resp)
+					}
+					return
 				}
-				if resp != nil {
-					clearResponseBody(resp)
-				}
-				return
-			}
 
 			// Verify ModifiedAt header matches what we uploaded
 			modifiedAt := resp.Header.Get("X-ClusterF-Modified-At")
@@ -573,7 +595,7 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 			}
 
 			if !bytes.Equal(body, testData) {
-				errCh <- fmt.Errorf("Data mismatch for chunk %d", i)
+				errCh <- fmt.Errorf("Data mismatch for file %d", i)
 			}
 			clearResponseBody(resp)
 		}(j)
@@ -661,7 +683,7 @@ func TestCluster_SingleNode(t *testing.T) {
 		t.Fatalf("Single node test failed: %v", result.Error)
 	}
 
-	t.Logf("Single node test passed: %d chunks stored in %v", result.FilesStored, result.Duration)
+	t.Logf("Single node test passed: %d files stored in %v", result.FilesStored, result.Duration)
 }
 
 // Comprehensive scaling test that can be run with different parameters - now with concurrent subtests
@@ -694,7 +716,7 @@ func TestCluster_Scaling(t *testing.T) {
 				if !result.Success {
 					t.Fatalf("Scaling test %s failed: %v", tc.TestName, result.Error)
 				}
-				t.Logf("Scaling test %s passed: %d nodes, %d chunks, %d replicated in %v",
+				t.Logf("Scaling test %s passed: %d nodes, %d files, %d replicated in %v",
 					tc.TestName, result.NodesCreated, result.FilesStored, result.FilesReplicated, result.Duration)
 			}
 		})
@@ -729,16 +751,16 @@ func TestCluster_FileSizes(t *testing.T) {
 					NodeCount:     3,
 					FileCount:     fileCount,
 					FileSize:      size,
-					TestName:      fmt.Sprintf("ChunkSize_%d", size),
+					TestName:      fmt.Sprintf("FileSize_%d", size),
 					TimeoutMs:     30000,
 					DiscoveryPort: 17000 + (i * 10), // Unique port per test
 				})
 
 				if !result.Success {
-					t.Fatalf("Chunk size test for %d bytes failed: %v", size, result.Error)
+				t.Fatalf("File size test for %d bytes failed: %v", size, result.Error)
 				}
 
-				t.Logf("Chunk size test passed: %d chunks of %d bytes in %v",
+				t.Logf("File size test passed: %d files of %d bytes in %v",
 					result.FilesStored, size, result.Duration)
 			})
 		}(i, size)
@@ -912,7 +934,8 @@ func TestCluster_BasicOperations(t *testing.T) {
 		return resp.StatusCode == http.StatusCreated
 	}, 1000, 10000) // Retry for up to 10 seconds
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("Testing file upload, expected StatusCreated, got %d.  File /test-file.txt, target url %v", resp.StatusCode, url)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Testing file upload, expected StatusCreated (%d), got %d. File /test-file.txt, target url %v. Error response body: %s", http.StatusCreated, resp.StatusCode, url, string(body))
 	}
 
 	var body []byte
@@ -965,11 +988,13 @@ func TestCluster_BasicOperations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DELETE request failed: %v", err)
 		}
-		clearResponseBody(resp)
-
 		if resp.StatusCode != http.StatusNoContent {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Printf("[ERROR] DELETE request failed with status %d, expected 204. Response body: %s\n", resp.StatusCode, string(body))
+			clearResponseBody(resp)
 			t.Fatalf("Expected 204, got %d", resp.StatusCode)
 		}
+		clearResponseBody(resp)
 		return resp.StatusCode == http.StatusNoContent
 	}, 1000, 10000)
 
@@ -1509,7 +1534,7 @@ func TestCluster_EncryptionOnDisk(t *testing.T) {
 		testData := []byte(distinctPhrase)
 		filePath := "/test-phrase-file.txt"
 
-		_, err := cluster.FileSystem.StoreFileWithModTime(context.TODO(), filePath, testData, "text/plain", time.Now())
+		_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now(), time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store file: %v", err)
 		}

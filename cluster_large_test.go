@@ -22,8 +22,8 @@ func TestCluster_ThousandNodes(t *testing.T) {
 
 	result := testDiscoveryAndPeering(t, TestConfig{
 		NodeCount:     1000,
-		ChunkCount:    10,
-		ChunkSize:     512,
+		FileCount:     10,
+		FileSize:      512,
 		TestName:      "ThousandNodes",
 		TimeoutMs:     120000,
 		DiscoveryPort: 22000, // Unique port
@@ -56,8 +56,8 @@ func TestCluster_HundredNodes(t *testing.T) {
 
 	result := testBasicOperations(t, TestConfig{
 		NodeCount:     100,
-		ChunkCount:    50,
-		ChunkSize:     1024,
+		FileCount:     50,
+		FileSize:      1024,
 		TestName:      "HundredNodes",
 		TimeoutMs:     60000,
 		DiscoveryPort: 21000, // Unique port
@@ -67,8 +67,8 @@ func TestCluster_HundredNodes(t *testing.T) {
 		t.Fatalf("Hundred node test failed: %v", result.Error)
 	}
 
-	t.Logf("Hundred node test passed: %d nodes, %d chunks stored, %d replicated in %v",
-		result.NodesCreated, result.ChunksStored, result.ChunksReplicated, result.Duration)
+	t.Logf("Hundred node test passed: %d nodes, %d files stored, %d replicated in %v",
+		result.NodesCreated, result.FilesStored, result.FilesReplicated, result.Duration)
 }
 
 // Comprehensive scaling test that can be run with different parameters - now with concurrent subtests
@@ -76,10 +76,10 @@ func TestCluster_Large_Scaling(t *testing.T) {
 	testenv.RequireUDPSupport(t)
 
 	testCases := []TestConfig{
-		{NodeCount: 1, ChunkCount: 10, ChunkSize: 1024, TestName: "Scale_1_Node", TimeoutMs: 5000},
-		{NodeCount: 10, ChunkCount: 50, ChunkSize: 1024, TestName: "Scale_10_Nodes", TimeoutMs: 60000},
-		{NodeCount: 100, ChunkCount: 100, ChunkSize: 1024, TestName: "Scale_100_Nodes", TimeoutMs: 120000},
-		{NodeCount: 1000, ChunkCount: 1000, ChunkSize: 51200, TestName: "Scale_1000_Nodes", TimeoutMs: 180000},
+		{NodeCount: 1, FileCount: 10, FileSize: 1024, TestName: "Scale_1_Node", TimeoutMs: 5000},
+		{NodeCount: 10, FileCount: 50, FileSize: 1024, TestName: "Scale_10_Nodes", TimeoutMs: 60000},
+		{NodeCount: 100, FileCount: 100, FileSize: 1024, TestName: "Scale_100_Nodes", TimeoutMs: 120000},
+		{NodeCount: 1000, FileCount: 1000, FileSize: 51200, TestName: "Scale_1000_Nodes", TimeoutMs: 180000},
 	}
 
 	// Run all test cases in parallel with different discovery ports
@@ -102,8 +102,8 @@ func TestCluster_Large_Scaling(t *testing.T) {
 				if !result.Success {
 					t.Fatalf("Scaling test %s failed: %v", tc.TestName, result.Error)
 				}
-				t.Logf("Scaling test %s passed: %d nodes, %d replicated in %v",
-					tc.TestName, result.NodesCreated, result.ChunksStored, result.Duration)
+				t.Logf("Scaling test %s passed: %d nodes, %d files stored in %v",
+					tc.TestName, result.NodesCreated, result.FilesStored, result.Duration)
 			}
 		})
 	}
