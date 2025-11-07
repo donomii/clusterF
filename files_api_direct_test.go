@@ -525,17 +525,14 @@ func TestFileAPI_DirectErrorCases(t *testing.T) {
 	body := bytes.NewReader([]byte{})
 	
 	req := httptest.NewRequest(http.MethodPut, "/api/files/empty.txt", body)
+	req.Header.Set("X-ClusterF-Modified-At", time.Now().Format(time.RFC3339))
 	// No Content-Type header for empty file
 	
 	w := httptest.NewRecorder()
 	cluster.handleFilePut(w, req, "/empty.txt")
 
-	if w.Code != http.StatusOK {
-	t.Fatalf("Expected status 200 for empty file, got %d. Response: %s", w.Code, w.Body.String())
-	}
-
-	if !strings.Contains(w.Body.String(), "Directory ignored") {
-	t.Errorf("Expected directory ignored message, got: %s", w.Body.String())
+	if w.Code != http.StatusCreated {
+	t.Fatalf("Expected status 201 for empty file, got %d. Response: %s", w.Code, w.Body.String())
 	}
 	})
 

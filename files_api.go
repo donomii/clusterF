@@ -606,17 +606,6 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
-	if len(content) == 0 && r.Header.Get("Content-Type") == "" {
-		c.debugf("[FILES] Ignoring empty upload for %s (likely directory)", path)
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"path":    path,
-			"message": "Directory ignored",
-		})
-		return
-	}
-
 	forwardedFrom := r.Header.Get("X-Forwarded-From")
 	isForwarded := forwardedFrom != ""
 
@@ -759,7 +748,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 
 		body, _, status, err := httpclient.SimpleDelete(r.Context(), c.HttpDataClient, deleteURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
-			httpclient.WithHeader("X-ClusterF-Delete-Time", now.Format(time.RFC3339)),
+			httpclient.WithHeader("X-ClusterF-Last-Cluster-Update", now.Format(time.RFC3339)),
 		)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
