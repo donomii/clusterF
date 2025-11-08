@@ -20,9 +20,9 @@ import (
 // two top-level directories: metadata/ and contents/. Each stored key is
 // mapped to a relative path underneath those directories.
 type DiskFileStore struct {
-	baseDir     string
-	metadataDir string
-	contentDir  string
+	baseDir     string // Holds the metadata and content directories
+	metadataDir string // Holds the partitions directories containing metadata
+	contentDir  string // Holds the partitions directories containing content
 
 	encryptionKey []byte // XOR encryption key (nil = no encryption)
 }
@@ -306,18 +306,66 @@ func (fs *DiskFileStore) ScanPartitionMetaData(partitionStore types.PartitionSto
 	})
 }
 
-// getAllPartitionStores returns all known partition store IDs.
-func (fs *DiskFileStore) getAllPartitionStores() ([]types.PartitionStore, error) {
+// GetAllPartitionStores returns all known partition store IDs.
+func (fs *DiskFileStore) GetAllPartitionStores() ([]types.PartitionStore, error) {
 	partitionSet := make(map[types.PartitionStore]struct{})
-	err := fs.walkMetadataFiles(func(path, _ string) error {
-		partitionID := HashToPartition(path)
-		partitionSet[types.ExtractPartitionStoreID(partitionID)] = struct{}{}
-		return nil
-	})
+	
+	// Walk the hierarchical directory structure: p1/p2/p3/p12345/
+	p1Entries, err := os.ReadDir(fs.metadataDir)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []types.PartitionStore{}, nil
+		}
 		return nil, err
 	}
-
+	
+	for _, p1 := range p1Entries {
+		if !p1.IsDir() || len(p1.Name()) != 1 {
+			continue
+		}
+		
+		p2Dir := filepath.Join(fs.metadataDir, p1.Name())
+		p2Entries, err := os.ReadDir(p2Dir)
+		if err != nil {
+			continue
+		}
+		
+		for _, p2 := range p2Entries {
+			if !p2.IsDir() || len(p2.Name()) != 1 {
+				continue
+			}
+			
+			p3Dir := filepath.Join(p2Dir, p2.Name())
+			p3Entries, err := os.ReadDir(p3Dir)
+			if err != nil {
+				continue
+			}
+			
+			for _, p3 := range p3Entries {
+				if !p3.IsDir() || len(p3.Name()) != 1 {
+					continue
+				}
+				
+				partitionDir := filepath.Join(p3Dir, p3.Name())
+				partitionEntries, err := os.ReadDir(partitionDir)
+				if err != nil {
+					continue
+				}
+				
+				for _, partition := range partitionEntries {
+					if !partition.IsDir() || !strings.HasPrefix(partition.Name(), "p") {
+						continue
+					}
+					
+					// Extract the partition store ID (first 3 chars of partition name)
+					if len(partition.Name()) >= 3 {
+						partitionSet[types.PartitionStore(partition.Name()[:3])] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+	
 	partitions := make([]types.PartitionStore, 0, len(partitionSet))
 	for p := range partitionSet {
 		partitions = append(partitions, p)

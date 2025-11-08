@@ -149,7 +149,7 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 	processedFiles := 0
 
 	// Get all partition stores
-	allPartitionStores, err := pm.getAllPartitionStores()
+	allPartitionStores, err := pm.deps.FileStore.GetAllPartitionStores()
 	if err != nil {
 		pm.deps.Logger.Printf("[FULL_REINDEX] Failed to get partition stores: %v", err)
 		return
@@ -269,28 +269,7 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 		len(partitionsCount), processedFiles, len(allUpdates), time.Since(start))
 }
 
-// getAllPartitionStores returns all partition store names from the FileStore
-func (pm *PartitionManager) getAllPartitionStores() ([]types.PartitionStore, error) {
-	partitionSet := make(map[types.PartitionStore]struct{})
-	err := pm.deps.FileStore.ScanMetadataFullKeys("", func(path string, _ []byte) error {
-		partitionID := types.PartitionIDForPath(path)
-		storeID := types.ExtractPartitionStoreID(partitionID)
-		if storeID != "" {
-			partitionSet[storeID] = struct{}{}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
 
-	partitions := make([]types.PartitionStore, 0, len(partitionSet))
-	for p := range partitionSet {
-		partitions = append(partitions, p)
-	}
-	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
-	return partitions, nil
-}
 
 func (pm *PartitionManager) debugf(format string, args ...interface{}) string {
 	if pm.deps.Debugf != nil {

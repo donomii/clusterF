@@ -21,7 +21,7 @@ import (
 
 // FileStore provides atomic access to file metadata and content with per-partition locking
 type FileStore struct {
-	baseDir        string
+	baseDir        string                                 //Holds the partitions directories
 	partitionLocks syncmap.SyncMap[string, *sync.RWMutex] // map[string]*sync.RWMutex - per-partition locks
 	debugLog       bool
 	encryptionKey  []byte // XOR encryption key (nil = no encryption)
@@ -193,7 +193,7 @@ func encodeStoreKey(partitionID types.PartitionID, path string) []byte {
 
 func decodeStoreKey(key []byte) (types.PartitionID, string, error) {
 	keyStr := string(key)
-	
+
 	// Check for new format: partition:pxxxxx:file:path
 	if strings.HasPrefix(keyStr, "partition:") {
 		parts := strings.SplitN(keyStr, ":", 4)
@@ -203,7 +203,7 @@ func decodeStoreKey(key []byte) (types.PartitionID, string, error) {
 		}
 		return "", "", fmt.Errorf("invalid partition key format: %s", keyStr)
 	}
-	
+
 	// Fallback to old format for compatibility
 	return types.PartitionIDForPath(keyStr), keyStr, nil
 }
@@ -452,7 +452,7 @@ func (fs *FileStore) Scan(pathPrefix string, fn func(path string, metadata, cont
 	checkForRecursiveScan()
 
 	// Determine which partition stores to scan
-	partitions, err := fs.getAllPartitionStores()
+	partitions, err := fs.GetAllPartitionStores()
 	if err != nil {
 		return err
 	}
@@ -536,7 +536,7 @@ func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metada
 	checkForRecursiveScan()
 
 	// Determine which partition stores to scan
-	partitions, err := fs.getAllPartitionStores()
+	partitions, err := fs.GetAllPartitionStores()
 	if err != nil {
 		return err
 	}
@@ -644,8 +644,8 @@ func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, 
 
 }
 
-// getAllPartitionStores determines which partition directories to scan
-func (fs *FileStore) getAllPartitionStores() ([]types.PartitionStore, error) {
+// GetAllPartitionStores determines which partition directories to scan
+func (fs *FileStore) GetAllPartitionStores() ([]types.PartitionStore, error) {
 	// Scan all partition directories
 	entries, err := os.ReadDir(fs.baseDir)
 	if err != nil {
