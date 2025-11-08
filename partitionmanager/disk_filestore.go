@@ -357,10 +357,8 @@ func (fs *DiskFileStore) GetAllPartitionStores() ([]types.PartitionStore, error)
 						continue
 					}
 					
-					// Extract the partition store ID (first 3 chars of partition name)
-					if len(partition.Name()) >= 3 {
-						partitionSet[types.PartitionStore(partition.Name()[:3])] = struct{}{}
-					}
+					// The partition directory name IS the partition store ID
+					partitionSet[types.PartitionStore(partition.Name())] = struct{}{}
 				}
 			}
 		}
