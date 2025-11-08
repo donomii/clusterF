@@ -96,6 +96,36 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 
 }
 
+// RemoveNodeFromPartitionWithTimestamp removes a node from a partition holder list with backdated timestamp
+func (pm *PartitionManager) RemoveNodeFromPartitionWithTimestamp(nodeID types.NodeID, partitionName string, backdatedTime time.Time) error {
+	if !pm.hasFrogpond() {
+		return fmt.Errorf("no frogpond available")
+	}
+
+	partitionKey := fmt.Sprintf("partitions/%s", partitionName)
+	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, nodeID)
+
+	// Create a backdated tombstone to remove this node as a holder
+	tombstone := []frogpond.DataPoint{{
+		Key:     []byte(holderKey),
+		Value:   nil,
+		Updated: backdatedTime,
+		Deleted: true,
+	}}
+
+	// Apply the tombstone locally and get resulting updates
+	resultingUpdates := pm.deps.Frogpond.AppendDataPoints(tombstone)
+
+	// Send both the original tombstone and any resulting updates to peers
+	pm.sendUpdates(tombstone)
+	if len(resultingUpdates) > 0 {
+		pm.sendUpdates(resultingUpdates)
+	}
+
+	pm.debugf("[PARTITION] Removed node %s from partition %s with backdated timestamp %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
+	return nil
+}
+
 // RunFullReindexAtStartup runs a full reindex at startup, scanning through the entire store,
 // building the updates list, and publishing it. This is different from the incremental reindex.
 func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {

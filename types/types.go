@@ -66,6 +66,7 @@ type PartitionManagerLike interface {
 	RunReindex(ctx context.Context)
 	RunFullReindexAtStartup(ctx context.Context) // Run full reindex at startup, scanning entire store and publishing updates
 	MarkForReindex(pId PartitionID)
+	RemoveNodeFromPartitionWithTimestamp(nodeID NodeID, partitionName string, backdatedTime time.Time) error // Remove a node from a partition holder list with backdated timestamp
 }
 
 // FileStoreLike abstracts the storage layer used by the partition manager.

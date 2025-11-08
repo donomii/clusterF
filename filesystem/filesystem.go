@@ -394,9 +394,20 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 
 			peer, ok := peerMap.Load(nodeID)
 			if !ok {
+				// Node not found in discovery - remove its partition entries
+				partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
+				backdatedTime := time.Now().Add(-24 * time.Hour) // Backdate by 24 hours
+				fs.debugf("[FILES] Node %s not found in discovery peers, removing partition %s entries backdated to %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
+				
+				// Remove this node from the partition holder list
+				if err := fs.cluster.PartitionManager().RemoveNodeFromPartitionWithTimestamp(types.NodeID(nodeID), partitionName, backdatedTime); err != nil {
+					fs.debugf("[FILES] Failed to remove node %s from partition %s: %v", nodeID, partitionName, err)
+				}
+				
 				msg := fmt.Errorf("[FILES] Node %s not found in discovery peers", nodeID)
 				fs.debugf("%v", msg)
 				results <- forwardResult{node: types.NodeID(nodeID), err: msg}
+				
 				return
 			}
 
@@ -461,12 +472,22 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 		successes = append(successes, res.node)
 	}
 
-	if len(errorMessages) == 0 {
-		return attempted, skipped, successes, nil, skipped == len(targets)
+	// Return partial success if any uploads succeeded, even if some failed
+	if len(successes) > 0 {
+		var combinedErr error
+		if len(errorMessages) > 0 {
+			combinedErr = errors.New(strings.Join(errorMessages, "; "))
+		}
+		return attempted, skipped, successes, combinedErr, skipped == len(targets)
 	}
 
-	combinedErr := errors.New(strings.Join(errorMessages, "; "))
-	return attempted, skipped, successes, combinedErr, false
+	// Only return error if all uploads failed
+	if len(errorMessages) > 0 {
+		combinedErr := errors.New(strings.Join(errorMessages, "; "))
+		return attempted, skipped, successes, combinedErr, false
+	}
+
+	return attempted, skipped, successes, nil, skipped == len(targets)
 }
 
 // GetFileWithContentType retrieves a file and returns an io.ReadCloser with content type
