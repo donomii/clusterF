@@ -310,6 +310,63 @@ func (fs *DiskFileStore) ScanPartitionMetaData(partitionStore types.PartitionSto
 	})
 }
 
+// ScanMetadataPartition scans only files belonging to a specific partition
+func (fs *DiskFileStore) ScanMetadataPartition(partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {
+	checkForRecursiveScan()
+
+	// Get the partition directory path
+	partitionPath, err := partitionDirectoryPath(partitionID)
+	if err != nil {
+		return err
+	}
+	partitionDir := filepath.Join(fs.metadataDir, partitionPath)
+
+	// Check if partition directory exists
+	if _, err := os.Stat(partitionDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	// Walk only this specific partition directory
+	return filepath.WalkDir(partitionDir, func(filePath string, d stdFs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, os.ErrNotExist) {
+				return nil
+			}
+			return walkErr
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		// Get relative path from partition directory to reconstruct original path
+		rel, err := filepath.Rel(partitionDir, filePath)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		// Reconstruct the original cluster path
+		originalPath := "/" + strings.ReplaceAll(rel, string(filepath.Separator), "/")
+
+		metadata, err := os.ReadFile(filePath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+
+		metadata, _ = fs.decrypt(metadata, nil)
+		return fn(originalPath, metadata)
+	})
+}
+
 // GetAllPartitionStores returns all known partition store IDs.
 func (fs *DiskFileStore) GetAllPartitionStores() ([]types.PartitionStore, error) {
 	partitionSet := make(map[types.PartitionStore]struct{})
@@ -525,9 +582,22 @@ func relativePathFromCluster(filePath string) (string, error) {
 	}
 
 	// Calculate partition for the file
-	partitionID := string(types.PartitionIDForPath(filePath))
+	partitionID := types.PartitionIDForPath(filePath)
 
-	// Create hierarchical path: p1/2/3/p12345/original/file/path
+	// Get partition directory path
+	partitionPath, err := partitionDirectoryPath(partitionID)
+	if err != nil {
+		return "", err
+	}
+
+	// Build hierarchical path: p1/2/3/p12345/original/file/path
+	hierarchicalPath := filepath.Join(partitionPath, strings.Join(builder, "/"))
+
+	return hierarchicalPath, nil
+}
+
+// partitionDirectoryPath returns the directory path for a specific partition
+func partitionDirectoryPath(partitionID types.PartitionID) (string, error) {
 	if len(partitionID) < 6 { // Should be like "p12345"
 		return "", fmt.Errorf("invalid partition ID: %s", partitionID)
 	}
@@ -538,9 +608,7 @@ func relativePathFromCluster(filePath string) (string, error) {
 	p3 := string(partitionID[3])
 
 	// Build hierarchical path
-	hierarchicalPath := filepath.Join(p1, p2, p3, partitionID, strings.Join(builder, "/"))
-
-	return hierarchicalPath, nil
+	return filepath.Join(p1, p2, p3, string(partitionID)), nil
 }
 
 func ensureParentDir(path string) error {

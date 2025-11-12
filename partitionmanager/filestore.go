@@ -644,6 +644,74 @@ func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, 
 
 }
 
+// ScanMetadataPartition scans only files belonging to a specific partition
+func (fs *FileStore) ScanMetadataPartition(partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {
+	start := time.Now()
+	checkForRecursiveScan()
+
+	// Convert partition ID to store ID
+	storeID := types.ExtractPartitionStoreID(partitionID)
+
+	fs.debugf("ScanMetadataPartition: acquiring read lock for partition store %s", storeID)
+	fs.rLockPartition(storeID)
+
+	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
+	if err != nil {
+		fs.runLockPartition(storeID)
+		return err // Skip this partition if it can't be opened
+	}
+
+	type entry struct {
+		path     string
+		metadata []byte
+	}
+	var entries []entry
+
+	// Use prefix search for the specific partition
+	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
+	_, mapErr := metadataKV.MapPrefixFunc([]byte(prefix), func(k, v []byte) error {
+		_, filePath, err := decodeStoreKey(k)
+		if err != nil {
+			return err
+		}
+
+		metaCopy := make([]byte, len(v))
+		copy(metaCopy, v)
+
+		entries = append(entries, entry{
+			path:     filePath,
+			metadata: metaCopy,
+		})
+		return nil
+	})
+
+	if mapErr != nil {
+		fs.closePartitionStores(metadataKV, contentKV)
+		fs.runLockPartition(storeID)
+		return mapErr
+	}
+
+	// Call fn for each entry
+	for _, entry := range entries {
+		decMetadata := entry.metadata
+		if len(fs.encryptionKey) > 0 {
+			decMetadata = fs.xorEncrypt(decMetadata)
+		}
+
+		if err := fn(entry.path, decMetadata); err != nil {
+			fs.closePartitionStores(metadataKV, contentKV)
+			fs.runLockPartition(storeID)
+			return err
+		}
+	}
+
+	fs.closePartitionStores(metadataKV, contentKV)
+	fs.runLockPartition(storeID)
+	fs.debugf("ScanMetadataPartition: released read lock for partition store %s after %v", storeID, time.Since(start))
+
+	return nil
+}
+
 // GetAllPartitionStores determines which partition directories to scan
 func (fs *FileStore) GetAllPartitionStores() ([]types.PartitionStore, error) {
 	// Scan all partition directories

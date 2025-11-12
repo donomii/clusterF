@@ -337,12 +337,9 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 	}
 
 	pm.recordEssentialDiskActivity()
-	pm.debugf("[PARTITION] Indexer unavailable, falling back to metadata scan for %s", partitionID)
+	pm.debugf("[PARTITION] Indexer unavailable, falling back to partition metadata scan for %s", partitionID)
 	paths := []string{}
-	err := pm.deps.FileStore.ScanMetadata("", func(path string, _ []byte) error {
-		if types.PartitionIDForPath(path) != partitionID {
-			return nil
-		}
+	err := pm.deps.FileStore.ScanMetadataPartition(partitionID, func(path string, _ []byte) error {
 		paths = append(paths, path)
 		return nil
 	})

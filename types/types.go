@@ -83,6 +83,7 @@ type FileStoreLike interface {
 	ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error
 	ScanMetadataFullKeys(pathPrefix string, fn func(path string, metadata []byte) error) error
 	ScanPartitionMetaData(partitionStore PartitionStore, fn func(path string, metadata []byte) error) error
+	ScanMetadataPartition(partitionID PartitionID, fn func(path string, metadata []byte) error) error
 	CalculatePartitionChecksum(ctx context.Context, pathPrefix string) (string, error)
 	GetAllPartitionStores() ([]PartitionStore, error)
 }
