@@ -139,7 +139,9 @@ func (e *Syncer) Mkdir(clusterPath string) error {
 
 func (e *Syncer) MkdirWithModTime(clusterPath string, modTime time.Time) error {
 	if !e.shouldExportPath(clusterPath) {
-		return nil // Skip paths outside the cluster directory filter
+		err := fmt.Errorf("path %q is outside cluster directory filter", clusterPath)
+		e.logger.Printf("[FILESYNC] %v", err)
+		return err
 	}
 	full := e.pathFor(clusterPath)
 	if err := os.MkdirAll(full, 0o755); err != nil {
@@ -152,7 +154,9 @@ func (e *Syncer) MkdirWithModTime(clusterPath string, modTime time.Time) error {
 
 func (e *Syncer) WriteFile(clusterPath string, data []byte, modTime time.Time) error {
 	if !e.shouldExportPath(clusterPath) {
-		return nil // Skip paths outside the cluster directory filter
+		err := fmt.Errorf("path %q is outside cluster directory filter", clusterPath)
+		e.logger.Printf("[FILESYNC] %v", err)
+		return err
 	}
 	full := e.pathFor(clusterPath)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -175,7 +179,9 @@ func (e *Syncer) WriteFile(clusterPath string, data []byte, modTime time.Time) e
 
 func (e *Syncer) RemoveFile(clusterPath string) error {
 	if !e.shouldExportPath(clusterPath) {
-		return nil // Skip paths outside the cluster directory filter
+		err := fmt.Errorf("path %q is outside cluster directory filter", clusterPath)
+		e.logger.Printf("[FILESYNC] %v", err)
+		return err
 	}
 	full := e.pathFor(clusterPath)
 	e.markIgnore(full)
@@ -187,7 +193,9 @@ func (e *Syncer) RemoveFile(clusterPath string) error {
 
 func (e *Syncer) RemoveDir(clusterPath string) error {
 	if !e.shouldExportPath(clusterPath) {
-		return nil // Skip paths outside the cluster directory filter
+		err := fmt.Errorf("path %q is outside cluster directory filter", clusterPath)
+		e.logger.Printf("[FILESYNC] %v", err)
+		return err
 	}
 	full := e.pathFor(clusterPath)
 	e.markIgnore(full)
