@@ -123,7 +123,8 @@ func (fs *DiskFileStore) GetMetadata(path string) ([]byte, error) {
 		}
 		return nil, readErr
 	}
-	return fs.xorEncrypt(data), nil
+	metadata, _ := fs.decrypt(data, nil)
+	return metadata, nil
 }
 
 // GetContent loads only content for a path.
@@ -139,7 +140,8 @@ func (fs *DiskFileStore) GetContent(path string) ([]byte, error) {
 		}
 		return nil, readErr
 	}
-	return fs.xorEncrypt(data), nil
+	_, content := fs.decrypt(nil, data)
+	return content, nil
 }
 
 // Put stores both metadata and content.
@@ -277,7 +279,8 @@ func (fs *DiskFileStore) ScanMetadata(pathPrefix string, fn func(path string, me
 			return err
 		}
 
-		return fn(path, fs.xorEncrypt(metadata))
+		metadata, _ = fs.decrypt(metadata, nil)
+		return fn(path, metadata)
 	})
 }
 
@@ -302,7 +305,8 @@ func (fs *DiskFileStore) ScanPartitionMetaData(partitionStore types.PartitionSto
 			return err
 		}
 
-		return fn(path, fs.xorEncrypt(metadata))
+		metadata, _ = fs.decrypt(metadata, nil)
+		return fn(path, metadata)
 	})
 }
 

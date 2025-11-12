@@ -306,7 +306,7 @@ func (fs *FileStore) GetMetadata(path string) ([]byte, error) {
 
 	// Decrypt metadata
 	if len(fs.encryptionKey) > 0 {
-		metadata = fs.xorEncrypt(metadata)
+		metadata, _ = fs.decrypt(metadata, nil)
 	}
 
 	return metadata, nil
@@ -333,7 +333,7 @@ func (fs *FileStore) GetContent(path string) ([]byte, error) {
 
 	// Decrypt content
 	if len(fs.encryptionKey) > 0 {
-		content = fs.xorEncrypt(content)
+		_, content = fs.decrypt(nil, content)
 	}
 
 	return content, nil
@@ -405,7 +405,7 @@ func (fs *FileStore) PutMetadata(path string, metadata []byte) error {
 
 	// Encrypt metadata
 	if len(fs.encryptionKey) > 0 {
-		metadata = fs.xorEncrypt(metadata)
+		metadata, _ = fs.encrypt(metadata, nil)
 	}
 
 	if err := metadataKV.Put(keyBytes, metadata); err != nil {
@@ -635,7 +635,7 @@ func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, 
 		copy(metaCopy, v)
 
 		if len(fs.encryptionKey) > 0 {
-			metaCopy = fs.xorEncrypt(metaCopy)
+			metaCopy, _ = fs.decrypt(metaCopy, nil)
 		}
 
 		return fn(path, metaCopy)
