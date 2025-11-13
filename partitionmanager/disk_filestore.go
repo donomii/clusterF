@@ -289,26 +289,7 @@ func (fs *DiskFileStore) ScanMetadataFullKeys(pathPrefix string, fn func(path st
 	return fs.ScanMetadata(pathPrefix, fn)
 }
 
-// ScanPartitionMetaData iterates metadata for a specific partition store.
-func (fs *DiskFileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, fn func(path string, metadata []byte) error) error {
-	return fs.walkMetadataFiles(func(path, metaPath string) error {
-		partitionID := HashToPartition(path)
-		if types.ExtractPartitionStoreID(partitionID) != partitionStore {
-			return nil
-		}
 
-		metadata, err := os.ReadFile(metaPath)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			return err
-		}
-
-		metadata, _ = fs.decrypt(metadata, nil)
-		return fn(path, metadata)
-	})
-}
 
 // ScanMetadataPartition scans only files belonging to a specific partition
 func (fs *DiskFileStore) ScanMetadataPartition(partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {

@@ -612,38 +612,6 @@ func (fs *FileStore) ScanMetadataFullKeys(pathPrefix string, fn func(path string
 	return fs.ScanMetadata(pathPrefix, fn)
 }
 
-func (fs *FileStore) ScanPartitionMetaData(partitionStore types.PartitionStore, fn func(path string, metadata []byte) error) error {
-	//start := time.Now()
-	//fs.debugf("[FILESTORE] Opening partitionStore %v", partitionStore)
-	metadataKV, contentKV, err := fs.openPartitionStores(partitionStore)
-	defer fs.closePartitionStores(metadataKV, contentKV)
-	if err != nil {
-		fs.debugf("Warn: skipping partition %v in search\n", partitionStore)
-		return err // Skip this partition if it can't be opened
-	}
-	//fs.debugf("Opened partition %v after %v", partitionStore, time.Since(start))
-
-	// Use prefix search for the specific partition
-	prefix := fmt.Sprintf("partition:%s:file:", partitionStore)
-	_, err = metadataKV.MapPrefixFunc([]byte(prefix), func(k, v []byte) error {
-		_, path, decodeErr := decodeStoreKey(k)
-		if decodeErr != nil {
-			return decodeErr
-		}
-
-		metaCopy := make([]byte, len(v))
-		copy(metaCopy, v)
-
-		if len(fs.encryptionKey) > 0 {
-			metaCopy, _ = fs.decrypt(metaCopy, nil)
-		}
-
-		return fn(path, metaCopy)
-	})
-	return err
-
-}
-
 // ScanMetadataPartition scans only files belonging to a specific partition
 func (fs *FileStore) ScanMetadataPartition(partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {
 	start := time.Now()
@@ -654,12 +622,13 @@ func (fs *FileStore) ScanMetadataPartition(partitionID types.PartitionID, fn fun
 
 	fs.debugf("ScanMetadataPartition: acquiring read lock for partition store %s", storeID)
 	fs.rLockPartition(storeID)
+	defer fs.runLockPartition(storeID)
 
 	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 	if err != nil {
-		fs.runLockPartition(storeID)
 		return err // Skip this partition if it can't be opened
 	}
+	defer fs.closePartitionStores(metadataKV, contentKV)
 
 	type entry struct {
 		path     string
@@ -686,8 +655,6 @@ func (fs *FileStore) ScanMetadataPartition(partitionID types.PartitionID, fn fun
 	})
 
 	if mapErr != nil {
-		fs.closePartitionStores(metadataKV, contentKV)
-		fs.runLockPartition(storeID)
 		return mapErr
 	}
 
@@ -697,18 +664,12 @@ func (fs *FileStore) ScanMetadataPartition(partitionID types.PartitionID, fn fun
 		if len(fs.encryptionKey) > 0 {
 			decMetadata = fs.xorEncrypt(decMetadata)
 		}
-
 		if err := fn(entry.path, decMetadata); err != nil {
-			fs.closePartitionStores(metadataKV, contentKV)
-			fs.runLockPartition(storeID)
 			return err
 		}
 	}
 
-	fs.closePartitionStores(metadataKV, contentKV)
-	fs.runLockPartition(storeID)
 	fs.debugf("ScanMetadataPartition: released read lock for partition store %s after %v", storeID, time.Since(start))
-
 	return nil
 }
 

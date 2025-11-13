@@ -165,7 +165,7 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 		}
 
 		pm.debugf("[FULL_REINDEX] Scanning partition store %s", partitionStore)
-		err := pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(path string, metadata []byte) error {
+		err := pm.deps.FileStore.ScanMetadataPartition(types.PartitionID(partitionStore), func(path string, metadata []byte) error {
 			partitionID := types.PartitionIDForPath(path)
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -268,8 +268,6 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 	pm.deps.Logger.Printf("[FULL_REINDEX] Completed full startup reindex: %d partitions, %d files, %d CRDT updates in %v",
 		len(partitionsCount), processedFiles, len(allUpdates), time.Since(start))
 }
-
-
 
 func (pm *PartitionManager) debugf(format string, args ...interface{}) string {
 	if pm.deps.Debugf != nil {
@@ -829,7 +827,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
 
 	// Use FileStore to scan files
-	pm.deps.FileStore.ScanPartitionMetaData(partitionStore, func(path string, metadata []byte) error {
+	pm.deps.FileStore.ScanMetadataPartition(types.PartitionID(partitionStore), func(path string, metadata []byte) error {
 		partitionID := types.PartitionIDForPath(path)
 		if ctx.Err() != nil {
 			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))
