@@ -806,6 +806,7 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 // updatePartitionMetadata updates partition info in the CRDT
 // Scans the database and counts the files, checeksums them, and then updates the CRDT
 func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPartitionID types.PartitionID) {
+	pm.ReindexList.Store(StartPartitionID, false)
 	if !pm.hasFrogpond() {
 		return
 	}
@@ -829,13 +830,11 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	// Use FileStore to scan files
 	pm.deps.FileStore.ScanMetadataPartition(types.PartitionID(partitionStore), func(path string, metadata []byte) error {
 		partitionID := types.PartitionIDForPath(path)
+		pm.ReindexList.Store(partitionID, false) // Cancel pending reindexes for any partitions we index here
 		if ctx.Err() != nil {
 			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))
 		}
-		_, exists := partitionsChecksums[partitionID]
-		if !exists {
-			pm.ReindexList.Store(partitionID, false) // Cancel pending reindexes for any partitions we index here
-		}
+
 		checksum := sha256.Sum256(metadata)
 		partitionsChecksums[partitionID] = append(partitionsChecksums[partitionID], hex.EncodeToString(checksum[:]))
 
@@ -852,8 +851,8 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 
 			// Track most recent modification time for this partition
-			if parsedMetadata.ModifiedAt.After(partitionsLastUpdate[partitionID]) {
-				partitionsLastUpdate[partitionID] = parsedMetadata.ModifiedAt
+			if parsedMetadata.LastClusterUpdate.After(partitionsLastUpdate[partitionID]) {
+				partitionsLastUpdate[partitionID] = parsedMetadata.LastClusterUpdate
 			}
 		}
 
