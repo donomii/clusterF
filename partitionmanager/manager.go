@@ -1539,17 +1539,25 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 		return
 	}
 
-	pm.deps.FileStore.ScanMetadataFullKeys("", func(path string, _ []byte) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+	// Get all partition stores directly instead of scanning every file
+	partitionStores, err := pm.deps.FileStore.GetAllPartitionStores()
+	if err != nil {
+		pm.debugf("[PARTITION] Failed to get partition stores: %v", err)
+		return
+	}
 
-		partitionID := types.PartitionIDForPath(path)
-		if partitionID != "" {
+	// Mark all possible partitions for reindex based on partition stores
+	for _, partitionStore := range partitionStores {
+		if ctx.Err() != nil {
+			return
+		}
+		// Partition store is like "p12" - mark all partitions that start with this
+		// Generate all possible partition IDs for this store (p12000 to p12999)
+		for i := 0; i < 1000; i++ {
+			partitionID := types.PartitionID(fmt.Sprintf("%s%03d", partitionStore, i))
 			pm.MarkForReindex(partitionID)
 		}
-		return nil
-	})
+	}
 	pm.RunReindex(ctx)
 }
 
