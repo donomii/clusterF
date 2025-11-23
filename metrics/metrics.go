@@ -85,25 +85,11 @@ func NewMetricsCollector(publishFunc func(key string, payload []byte), threadMgr
 		mc.schedulerLoop(ctx)
 	}
 
-	if threadMgr != nil {
-		if err := threadMgr.StartThreadWithRestart("metrics-publisher", startPublisher, true, nil); err != nil {
-			panic(fmt.Sprintf("failed to start metrics publisher thread: %v", err))
-		}
-		if err := threadMgr.StartThreadWithRestart("metrics-scheduler", startScheduler, true, nil); err != nil {
-			panic(fmt.Sprintf("failed to start metrics scheduler thread: %v", err))
-		}
-	} else {
-		ctx, cancel := context.WithCancel(context.Background())
-		mc.localCancel = cancel
-		mc.backgroundWg.Add(2)
-		go func() {
-			defer mc.backgroundWg.Done()
-			startPublisher(ctx)
-		}()
-		go func() {
-			defer mc.backgroundWg.Done()
-			startScheduler(ctx)
-		}()
+	if err := threadMgr.StartThreadWithRestart("metrics-publisher", startPublisher, true, nil); err != nil {
+		panic(fmt.Sprintf("failed to start metrics publisher thread: %v", err))
+	}
+	if err := threadMgr.StartThreadWithRestart("metrics-scheduler", startScheduler, true, nil); err != nil {
+		panic(fmt.Sprintf("failed to start metrics scheduler thread: %v", err))
 	}
 
 	return mc

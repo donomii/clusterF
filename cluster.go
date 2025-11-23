@@ -372,10 +372,16 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 	// Initialize thread manager
 	c.threadManager = threadmanager.NewThreadManager(id, opts.Logger)
+	if c.threadManager == nil {
+		log.Fatalf("Failed to create thread manager")
+	}
 	c.debugf("Initialized thread manager\n")
 
 	// Initialize metrics collector
 	metricsCollector := metrics.NewMetricsCollector(c.publishMetricsDataPoint, c.threadManager, string(c.NodeId))
+	if metricsCollector == nil {
+		log.Fatalf("Failed to create metrics collector")
+	}
 	metrics.SetGlobalCollector(metricsCollector)
 	c.debugf("Initialized metrics collector\n")
 

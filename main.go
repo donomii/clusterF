@@ -245,6 +245,18 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 		Debug:         debug,
 	})
 
+	// Wait for interrupt signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	// Start signal handler in background
+	go func() {
+		<-sigChan
+		fmt.Println("\nShutting down...")
+		cluster.Stop()
+		fmt.Println("Goodbye!")
+		os.Exit(0)
+	}()
+
 	// Enable debug logging if requested
 	cluster.Debug = debug
 
@@ -306,10 +318,6 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 			cluster.Logger().Printf("[PROFILING] Enabled at startup")
 		}
 	}
-
-	// Wait for interrupt signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Print startup information
 	fmt.Printf(`
@@ -378,14 +386,7 @@ Press Ctrl+C to stop...
 		case !hasGraphicsEnvironment():
 			cluster.Logger().Printf("[UI] No graphics environment detected, skipping desktop UI")
 		default:
-			// Start signal handler in background
-			go func() {
-				<-sigChan
-				fmt.Println("\nShutting down...")
-				cluster.Stop()
-				fmt.Println("Goodbye!")
-				os.Exit(0)
-			}()
+
 			// macOS WebView must run on main thread; protect from panic to avoid crashing.
 			func() {
 				defer func() { _ = recover() }()
@@ -399,11 +400,9 @@ Press Ctrl+C to stop...
 		}
 	}
 
-	// Wait for signal if desktop UI not running
-	<-sigChan
-	fmt.Println("\nShutting down...")
-	cluster.Stop()
-	fmt.Println("Goodbye!")
+	for {
+		time.Sleep(1 * time.Second)
+	}
 }
 
 // CheckSuccessWithTimeout polls a condition function until it returns true or times out.
