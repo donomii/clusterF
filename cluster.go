@@ -564,7 +564,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Initialized cluster settings\n")
 
 	// Store our node metadata in frogpond
-	//c.updateNodeMetadata()
+	c.updateNodeMetadata()
 	c.debugf("Stored initial node metadata in frogpond\n")
 
 	// Store node ID in data directory for future reference

@@ -310,7 +310,7 @@ func (c *Cluster) getAvailableNodes() []types.NodeID {
 
 // periodicFrogpondSync regularly updates our node metadata
 func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
-	//c.updateNodeMetadata()
+	c.updateNodeMetadata()
 	c.persistCRDTToFile()
 	ticker := time.NewTicker(time.Duration(c.GetPartitionSyncInterval()) * time.Second) //FIXME give this its own config setting
 	defer ticker.Stop()
@@ -322,7 +322,7 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 		case <-ticker.C:
 			c.logger.Printf("Started updateNodeMetadata\n")
 			// Update our node metadata
-			//c.updateNodeMetadata()
+			c.updateNodeMetadata()
 			c.logger.Printf("Finish updateNodeMetadata\n")
 
 			c.logger.Printf("Started persistCRDTToFile\n")

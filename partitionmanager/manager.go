@@ -1262,7 +1262,7 @@ func (pm *PartitionManager) getPartitionSyncInterval() time.Duration {
 	}
 
 	if seconds < 1 {
-		seconds = 1
+		seconds = types.DefaultPartitionSyncIntervalSeconds
 	}
 
 	dur := time.Duration(seconds) * time.Second
@@ -1355,7 +1355,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 				throttle <- struct{}{}
 				pm.debugf("Partition syncs in progress: %v", len(throttle))
 				// Throttle concurrent syncs
-				go pm.doPartitionSync(ctx, partitionID, throttle, holders)
+				pm.doPartitionSync(ctx, partitionID, throttle, holders)
 
 			} else {
 				// Nothing to sync, wait a bit before checking again
