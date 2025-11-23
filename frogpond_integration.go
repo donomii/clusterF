@@ -337,8 +337,13 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 
 // calculateDataDirSize calculates the total size of all files in the data directory
 func (c *Cluster) calculateDataDirSize() int64 {
+	startTime := time.Now()
 	var totalSize int64
 	err := filepath.Walk(c.DataDir, func(path string, info os.FileInfo, err error) error {
+		if startTime.Sub(time.Now()) > time.Second*10 {
+			c.debugf("[DISK_USAGE] Timeout while calculating data directory size")
+			return fmt.Errorf("timeout, used bytes scan taking too long")
+		}
 		if err != nil {
 			c.debugf("[DISK_USAGE] Error accessing file %s while calculating data directory size: %v", path, err)
 			return nil // Skip files with errors
