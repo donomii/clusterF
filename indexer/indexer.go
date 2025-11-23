@@ -427,6 +427,9 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 	total := 0
 	active := 0
 	err := pm.ScanAllFiles(func(filePath string, metadata types.FileMetadata) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		total++
 		idx.AddFile(filePath, metadata)
 
