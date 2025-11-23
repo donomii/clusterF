@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>📈 Cluster Metrics</title>
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+
+        body {
+            font-family: "Segoe UI", Arial, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            margin: 0;
+            padding: 30px;
+        }
+
+        a {
+            color: #38bdf8;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 2.8em;
+            background: linear-gradient(120deg, #22d3ee, #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 25px;
+        }
+
+        .btn {
+            background: linear-gradient(120deg, #3b82f6, #8b5cf6);
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 999px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .status-bar {
+            text-align: center;
+            margin-bottom: 25px;
+            color: #94a3b8;
+            font-size: 14px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .node-card {
+            border-radius: 12px;
+            padding: 20px;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.4);
+        }
+
+        .node-card h2 {
+            margin: 0 0 5px 0;
+            font-size: 1.2em;
+        }
+
+        .timestamp {
+            font-size: 12px;
+            color: #cbd5f5;
+            margin-bottom: 12px;
+        }
+
+        .runtime-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+            margin-bottom: 15px;
+            font-size: 13px;
+        }
+
+        .section-title {
+            margin: 15px 0 8px 0;
+            font-size: 0.95em;
+            color: #93c5fd;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .metric-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .metric-table th,
+        .metric-table td {
+            text-align: left;
+            padding: 6px 8px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+        }
+
+        .metric-table th {
+            font-weight: bold;
+            color: #cbd5f5;
+            text-transform: uppercase;
+            font-size: 12px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            border: 1px dashed rgba(148, 163, 184, 0.3);
+            border-radius: 12px;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>📈 Cluster Metrics</h1>
+        <p>Live metrics collected via CRDT | <a href="/">← Back to Home</a></p>
+    </div>
+
+    <div class="controls">
+        <button class="btn" id="refreshButton">Refresh Now</button>
+        <span style="color:#94a3b8;font-size:13px;">Auto refresh every 5 seconds</span>
+    </div>
+
+    <div class="status-bar" id="status">Loading metrics...</div>
+
+    <div id="metricsContainer" class="metrics-grid"></div>
+
+    <div id="emptyState" class="empty-state" style="display:none;">
+        No metrics have been published yet. Once nodes start reporting, they will appear here automatically.
+    </div>
+
+    <script src="/metrics.js"></script>
+</body>
+
+</html>

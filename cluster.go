@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,7 @@ import (
 	"github.com/donomii/clusterF/frontend"
 	"github.com/donomii/clusterF/httpclient"
 	"github.com/donomii/clusterF/indexer"
+	"github.com/donomii/clusterF/metrics"
 	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
@@ -371,6 +373,11 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	// Initialize thread manager
 	c.threadManager = threadmanager.NewThreadManager(id, opts.Logger)
 	c.debugf("Initialized thread manager\n")
+
+	// Initialize metrics collector
+	metricsCollector := metrics.NewMetricsCollector(c.publishMetricsDataPoint, c.threadManager, string(c.NodeId))
+	metrics.SetGlobalCollector(metricsCollector)
+	c.debugf("Initialized metrics collector\n")
 
 	// Create HTTP clients with connection pooling and differentiated timeouts
 	controlTransport := &http.Transport{
@@ -1051,7 +1058,10 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	}))
 	mux.HandleFunc("/monitor", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleMonitorDashboard))
 	mux.HandleFunc("/monitor.js", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleMonitorJS))
+	mux.HandleFunc("/metrics", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleMetricsPage))
+	mux.HandleFunc("/metrics.js", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleMetricsJS))
 	mux.HandleFunc("/api/cluster-stats", corsMiddleware(c.Debug, c.Logger(), c, c.handleClusterStats))
+	mux.HandleFunc("/api/metrics", corsMiddleware(c.Debug, c.Logger(), c, c.handleMetricsAPI))
 	mux.HandleFunc("/cluster-visualizer.html", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleVisualizer))
 	// File system endpoints
 	mux.HandleFunc("/files/", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleFiles))
@@ -1198,6 +1208,51 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	//c.debugf("[CLUSTER_STATS] Returning stats: node_id=%s, peer_count=%d, rf=%v", c.NodeId, len(peerList), stats.Replication_factor)
 
 	json.NewEncoder(w).Encode(stats)
+}
+
+func (c *Cluster) handleMetricsAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	response := struct {
+		GeneratedAt int64                     `json:"generated_at"`
+		Snapshots   []metrics.MetricsSnapshot `json:"snapshots"`
+	}{
+		GeneratedAt: time.Now().Unix(),
+	}
+
+	if c.frogpond == nil {
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	dataPoints := c.frogpond.GetAllMatchingPrefix("metrics/")
+	snapshots := make([]metrics.MetricsSnapshot, 0, len(dataPoints))
+
+	for _, dp := range dataPoints {
+		if dp.Deleted || len(dp.Value) == 0 {
+			continue
+		}
+		var snapshot metrics.MetricsSnapshot
+		if err := json.Unmarshal(dp.Value, &snapshot); err != nil {
+			c.debugf("[METRICS] Failed to decode metrics entry %s: %v", dp.Key, err)
+			continue
+		}
+		if snapshot.NodeID == "" {
+			key := string(dp.Key)
+			snapshot.NodeID = strings.TrimPrefix(key, "metrics/")
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+
+	sort.Slice(snapshots, func(i, j int) bool {
+		if snapshots[i].NodeID == snapshots[j].NodeID {
+			return snapshots[i].Timestamp > snapshots[j].Timestamp
+		}
+		return snapshots[i].NodeID < snapshots[j].NodeID
+	})
+
+	response.Snapshots = snapshots
+	json.NewEncoder(w).Encode(response)
 }
 
 // ---------- Partition HTTP Handlers ----------

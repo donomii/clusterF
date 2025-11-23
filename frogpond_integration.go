@@ -47,6 +47,18 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 	}
 }
 
+// publishMetricsDataPoint writes metrics snapshots into frogpond and propagates them
+func (c *Cluster) publishMetricsDataPoint(key string, payload []byte) {
+	if c.frogpond == nil {
+		return
+	}
+
+	updates := c.frogpond.SetDataPoint(key, payload)
+	if len(updates) > 0 {
+		c.sendUpdatesToPeers(updates)
+	}
+}
+
 func (c *Cluster) getPeerList() []types.PeerInfo {
 	nodes := c.frogpond.GetAllMatchingPrefix("nodes/")
 	var peerList []types.PeerInfo

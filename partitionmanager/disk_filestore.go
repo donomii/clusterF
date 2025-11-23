@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/donomii/clusterF/metrics"
 	"github.com/donomii/clusterF/types"
 )
 
@@ -75,13 +76,18 @@ func (fs *DiskFileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
 
 // Get loads both metadata and content for a path.
 func (fs *DiskFileStore) Get(path string) (*types.FileData, error) {
+	defer metrics.StartGlobalTimer("disk_filestore.get")()
+	metrics.IncrementGlobalCounter("disk_filestore.get.calls")
+
 	partition := types.PartitionIDForPath(path)
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
 		return nil, err
 	}
 	contentPath, err := fs.contentPath(path)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
 		return nil, err
 	}
 
@@ -89,17 +95,23 @@ func (fs *DiskFileStore) Get(path string) (*types.FileData, error) {
 	content, contentErr := os.ReadFile(contentPath)
 
 	if errors.Is(metaErr, os.ErrNotExist) && errors.Is(contentErr, os.ErrNotExist) {
+		metrics.IncrementGlobalCounter("disk_filestore.get.notfound")
 		return &types.FileData{Partition: partition, Path: path, Exists: false}, fmt.Errorf("not found: %s", path)
 	}
 
 	if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
+		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
 		return nil, metaErr
 	}
 	if contentErr != nil && !errors.Is(contentErr, os.ErrNotExist) {
+		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
 		return nil, contentErr
 	}
 
 	metadata, content = fs.decrypt(metadata, content)
+	metrics.IncrementGlobalCounter("disk_filestore.get.success")
+	metrics.AddGlobalCounter("disk_filestore.get.metadata_bytes", int64(len(metadata)))
+	metrics.AddGlobalCounter("disk_filestore.get.content_bytes", int64(len(content)))
 
 	return &types.FileData{
 		Partition: partition,
@@ -112,53 +124,76 @@ func (fs *DiskFileStore) Get(path string) (*types.FileData, error) {
 
 // GetMetadata loads only metadata for a path.
 func (fs *DiskFileStore) GetMetadata(path string) ([]byte, error) {
+	defer metrics.StartGlobalTimer("disk_filestore.get_metadata")()
+	metrics.IncrementGlobalCounter("disk_filestore.get_metadata.calls")
+
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.get_metadata.errors")
 		return nil, err
 	}
 	data, readErr := os.ReadFile(metaPath)
 	if readErr != nil {
 		if errors.Is(readErr, os.ErrNotExist) {
+			metrics.IncrementGlobalCounter("disk_filestore.get_metadata.notfound")
 			return nil, fmt.Errorf("not found: %s", path)
 		}
+		metrics.IncrementGlobalCounter("disk_filestore.get_metadata.errors")
 		return nil, readErr
 	}
 	metadata, _ := fs.decrypt(data, nil)
+	metrics.IncrementGlobalCounter("disk_filestore.get_metadata.success")
+	metrics.AddGlobalCounter("disk_filestore.get_metadata.bytes", int64(len(metadata)))
 	return metadata, nil
 }
 
 // GetContent loads only content for a path.
 func (fs *DiskFileStore) GetContent(path string) ([]byte, error) {
+	defer metrics.StartGlobalTimer("disk_filestore.get_content")()
+	metrics.IncrementGlobalCounter("disk_filestore.get_content.calls")
+
 	contentPath, err := fs.contentPath(path)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.get_content.errors")
 		return nil, err
 	}
 	data, readErr := os.ReadFile(contentPath)
 	if readErr != nil {
 		if errors.Is(readErr, os.ErrNotExist) {
+			metrics.IncrementGlobalCounter("disk_filestore.get_content.notfound")
 			return nil, fmt.Errorf("not found: %s", path)
 		}
+		metrics.IncrementGlobalCounter("disk_filestore.get_content.errors")
 		return nil, readErr
 	}
 	_, content := fs.decrypt(nil, data)
+	metrics.IncrementGlobalCounter("disk_filestore.get_content.success")
+	metrics.AddGlobalCounter("disk_filestore.get_content.bytes", int64(len(content)))
 	return content, nil
 }
 
 // Put stores both metadata and content.
 func (fs *DiskFileStore) Put(path string, metadata, content []byte) error {
+	defer metrics.StartGlobalTimer("disk_filestore.put")()
+	metrics.IncrementGlobalCounter("disk_filestore.put.calls")
+
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
 		return err
 	}
 	contentPath, err := fs.contentPath(path)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
 		return err
 	}
 
 	if err := ensureParentDir(metaPath); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
 		return err
 	}
 	if err := ensureParentDir(contentPath); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
 		return err
 	}
 
@@ -171,31 +206,42 @@ func (fs *DiskFileStore) Put(path string, metadata, content []byte) error {
 	encMetadata, encContent := fs.encrypt(metadata, content)
 
 	if err := os.WriteFile(metaPath, encMetadata, 0o644); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
 		return err
 	}
 	if !modTime.IsZero() {
 		_ = os.Chtimes(metaPath, modTime, modTime)
 	}
 	if err := os.WriteFile(contentPath, encContent, 0o644); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
 		return err
 	}
 	if !modTime.IsZero() {
 		_ = os.Chtimes(contentPath, modTime, modTime)
 	}
+	metrics.IncrementGlobalCounter("disk_filestore.put.success")
+	metrics.AddGlobalCounter("disk_filestore.put.metadata_bytes", int64(len(metadata)))
+	metrics.AddGlobalCounter("disk_filestore.put.content_bytes", int64(len(content)))
 	return nil
 }
 
 // PutMetadata stores metadata only.
 func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
+	defer metrics.StartGlobalTimer("disk_filestore.put_metadata")()
+	metrics.IncrementGlobalCounter("disk_filestore.put_metadata.calls")
+
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
 		return err
 	}
 	if err := ensureParentDir(metaPath); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
 		return err
 	}
 	encMetadata, _ := fs.encrypt(metadata, nil)
 	if err := os.WriteFile(metaPath, encMetadata, 0o644); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
 		return err
 	}
 
@@ -207,26 +253,36 @@ func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
 		return nil
 	}
 	_ = os.Chtimes(metaPath, meta.ModifiedAt, meta.ModifiedAt)
+	metrics.IncrementGlobalCounter("disk_filestore.put_metadata.success")
+	metrics.AddGlobalCounter("disk_filestore.put_metadata.bytes", int64(len(metadata)))
 	return nil
 }
 
 // Delete removes metadata and content for a path.
 func (fs *DiskFileStore) Delete(path string) error {
+	defer metrics.StartGlobalTimer("disk_filestore.delete")()
+	metrics.IncrementGlobalCounter("disk_filestore.delete.calls")
+
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.delete.errors")
 		return err
 	}
 	contentPath, err := fs.contentPath(path)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.delete.errors")
 		return err
 	}
 
 	if removeErr := os.Remove(metaPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		metrics.IncrementGlobalCounter("disk_filestore.delete.errors")
 		return removeErr
 	}
 	if removeErr := os.Remove(contentPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		metrics.IncrementGlobalCounter("disk_filestore.delete.errors")
 		return removeErr
 	}
+	metrics.IncrementGlobalCounter("disk_filestore.delete.success")
 	return nil
 }
 
@@ -234,7 +290,10 @@ func (fs *DiskFileStore) Delete(path string) error {
 func (fs *DiskFileStore) Scan(pathPrefix string, fn func(path string, metadata, content []byte) error) error {
 	checkForRecursiveScan()
 
-	return fs.walkMetadataFiles(func(path, metaPath string) error {
+	defer metrics.StartGlobalTimer("disk_filestore.scan")()
+	metrics.IncrementGlobalCounter("disk_filestore.scan.calls")
+
+	err := fs.walkMetadataFiles(func(path, metaPath string) error {
 		if pathPrefix != "" && !strings.HasPrefix(path, pathPrefix) {
 			return nil
 		}
@@ -258,15 +317,32 @@ func (fs *DiskFileStore) Scan(pathPrefix string, fn func(path string, metadata, 
 		}
 
 		metadata, content = fs.decrypt(metadata, content)
-		return fn(path, metadata, content)
+		metrics.AddGlobalCounter("disk_filestore.scan.entries", 1)
+		metrics.AddGlobalCounter("disk_filestore.scan.metadata_bytes", int64(len(metadata)))
+		metrics.AddGlobalCounter("disk_filestore.scan.content_bytes", int64(len(content)))
+		if err := fn(path, metadata, content); err != nil {
+			metrics.IncrementGlobalCounter("disk_filestore.scan.errors")
+			return err
+		}
+		return nil
 	})
+	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.scan.errors")
+		return err
+	}
+
+	metrics.IncrementGlobalCounter("disk_filestore.scan.success")
+	return nil
 }
 
 // ScanMetadata iterates metadata entries and passes the path to fn.
 func (fs *DiskFileStore) ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error {
 	checkForRecursiveScan()
 
-	return fs.walkMetadataFiles(func(path, metaPath string) error {
+	defer metrics.StartGlobalTimer("disk_filestore.scan_metadata")()
+	metrics.IncrementGlobalCounter("disk_filestore.scan_metadata.calls")
+
+	err := fs.walkMetadataFiles(func(path, metaPath string) error {
 		if pathPrefix != "" && !strings.HasPrefix(path, pathPrefix) {
 			return nil
 		}
@@ -280,8 +356,21 @@ func (fs *DiskFileStore) ScanMetadata(pathPrefix string, fn func(path string, me
 		}
 
 		metadata, _ = fs.decrypt(metadata, nil)
-		return fn(path, metadata)
+		metrics.AddGlobalCounter("disk_filestore.scan_metadata.entries", 1)
+		metrics.AddGlobalCounter("disk_filestore.scan_metadata.bytes", int64(len(metadata)))
+		if err := fn(path, metadata); err != nil {
+			metrics.IncrementGlobalCounter("disk_filestore.scan_metadata.errors")
+			return err
+		}
+		return nil
 	})
+	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.scan_metadata.errors")
+		return err
+	}
+
+	metrics.IncrementGlobalCounter("disk_filestore.scan_metadata.success")
+	return nil
 }
 
 // ScanMetadataFullKeys iterates metadata entries and passes the path to fn.
@@ -289,15 +378,16 @@ func (fs *DiskFileStore) ScanMetadataFullKeys(pathPrefix string, fn func(path st
 	return fs.ScanMetadata(pathPrefix, fn)
 }
 
-
-
 // ScanMetadataPartition scans only files belonging to a specific partition
 func (fs *DiskFileStore) ScanMetadataPartition(partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {
 	checkForRecursiveScan()
+	defer metrics.StartGlobalTimer("disk_filestore.scan_metadata_partition")()
+	metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.calls")
 
 	// Get the partition directory path
 	partitionPath, err := partitionDirectoryPath(partitionID)
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.errors")
 		return err
 	}
 	partitionDir := filepath.Join(fs.metadataDir, partitionPath)
@@ -305,17 +395,20 @@ func (fs *DiskFileStore) ScanMetadataPartition(partitionID types.PartitionID, fn
 	// Check if partition directory exists
 	if _, err := os.Stat(partitionDir); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.success")
 			return nil
 		}
+		metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.errors")
 		return err
 	}
 
 	// Walk only this specific partition directory
-	return filepath.WalkDir(partitionDir, func(filePath string, d stdFs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(partitionDir, func(filePath string, d stdFs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if errors.Is(walkErr, os.ErrNotExist) {
 				return nil
 			}
+			metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.errors")
 			return walkErr
 		}
 
@@ -340,82 +433,105 @@ func (fs *DiskFileStore) ScanMetadataPartition(partitionID types.PartitionID, fn
 			if errors.Is(err, os.ErrNotExist) {
 				return nil
 			}
+			metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.errors")
 			return err
 		}
 
 		metadata, _ = fs.decrypt(metadata, nil)
-		return fn(originalPath, metadata)
+		metrics.AddGlobalCounter("disk_filestore.scan_metadata_partition.entries", 1)
+		metrics.AddGlobalCounter("disk_filestore.scan_metadata_partition.bytes", int64(len(metadata)))
+		if err := fn(originalPath, metadata); err != nil {
+			metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.errors")
+			return err
+		}
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.success")
+	return nil
 }
 
 // GetAllPartitionStores returns all known partition store IDs.
 func (fs *DiskFileStore) GetAllPartitionStores() ([]types.PartitionStore, error) {
+	defer metrics.StartGlobalTimer("disk_filestore.list_partitions")()
+	metrics.IncrementGlobalCounter("disk_filestore.list_partitions.calls")
+
 	partitionSet := make(map[types.PartitionStore]struct{})
-	
+
 	// Walk the hierarchical directory structure: p1/p2/p3/p12345/
 	p1Entries, err := os.ReadDir(fs.metadataDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			metrics.IncrementGlobalCounter("disk_filestore.list_partitions.success")
 			return []types.PartitionStore{}, nil
 		}
+		metrics.IncrementGlobalCounter("disk_filestore.list_partitions.errors")
 		return nil, err
 	}
-	
+
 	for _, p1 := range p1Entries {
 		if !p1.IsDir() || len(p1.Name()) != 1 {
 			continue
 		}
-		
+
 		p2Dir := filepath.Join(fs.metadataDir, p1.Name())
 		p2Entries, err := os.ReadDir(p2Dir)
 		if err != nil {
 			continue
 		}
-		
+
 		for _, p2 := range p2Entries {
 			if !p2.IsDir() || len(p2.Name()) != 1 {
 				continue
 			}
-			
+
 			p3Dir := filepath.Join(p2Dir, p2.Name())
 			p3Entries, err := os.ReadDir(p3Dir)
 			if err != nil {
 				continue
 			}
-			
+
 			for _, p3 := range p3Entries {
 				if !p3.IsDir() || len(p3.Name()) != 1 {
 					continue
 				}
-				
+
 				partitionDir := filepath.Join(p3Dir, p3.Name())
 				partitionEntries, err := os.ReadDir(partitionDir)
 				if err != nil {
 					continue
 				}
-				
+
 				for _, partition := range partitionEntries {
 					if !partition.IsDir() || !strings.HasPrefix(partition.Name(), "p") {
 						continue
 					}
-					
+
 					// The partition directory name IS the partition store ID
 					partitionSet[types.PartitionStore(partition.Name())] = struct{}{}
 				}
 			}
 		}
 	}
-	
+
 	partitions := make([]types.PartitionStore, 0, len(partitionSet))
 	for p := range partitionSet {
 		partitions = append(partitions, p)
 	}
 	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
+	metrics.IncrementGlobalCounter("disk_filestore.list_partitions.success")
+	metrics.AddGlobalCounter("disk_filestore.list_partitions.count", int64(len(partitions)))
 	return partitions, nil
 }
 
 // CalculatePartitionChecksum reproduces the checksum calculation used by the existing store.
 func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPrefix string) (string, error) {
+	defer metrics.StartGlobalTimer("disk_filestore.calculate_checksum")()
+	metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.calls")
+
 	type entry struct {
 		partition types.PartitionID
 		path      string
@@ -427,6 +543,7 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPre
 
 	err := fs.Scan(pathPrefix, func(path string, metadata, content []byte) error {
 		if ctx.Err() != nil {
+			metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.errors")
 			return ctx.Err()
 		}
 
@@ -446,6 +563,7 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPre
 		return nil
 	})
 	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.errors")
 		return "", err
 	}
 
@@ -464,6 +582,8 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPre
 		hash.Write(e.content)
 	}
 
+	metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.success")
+	metrics.AddGlobalCounter("disk_filestore.calculate_checksum.entries", int64(len(entries)))
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 

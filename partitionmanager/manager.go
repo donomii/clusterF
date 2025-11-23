@@ -166,10 +166,10 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 
 		pm.debugf("[FULL_REINDEX] Scanning partition store %s", partitionStore)
 		err := pm.deps.FileStore.ScanMetadataPartition(types.PartitionID(partitionStore), func(path string, metadata []byte) error {
-			partitionID := types.PartitionIDForPath(path)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			partitionID := types.PartitionIDForPath(path)
 
 			processedFiles++
 

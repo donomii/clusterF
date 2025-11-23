@@ -68,6 +68,12 @@ func (f *Frontend) HandleWelcome(w http.ResponseWriter, r *http.Request) {
                 <p>Node statistics and controls</p>
                 <a href="/monitor">Open Monitor Dashboard</a>
             </div>
+
+            <div class="endpoint-card" onclick="window.location='/metrics'">
+                <h3>📈 Metrics</h3>
+                <p>Live counters & timers</p>
+                <a href="/metrics">Open Metrics Page</a>
+            </div>
             
             <div class="endpoint-card" onclick="window.location='/crdt'">
                 <h3>🧪 CRDT Inspector</h3>
