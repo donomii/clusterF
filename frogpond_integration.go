@@ -340,7 +340,7 @@ func (c *Cluster) calculateDataDirSize() int64 {
 	startTime := time.Now()
 	var totalSize int64
 	err := filepath.Walk(c.DataDir, func(path string, info os.FileInfo, err error) error {
-		if startTime.Sub(time.Now()) > time.Second*10 {
+		if time.Now().Sub(startTime) > time.Second*10 {
 			c.debugf("[DISK_USAGE] Timeout while calculating data directory size")
 			return fmt.Errorf("timeout, used bytes scan taking too long")
 		}
