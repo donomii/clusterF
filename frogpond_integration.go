@@ -340,6 +340,7 @@ func (c *Cluster) calculateDataDirSize() int64 {
 	var totalSize int64
 	err := filepath.Walk(c.DataDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			c.debugf("[DISK_USAGE] Error accessing file %s while calculating data directory size: %v", path, err)
 			return nil // Skip files with errors
 		}
 		if !info.IsDir() {
@@ -348,7 +349,7 @@ func (c *Cluster) calculateDataDirSize() int64 {
 		return nil
 	})
 	if err != nil {
-		c.debugf("[DISK_USAGE] Error calculating data directory size: %v", err)
+		c.debugf("[DISK_USAGE] Error walking data directory %s: %v", c.DataDir, err)
 		return 0
 	}
 	return totalSize
@@ -461,7 +462,7 @@ func (c *Cluster) handleFrogpondUpdate(w http.ResponseWriter, r *http.Request) {
 
 	var updates []frogpond.DataPoint
 	if err := json.Unmarshal(body, &updates); err != nil {
-		c.Logger().Printf("[DEBUG] Failed to parse updates: %v", err)
+		c.Logger().Printf("[DEBUG] Failed to parse updates from %s: error=%v, body_len=%d, first_100_bytes=%q", r.RemoteAddr, err, len(body), string(body[:min(100, len(body))]))
 		http.Error(w, "Failed to parse updates", http.StatusBadRequest)
 		return
 	}
