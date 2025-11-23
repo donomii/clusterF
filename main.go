@@ -212,10 +212,6 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 func stopNodes(nodes []*Cluster) {
 	var wg sync.WaitGroup
 
-	// Use semaphore to limit concurrency
-	maxConcurrency := 20
-	sem := make(chan struct{}, maxConcurrency)
-
 	for _, node := range nodes {
 		if node == nil {
 			continue
@@ -224,8 +220,6 @@ func stopNodes(nodes []*Cluster) {
 		wg.Add(1)
 		go func(n *Cluster) {
 			defer wg.Done()
-			sem <- struct{}{}        // Acquire semaphore
-			defer func() { <-sem }() // Release semaphore
 			n.Stop()
 		}(node)
 	}
