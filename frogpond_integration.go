@@ -310,7 +310,7 @@ func (c *Cluster) getAvailableNodes() []types.NodeID {
 
 // periodicFrogpondSync regularly updates our node metadata
 func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
-	c.updateNodeMetadata()
+	//c.updateNodeMetadata()
 	c.persistCRDTToFile()
 	ticker := time.NewTicker(time.Duration(c.GetPartitionSyncInterval()) * time.Second) //FIXME give this its own config setting
 	defer ticker.Stop()
@@ -322,7 +322,7 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 		case <-ticker.C:
 			c.logger.Printf("Started updateNodeMetadata\n")
 			// Update our node metadata
-			c.updateNodeMetadata()
+			//c.updateNodeMetadata()
 			c.logger.Printf("Finish updateNodeMetadata\n")
 
 			c.logger.Printf("Started persistCRDTToFile\n")
@@ -340,7 +340,7 @@ func (c *Cluster) calculateDataDirSize() int64 {
 	startTime := time.Now()
 	var totalSize int64
 	err := filepath.Walk(c.DataDir, func(path string, info os.FileInfo, err error) error {
-		if time.Now().Sub(startTime) > time.Second*10 {
+		if time.Since(startTime) > time.Second*10 {
 			c.debugf("[DISK_USAGE] Timeout while calculating data directory size")
 			return fmt.Errorf("timeout, used bytes scan taking too long")
 		}
