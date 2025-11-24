@@ -373,11 +373,6 @@ func (fs *DiskFileStore) ScanMetadata(pathPrefix string, fn func(path string, me
 	return nil
 }
 
-// ScanMetadataFullKeys iterates metadata entries and passes the path to fn.
-func (fs *DiskFileStore) ScanMetadataFullKeys(pathPrefix string, fn func(path string, metadata []byte) error) error {
-	return fs.ScanMetadata(pathPrefix, fn)
-}
-
 // ScanMetadataPartition scans only files belonging to a specific partition
 func (fs *DiskFileStore) ScanMetadataPartition(partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {
 	checkForRecursiveScan()

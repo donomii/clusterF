@@ -673,10 +673,7 @@ func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metada
 	return nil
 }
 
-// ScanMetadataFullKeys calls fn for each metadata entry, providing partition and path.
-func (fs *FileStore) ScanMetadataFullKeys(pathPrefix string, fn func(path string, metadata []byte) error) error {
-	return fs.ScanMetadata(pathPrefix, fn)
-}
+
 
 // ScanMetadataPartition scans only files belonging to a specific partition
 func (fs *FileStore) ScanMetadataPartition(partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {

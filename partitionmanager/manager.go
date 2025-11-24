@@ -1497,7 +1497,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 	return "", nil // Nothing to sync
 }
 
-// getPartitionStats returns statistics about partitions
+
 // ScanAllFiles scans all local partition stores and calls fn for each file
 func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types.FileMetadata) error) error {
 	start := time.Now()
