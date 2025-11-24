@@ -31,16 +31,9 @@ type Indexer struct {
 	mu        sync.RWMutex
 	indexType IndexType
 	logger    *log.Logger
-
-	// Trie-based index (default)
-	trie *patricia.Trie // Maps file path -> FileMetadata
-
-	// Flat map-based index (fallback)
-	files map[string]types.FileMetadata // path -> metadata
+	backend   searchBackend
 
 	// Partition awareness
-	partitionFiles     map[types.PartitionID]map[string]struct{} // partition -> all known paths (including tombstones)
-	pathToPartition    map[string]types.PartitionID              // path -> partition
 	pathMetadata       map[string]types.FileMetadata             // active path -> metadata
 	partitionModLatest map[types.PartitionID]time.Time           // partition -> latest ModifiedAt
 	partitionActive    map[types.PartitionID]map[string]struct{} // partition -> active (non-deleted) paths
@@ -53,6 +46,190 @@ type Indexer struct {
 	suppressUpdates atomic.Bool
 }
 
+type searchBackend interface {
+	Add(partitionID types.PartitionID, path string, metadata types.FileMetadata)
+	Delete(partitionID types.PartitionID, path string)
+	PrefixSearch(prefix string) []types.SearchResult
+	FilesForPartition(partitionID types.PartitionID) []string
+	TrackedPartitions() []types.PartitionID
+}
+
+type trieBackend struct {
+	trie           *patricia.Trie
+	partitionTries map[types.PartitionID]*patricia.Trie
+}
+
+func newTrieBackend() *trieBackend {
+	return &trieBackend{
+		trie:           patricia.NewTrie(),
+		partitionTries: make(map[types.PartitionID]*patricia.Trie),
+	}
+}
+
+func (b *trieBackend) ensurePartitionTrie(partitionID types.PartitionID) *patricia.Trie {
+	if t, ok := b.partitionTries[partitionID]; ok {
+		return t
+	}
+	trie := patricia.NewTrie()
+	b.partitionTries[partitionID] = trie
+	return trie
+}
+
+func (b *trieBackend) trackPartitionPath(partitionID types.PartitionID, path string) {
+	trie := b.ensurePartitionTrie(partitionID)
+	trie.Set(patricia.Prefix(path), struct{}{})
+}
+
+func (b *trieBackend) Add(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
+	if b.trie == nil {
+		b.trie = patricia.NewTrie()
+	}
+	b.trie.Set(patricia.Prefix(path), metadata)
+	b.trackPartitionPath(partitionID, path)
+}
+
+func (b *trieBackend) Delete(partitionID types.PartitionID, path string) {
+	if b.trie == nil {
+		return
+	}
+	b.trie.Delete(patricia.Prefix(path))
+	b.trackPartitionPath(partitionID, path)
+}
+
+func (b *trieBackend) PrefixSearch(prefix string) []types.SearchResult {
+	if b.trie == nil {
+		return nil
+	}
+
+	resultMap := make(map[string]types.SearchResult)
+	b.trie.VisitSubtree(patricia.Prefix(prefix), func(path patricia.Prefix, item patricia.Item) error {
+		metadata, ok := item.(types.FileMetadata)
+		if !ok || metadata.Deleted {
+			return nil
+		}
+		types.AddResultToMap(buildSearchResult(string(path), metadata), resultMap, prefix)
+		return nil
+	})
+
+	results := make([]types.SearchResult, 0, len(resultMap))
+	for _, res := range resultMap {
+		results = append(results, res)
+	}
+	return results
+}
+
+type flatBackend struct {
+	files          map[string]types.FileMetadata
+	partitionPaths map[types.PartitionID]map[string]struct{}
+}
+
+func newFlatBackend() *flatBackend {
+	return &flatBackend{
+		files:          make(map[string]types.FileMetadata),
+		partitionPaths: make(map[types.PartitionID]map[string]struct{}),
+	}
+}
+
+func (b *flatBackend) trackPartitionPath(partitionID types.PartitionID, path string) {
+	paths, ok := b.partitionPaths[partitionID]
+	if !ok {
+		paths = make(map[string]struct{})
+		b.partitionPaths[partitionID] = paths
+	}
+	paths[path] = struct{}{}
+}
+
+func (b *flatBackend) Add(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
+	if b.files == nil {
+		b.files = make(map[string]types.FileMetadata)
+	}
+	b.files[path] = metadata
+	b.trackPartitionPath(partitionID, path)
+}
+
+func (b *flatBackend) Delete(partitionID types.PartitionID, path string) {
+	if b.files == nil {
+		return
+	}
+	delete(b.files, path)
+	b.trackPartitionPath(partitionID, path)
+}
+
+func (b *flatBackend) PrefixSearch(prefix string) []types.SearchResult {
+	if len(b.files) == 0 {
+		return nil
+	}
+	resultMap := make(map[string]types.SearchResult)
+	for path, metadata := range b.files {
+		if !strings.HasPrefix(path, prefix) || metadata.Deleted {
+			continue
+		}
+		types.AddResultToMap(buildSearchResult(path, metadata), resultMap, prefix)
+	}
+	results := make([]types.SearchResult, 0, len(resultMap))
+	for _, res := range resultMap {
+		results = append(results, res)
+	}
+	return results
+}
+
+func (b *trieBackend) FilesForPartition(partitionID types.PartitionID) []string {
+	trie := b.partitionTries[partitionID]
+	if trie == nil {
+		return []string{}
+	}
+	var paths []string
+	trie.Visit(func(prefix patricia.Prefix, _ patricia.Item) error {
+		paths = append(paths, string(prefix))
+		return nil
+	})
+	sort.Strings(paths)
+	return paths
+}
+
+func (b *trieBackend) TrackedPartitions() []types.PartitionID {
+	partitions := make([]types.PartitionID, 0, len(b.partitionTries))
+	for pid := range b.partitionTries {
+		partitions = append(partitions, pid)
+	}
+	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
+	return partitions
+}
+
+func (b *flatBackend) FilesForPartition(partitionID types.PartitionID) []string {
+	pathsMap := b.partitionPaths[partitionID]
+	if len(pathsMap) == 0 {
+		return []string{}
+	}
+	paths := make([]string, 0, len(pathsMap))
+	for path := range pathsMap {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func (b *flatBackend) TrackedPartitions() []types.PartitionID {
+	partitions := make([]types.PartitionID, 0, len(b.partitionPaths))
+	for pid := range b.partitionPaths {
+		partitions = append(partitions, pid)
+	}
+	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
+	return partitions
+}
+
+func buildSearchResult(path string, metadata types.FileMetadata) types.SearchResult {
+	return types.SearchResult{
+		Name:        metadata.Name,
+		Path:        path,
+		Size:        metadata.Size,
+		ContentType: metadata.ContentType,
+		ModifiedAt:  metadata.ModifiedAt,
+		CreatedAt:   metadata.CreatedAt,
+		Checksum:    metadata.Checksum,
+	}
+}
+
 // NewIndexer creates a new in-memory file indexer with trie-based index (default)
 func NewIndexer(logger *log.Logger) *Indexer {
 	return NewIndexerWithType(logger, IndexTypeTrie)
@@ -63,8 +240,6 @@ func NewIndexerWithType(logger *log.Logger, indexType IndexType) *Indexer {
 	idx := &Indexer{
 		indexType:          indexType,
 		logger:             logger,
-		partitionFiles:     make(map[types.PartitionID]map[string]struct{}),
-		pathToPartition:    make(map[string]types.PartitionID),
 		pathMetadata:       make(map[string]types.FileMetadata),
 		partitionModLatest: make(map[types.PartitionID]time.Time),
 		partitionActive:    make(map[types.PartitionID]map[string]struct{}),
@@ -72,40 +247,28 @@ func NewIndexerWithType(logger *log.Logger, indexType IndexType) *Indexer {
 
 	switch indexType {
 	case IndexTypeTrie:
-		idx.trie = patricia.NewTrie()
-		idx.logger.Printf("[INDEXER] Using trie-based index")
+		idx.backend = newTrieBackend()
+		idx.logf("[INDEXER] Using trie-based index")
 	case IndexTypeFlat:
-		idx.files = make(map[string]types.FileMetadata)
-		idx.logger.Printf("[INDEXER] Using flat map-based index")
+		idx.backend = newFlatBackend()
+		idx.logf("[INDEXER] Using flat map-based index")
 	default:
-		// Default to trie
-		idx.trie = patricia.NewTrie()
+		idx.backend = newTrieBackend()
 		idx.indexType = IndexTypeTrie
-		idx.logger.Printf("[INDEXER] Unknown index type, defaulting to trie-based index")
+		idx.logf("[INDEXER] Unknown index type, defaulting to trie-based index")
 	}
 
 	return idx
 }
 
+func (idx *Indexer) logf(format string, args ...interface{}) {
+	if idx.logger != nil {
+		idx.logger.Printf(format, args...)
+	}
+}
+
 func (idx *Indexer) partitionForPath(path string) types.PartitionID {
 	return types.PartitionIDForPath(path)
-}
-
-// ensurePartitionEntryLocked lazily initialises the per-partition path set.
-func (idx *Indexer) ensurePartitionEntryLocked(partitionID types.PartitionID) map[string]struct{} {
-	if paths, ok := idx.partitionFiles[partitionID]; ok {
-		return paths
-	}
-	paths := make(map[string]struct{})
-	idx.partitionFiles[partitionID] = paths
-	return paths
-}
-
-// trackPartitionPathLocked records that a live (non-deleted) path belongs to the partition.
-func (idx *Indexer) trackPartitionPathLocked(partitionID types.PartitionID, path string) {
-	paths := idx.ensurePartitionEntryLocked(partitionID)
-	paths[path] = struct{}{}
-	idx.pathToPartition[path] = partitionID
 }
 
 func (idx *Indexer) ensureActivePartitionEntryLocked(partitionID types.PartitionID) map[string]struct{} {
@@ -157,38 +320,15 @@ func (idx *Indexer) removeActivePathLocked(partitionID types.PartitionID, path s
 	delete(idx.pathMetadata, path)
 }
 
-func (idx *Indexer) removeFromSearchLocked(path string) {
-	switch idx.indexType {
-	case IndexTypeTrie:
-		if idx.trie != nil {
-			idx.trie.Delete(patricia.Prefix(path))
-		}
-	case IndexTypeFlat:
-		delete(idx.files, path)
-	default:
-		if idx.trie != nil {
-			idx.trie.Delete(patricia.Prefix(path))
-		}
+func (idx *Indexer) removeFromSearchLocked(partitionID types.PartitionID, path string) {
+	if idx.backend != nil {
+		idx.backend.Delete(partitionID, path)
 	}
 }
 
-func (idx *Indexer) upsertSearchLocked(path string, metadata types.FileMetadata) {
-	switch idx.indexType {
-	case IndexTypeTrie:
-		if idx.trie != nil {
-			idx.trie.Insert(patricia.Prefix(path), metadata)
-			idx.trie.Set(patricia.Prefix(path), metadata)
-		}
-	case IndexTypeFlat:
-		if idx.files == nil {
-			idx.files = make(map[string]types.FileMetadata)
-		}
-		idx.files[path] = metadata
-	default:
-		if idx.trie != nil {
-			idx.trie.Insert(patricia.Prefix(path), metadata)
-			idx.trie.Set(patricia.Prefix(path), metadata)
-		}
+func (idx *Indexer) upsertSearchLocked(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
+	if idx.backend != nil {
+		idx.backend.Add(partitionID, path, metadata)
 	}
 }
 
@@ -197,83 +337,10 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	switch idx.indexType {
-	case IndexTypeTrie:
-		return idx.prefixSearchTrie(prefix)
-	case IndexTypeFlat:
-		return idx.prefixSearchFlat(prefix)
-	default:
-		return idx.prefixSearchTrie(prefix)
-	}
-}
-
-// prefixSearchTrie implements prefix search using the trie
-func (idx *Indexer) prefixSearchTrie(prefix string) []types.SearchResult {
-	resultMap := make(map[string]types.SearchResult)
-
-	// Visit all entries with the given prefix
-	idx.trie.VisitSubtree(patricia.Prefix(prefix), func(path patricia.Prefix, item patricia.Item) error {
-		metadata, ok := item.(types.FileMetadata)
-		if !ok {
-			return nil
-		}
-
-		// Skip deleted files
-		if metadata.Deleted {
-			return nil
-		}
-
-		res := types.SearchResult{
-			Name:        metadata.Name,
-			Path:        string(path),
-			Size:        metadata.Size,
-			ContentType: metadata.ContentType,
-			ModifiedAt:  metadata.ModifiedAt,
-			CreatedAt:   metadata.CreatedAt,
-			Checksum:    metadata.Checksum,
-		}
-		types.AddResultToMap(res, resultMap, prefix)
-
+	if idx.backend == nil {
 		return nil
-	})
-
-	var results []types.SearchResult
-	for _, res := range resultMap {
-		results = append(results, res)
 	}
-
-	return results
-}
-
-// prefixSearchFlat implements prefix search using the flat map
-func (idx *Indexer) prefixSearchFlat(prefix string) []types.SearchResult {
-	resultMap := make(map[string]types.SearchResult)
-
-	for path, metadata := range idx.files {
-		if strings.HasPrefix(path, prefix) {
-			if metadata.Deleted {
-				continue
-			}
-
-			res := types.SearchResult{
-				Name:        metadata.Name,
-				Path:        path,
-				Size:        metadata.Size,
-				ContentType: metadata.ContentType,
-				ModifiedAt:  metadata.ModifiedAt,
-				CreatedAt:   metadata.CreatedAt,
-				Checksum:    metadata.Checksum,
-			}
-			types.AddResultToMap(res, resultMap, prefix)
-		}
-	}
-
-	var results []types.SearchResult
-	for _, res := range resultMap {
-		results = append(results, res)
-	}
-
-	return results
+	return idx.backend.PrefixSearch(prefix)
 }
 
 // AddFile adds or updates a file in the index
@@ -290,11 +357,9 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 
 	partitionID := idx.partitionForPath(effectivePath)
 
-	idx.trackPartitionPathLocked(partitionID, effectivePath)
-
 	if metadata.Deleted {
 		idx.removeActivePathLocked(partitionID, effectivePath)
-		idx.removeFromSearchLocked(effectivePath)
+		idx.removeFromSearchLocked(partitionID, effectivePath)
 		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
 			idx.logger.Printf("[INDEXER] Failed to update membership for %s: %v", partitionID, err)
 		}
@@ -302,7 +367,7 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 	}
 
 	idx.addActivePathLocked(partitionID, effectivePath, metadata)
-	idx.upsertSearchLocked(effectivePath, metadata)
+	idx.upsertSearchLocked(partitionID, effectivePath, metadata)
 	if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
 		idx.logger.Printf("[INDEXER] Failed to update membership for %s: %v", partitionID, err)
 	}
@@ -314,9 +379,8 @@ func (idx *Indexer) DeleteFile(path string) {
 	defer idx.mu.Unlock()
 
 	partitionID := idx.partitionForPath(path)
-	idx.trackPartitionPathLocked(partitionID, path)
 	idx.removeActivePathLocked(partitionID, path)
-	idx.removeFromSearchLocked(path)
+	idx.removeFromSearchLocked(partitionID, path)
 	if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
 		idx.logger.Printf("[INDEXER] Failed to update membership for %s: %v", partitionID, err)
 	}
@@ -327,17 +391,10 @@ func (idx *Indexer) FilesForPartition(partitionID types.PartitionID) []string {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	pathsMap, ok := idx.partitionFiles[partitionID]
-	if !ok || len(pathsMap) == 0 {
+	if idx.backend == nil {
 		return []string{}
 	}
-
-	paths := make([]string, 0, len(pathsMap))
-	for path := range pathsMap {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	return paths
+	return idx.backend.FilesForPartition(partitionID)
 }
 
 // updatePartitionMembershipLocked pushes our holder state for the partition into the CRDT.
@@ -398,7 +455,10 @@ func (idx *Indexer) publishAllPartitionMembershipLocked() error {
 		return nil
 	}
 	var errs []error
-	for partitionID := range idx.partitionFiles {
+	if idx.backend == nil {
+		return nil
+	}
+	for _, partitionID := range idx.backend.TrackedPartitions() {
 		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
 			errs = append(errs, err)
 		}
