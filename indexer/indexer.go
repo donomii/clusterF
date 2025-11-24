@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/donomii/clusterF/types"
@@ -49,7 +50,7 @@ type Indexer struct {
 	nodeID          types.NodeID
 	sendUpdates     func([]frogpond.DataPoint)
 	noStore         bool
-	suppressUpdates bool
+	suppressUpdates atomic.Bool
 }
 
 // NewIndexer creates a new in-memory file indexer with trie-based index (default)
@@ -341,7 +342,7 @@ func (idx *Indexer) FilesForPartition(partitionID types.PartitionID) []string {
 
 // updatePartitionMembershipLocked pushes our holder state for the partition into the CRDT.
 func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionID) error {
-	if idx.suppressUpdates || idx.noStore {
+	if idx.suppressUpdates.Load() || idx.noStore {
 		return nil
 	}
 
@@ -420,9 +421,7 @@ func (idx *Indexer) ConfigurePartitionMembership(frogpondNode *frogpond.Node, no
 func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManagerLike) error {
 	idx.logger.Printf("[INDEXER] Starting import of filestore (type: %s)", idx.indexType)
 
-	idx.mu.Lock()
-	idx.suppressUpdates = true
-	idx.mu.Unlock()
+	idx.suppressUpdates.Store(true)
 
 	total := 0
 	active := 0
@@ -440,12 +439,12 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 	})
 
 	idx.mu.Lock()
-	idx.suppressUpdates = false
+	defer idx.mu.Unlock()
+	idx.suppressUpdates.Store(false)
 	var publishErr error
 	if err == nil {
 		publishErr = idx.publishAllPartitionMembershipLocked()
 	}
-	idx.mu.Unlock()
 
 	if err != nil {
 		idx.logger.Printf("[INDEXER] Import failed after %d files: %v", total, err)
