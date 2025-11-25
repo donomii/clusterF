@@ -1441,6 +1441,12 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 					if len(availableHolders) > 0 {
 						return partitionID, availableHolders
 					} else {
+						// Pick a random peer from the available peers
+						if len(availablePeerIDs.Keys()) > 0 {
+							peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
+							pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
+							return partitionID, []types.NodeID{types.NodeID(peerID)}
+						}
 						pm.debugf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
 					}
 				}
