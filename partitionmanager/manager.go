@@ -1441,7 +1441,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 					if len(availableHolders) > 0 {
 						return partitionID, availableHolders
 					} else {
-						pm.debugf("[PARTITION] No available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
+						pm.debugf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
 					}
 				}
 			}
@@ -1483,13 +1483,25 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 		var availableHolders []types.NodeID
 		for _, holderID := range info.Holders {
 			_, exists := availablePeerIDs.Load(string(holderID))
-			if holderID != pm.deps.NodeID && exists {
-				availableHolders = append(availableHolders, holderID)
+			if holderID != pm.deps.NodeID {
+				if exists {
+					availableHolders = append(availableHolders, holderID)
+				} else {
+					// Remove the holder from the crdt for this partition
+					// maybe not a good idea?
+					pm.RemoveNodeFromPartitionWithTimestamp(holderID, string(partitionID), time.Now().Add(-30*time.Minute))
+				}
 			}
 		}
 
 		if len(availableHolders) == 0 {
 			pm.debugf("[PARTITION] No available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
+			// Pick a random peer from the available peers
+			if len(availablePeerIDs.Keys()) > 0 {
+				peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
+				pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
+				return partitionID, []types.NodeID{types.NodeID(peerID)}
+			}
 			continue // No available peers to sync from
 		}
 
