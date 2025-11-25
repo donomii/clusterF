@@ -1408,7 +1408,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 		}
 		info := allPartitions[partitionID]
 		if len(info.Holders) >= currentRF {
-			// Check if we have this partition and if our modifiedAt timestamp matches other holders
+			// Check if we have this partition and if our lastModified timestamp matches other holders
 			hasPartition := false
 			ourHolderData, ok := info.HolderData[ourNodeId]
 
@@ -1440,6 +1440,8 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 					}
 					if len(availableHolders) > 0 {
 						return partitionID, availableHolders
+					} else {
+						pm.debugf("[PARTITION] No available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
 					}
 				}
 			}
@@ -1496,7 +1498,6 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 	return "", nil // Nothing to sync
 }
-
 
 // ScanAllFiles scans all local partition stores and calls fn for each file
 func (pm *PartitionManager) ScanAllFiles(fn func(filePath string, metadata types.FileMetadata) error) error {
