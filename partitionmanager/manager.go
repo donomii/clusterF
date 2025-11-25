@@ -105,7 +105,6 @@ func (pm *PartitionManager) RemoveNodeFromPartitionWithTimestamp(nodeID types.No
 	return nil
 }
 
-
 func (pm *PartitionManager) debugf(format string, args ...interface{}) string {
 	if pm.deps.Debugf != nil {
 		// Get caller info
@@ -1375,7 +1374,6 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			pm.MarkForReindex(partitionID)
 		}
 	}
-	pm.RunReindex(ctx)
 }
 
 func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
