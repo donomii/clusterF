@@ -436,6 +436,10 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 
 // handleFilePutInternal handles internal peer-to-peer file PUT requests
 func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, path string) {
+	if c.AppContext().Err() != nil {
+		http.Error(w, "context canceled", http.StatusServiceUnavailable)
+		return
+	}
 	// Update current file for monitoring
 	c.currentFile.Store(path)
 	defer c.currentFile.Store("")
@@ -558,6 +562,10 @@ func (c *Cluster) handleFileDeleteInternal(w http.ResponseWriter, r *http.Reques
 
 // handleFilePostInternal handles internal peer-to-peer file POST requests
 func (c *Cluster) handleFilePostInternal(w http.ResponseWriter, r *http.Request, path string) {
+	if c.AppContext().Err() != nil {
+		http.Error(w, "context canceled", http.StatusServiceUnavailable)
+		return
+	}
 	c.debugf("[FILES] Internal POST request for path: %s", path)
 
 	createDir := strings.EqualFold(r.Header.Get("X-Create-Directory"), "true")

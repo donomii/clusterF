@@ -315,6 +315,9 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 	defer ticker.Stop()
 
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return

@@ -219,11 +219,14 @@ func (pm *PartitionManager) CalculatePartitionName(path string) string {
 
 // storeFileInPartition stores a file with metadata and content in separate stores
 func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	pm.recordEssentialDiskActivity()
 	// If in no-store mode, don't store locally
 	if pm.deps.NoStore {
 		//FIXME panic here
-		pm.debugf("[PARTITION] No-store mode: not storing file %s locally", path)
+		pm.deps.Logger.Panicf("[PARTITION] No-store mode: not storing file %s locally", path)
 		return nil
 	}
 
@@ -1123,6 +1126,9 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 
 	// Loop forever, checking for partitions to sync
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		pm.logf("Started PeriodicPartitionCheck\n")
 		select {
 		case <-ctx.Done():
@@ -1147,7 +1153,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 				throttle <- struct{}{}
 				pm.debugf("Partition syncs in progress: %v", len(throttle))
 				// Throttle concurrent syncs
-				pm.doPartitionSync(ctx, partitionID, throttle, holders)
+				go pm.doPartitionSync(ctx, partitionID, throttle, holders)
 
 			} else {
 				// Nothing to sync, wait a bit before checking again
