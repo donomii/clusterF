@@ -1,4 +1,4 @@
-// partitions.go - Partitioning system for scalable file storage using existing KV stores
+// partitions.go Partitioning system for scalable file storage using existing KV stores
 package partitionmanager
 
 import (
@@ -654,7 +654,6 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 	partitionsCount := make(map[types.PartitionID]int)
 	partitionsChecksums := make(map[types.PartitionID][]string)
-	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
 
 	// Should use FileStore to do this in a partition store aware way
 	pm.deps.FileStore.ScanMetadataPartition(StartPartitionID, func(path string, metadata []byte) error {
@@ -669,7 +668,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
 			pm.errorf(metadata, "corrupt metadata for partition: "+string(partitionID))
-			// Parse error - count as existing file
+			// Parse error count as existing file
 			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 			return nil
 		}
@@ -684,8 +683,14 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 	pm.debugf("[updatePartitionMetadata] Finished scan for partition %v after %v seconds", StartPartitionID, time.Since(start))
 
+	// Build all CRDT updates for publication
 	allUpdates := []frogpond.DataPoint{}
 	for partitionID, count := range partitionsCount {
+		if ctx.Err() != nil {
+			pm.deps.Logger.Printf("[FULL_REINDEX] Context cancelled during CRDT update building")
+			return
+		}
+
 		// If we have no files for this partition, remove ourselves as a holder
 		if count == 0 {
 			pm.removePartitionHolder(partitionID)
@@ -693,51 +698,37 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		}
 
 		// Update partition metadata in CRDT using individual keys per holder
-		// This prevents overwriting other nodes' holder entries
 		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 
-		// Calculate partition checksum
-		//partitionChecksum := pm.calculatePartitionChecksum(ctx, partitionID)
-
-		checksums, ok := partitionsChecksums[partitionID]
-		if !ok || len(checksums) == 0 {
-			pm.deps.Logger.Printf("ERROR: Unable to calculate checksum for partition %v\n", partitionID)
-		} else {
-			sort.Strings(checksums)
-			hasher := sha256.New()
-			for _, cs := range checksums {
-				hasher.Write([]byte(cs))
-			}
-			// Add ourselves as a holder
-			holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-			lastUpdate := partitionsLastUpdate[partitionID]
-			// If we have files but no modification time, that's data corruption
-			if partitionsCount[partitionID] > 0 && lastUpdate.IsZero() {
-				panic(fmt.Sprintf("Partition %s has %d files but no modification time - data corruption detected", partitionID, partitionsCount[partitionID]))
-			}
-			if partitionsCount[partitionID] > 0 {
-				holderData := types.HolderData{
-					File_count: partitionsCount[partitionID],
-					Checksum:   hex.EncodeToString(hasher.Sum(nil)),
-				}
-				holderJSON, _ := json.Marshal(holderData)
-
-				// Update file count metadata
-				metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
-				fileCountJSON, _ := json.Marshal(partitionsCount[partitionID])
-
-				// Send both updates to CRDT
-				allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
-				allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
-
-				//pm.debugf("[PARTITION] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, partitionsCount[partitionID])
-			}
-
+		checksum := pm.calculatePartitionChecksum(ctx, StartPartitionID)
+		if checksum == "" {
+			pm.deps.Logger.Printf("[FULL_REINDEX] ERROR: Unable to calculate checksum for partition %v", partitionID)
+			continue
 		}
-		//pm.debugf("[updatePartitionMetadata] Updated CRDT metadata for partition %v", partitionID)
-	}
-	// Send updates to peers
 
+		// Add ourselves as a holder
+		holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
+
+		if count > 0 {
+			holderData := types.HolderData{
+				File_count: count,
+				Checksum:   checksum,
+			}
+			holderJSON, _ := json.Marshal(holderData)
+
+			// Update file count metadata
+			metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
+			fileCountJSON, _ := json.Marshal(count)
+
+			// Add both updates to the list
+			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
+			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
+
+			pm.debugf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
+		}
+	}
+
+	// Publish all updates to peers in one batch
 	pm.sendUpdates(allUpdates)
 	pm.debugf("[updatePartitionMetadata] CRDT update for all partitions in %v finished scan after %v seconds", StartPartitionID, time.Since(start))
 }
@@ -1183,7 +1174,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 	pm.debugf("[PARTITION] Checking %d partitions for sync (RF=%d)", len(allPartitions), currentRF)
 
-	// Get available peers once - check BOTH discovery AND CRDT nodes
+	// Get available peers once check BOTH discovery AND CRDT nodes
 	availablePeerIDs := pm.deps.Discovery.GetPeerMap()
 	pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs.Keys())
 	//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
@@ -1372,7 +1363,7 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 		//If we are using partition stores, mark all partitions that start with this
 		//otherwise, we are getting a list of actual partitions
 		if len(partitionStore) == 3 {
-			// Partition store is like "p12" - mark all partitions that start with this
+			// Partition store is like "p12" mark all partitions that start with this
 			// Generate all possible partition IDs for this store (p12000 to p12999)
 			for i := 0; i < 1000; i++ {
 				partitionID := types.PartitionID(fmt.Sprintf("%s%03d", partitionStore, i))
