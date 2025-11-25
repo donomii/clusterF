@@ -777,7 +777,7 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 // updatePartitionMetadata updates partition info in the CRDT
 // Scans the database and counts the files, checeksums them, and then updates the CRDT
 func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPartitionID types.PartitionID) {
-	pm.ReindexList.Store(StartPartitionID, false)
+	pm.logf("[PARTITION] Starting updatePartitionMetadata for partition %s", StartPartitionID)
 	if !pm.hasFrogpond() {
 		return
 	}
@@ -790,18 +790,13 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		return
 	}
 
-	// Count files in partition by scanning the existing filesKV
-
-	partitionStore := types.PartitionStore(StartPartitionID[0:3])
-
 	partitionsCount := make(map[types.PartitionID]int)
 	partitionsChecksums := make(map[types.PartitionID][]string)
 	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
 
-	// Use FileStore to scan files
-	pm.deps.FileStore.ScanMetadataPartition(types.PartitionID(partitionStore), func(path string, metadata []byte) error {
+	// Should use FileStore to do this in a partition store aware way
+	pm.deps.FileStore.ScanMetadataPartition(StartPartitionID, func(path string, metadata []byte) error {
 		partitionID := types.PartitionIDForPath(path)
-		pm.ReindexList.Store(partitionID, false) // Cancel pending reindexes for any partitions we index here
 		if ctx.Err() != nil {
 			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))
 		}
@@ -882,7 +877,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	// Send updates to peers
 
 	pm.sendUpdates(allUpdates)
-	pm.debugf("[updatePartitionMetadata] CRDT update for all partitions in %v finished scan after %v seconds", partitionStore, time.Since(start))
+	pm.debugf("[updatePartitionMetadata] CRDT update for all partitions in %v finished scan after %v seconds", StartPartitionID, time.Since(start))
 }
 
 // removePartitionHolder removes this node as a holder for a partition
