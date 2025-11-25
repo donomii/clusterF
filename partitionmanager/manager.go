@@ -1293,6 +1293,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 				} else {
 					// Remove the holder from the crdt for this partition
 					// maybe not a good idea?
+					pm.logf("[PARTITION] Removing node %s from partition %s", holderID, partitionID)
 					pm.RemoveNodeFromPartitionWithTimestamp(holderID, string(partitionID), time.Now().Add(-30*time.Minute))
 				}
 			}
