@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/types"
-	"github.com/donomii/frogpond"
 	"github.com/tchap/go-patricia/patricia"
 )
 
@@ -38,10 +37,7 @@ type Indexer struct {
 	partitionActive map[types.PartitionID]map[string]struct{} // partition -> active (non-deleted) paths
 
 	// Partition membership coordination
-	frogpond        *frogpond.Node
-	nodeID          types.NodeID
-	sendUpdates     func([]frogpond.DataPoint)
-	noStore         bool
+
 	suppressUpdates atomic.Bool
 	deps            *types.App
 }
@@ -393,23 +389,17 @@ func (idx *Indexer) FilesForPartition(partitionID types.PartitionID) []string {
 
 // updatePartitionMembershipLocked pushes our holder state for the partition into the CRDT.
 func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionID) error {
-	if idx.suppressUpdates.Load() || idx.noStore {
-		return nil
-	}
-	if idx.frogpond == nil || idx.nodeID == "" {
-		panic("wtf")
-	}
-	if idx.frogpond == nil || idx.sendUpdates == nil || idx.nodeID == "" {
+	if idx.suppressUpdates.Load() {
 		return nil
 	}
 
-	holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionID, idx.nodeID)
+	holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionID, idx.deps.Cluster.ID())
 	paths := idx.partitionActive[partitionID]
 
 	if len(paths) == 0 {
-		updates := idx.frogpond.DeleteDataPoint(holderKey, 30*time.Minute)
+		updates := idx.deps.Frogpond.DeleteDataPoint(holderKey, 30*time.Minute)
 		if len(updates) > 0 {
-			idx.sendUpdates(updates)
+			idx.deps.SendUpdatesToPeers(updates)
 		}
 		return nil
 	}
@@ -428,21 +418,19 @@ func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionI
 		return fmt.Errorf("marshal holder data for %s: %w", partitionID, err)
 	}
 
-	updates := idx.frogpond.SetDataPoint(holderKey, payload)
+	updates := idx.deps.Frogpond.SetDataPoint(holderKey, payload)
 	if len(updates) > 0 {
-		idx.sendUpdates(updates)
+		idx.deps.SendUpdatesToPeers(updates)
 	}
 	return nil
 }
 
 // publishAllPartitionMembershipLocked reapplies holder claims for every tracked partition.
 func (idx *Indexer) publishAllPartitionMembershipLocked() error {
-	if idx.noStore {
-		return nil
-	}
+
 	var errs []error
 	if idx.backend == nil {
-		return nil
+		panic("wtf")
 	}
 	for _, partitionID := range idx.backend.TrackedPartitions() {
 		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
@@ -450,17 +438,6 @@ func (idx *Indexer) publishAllPartitionMembershipLocked() error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// ConfigurePartitionMembership wires the indexer to update partition claims in the CRDT.
-func (idx *Indexer) ConfigurePartitionMembership(frogpondNode *frogpond.Node, nodeID types.NodeID, sendUpdates func([]frogpond.DataPoint), noStore bool) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	idx.frogpond = frogpondNode
-	idx.nodeID = nodeID
-	idx.sendUpdates = sendUpdates
-	idx.noStore = noStore
 }
 
 // ImportFilestore imports all files from a PartitionManagerLike into the index

@@ -491,11 +491,9 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		Frogpond:           c.frogpond,
 		SendUpdatesToPeers: c.sendUpdatesToPeers,
 		GetCurrentRF:       c.getCurrentRF,
-		Indexer:            c.indexer,
 	}
 	// Initialize indexer first (needed by partition manager)
 	idx := indexer.NewIndexer(c.Logger(), deps)
-	idx.ConfigurePartitionMembership(c.frogpond, types.NodeID(c.NodeId), c.sendUpdatesToPeers, c.noStore)
 	c.indexer = idx
 	deps.Indexer = idx
 	c.debugf("Initialized indexer\n")
@@ -567,6 +565,15 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		c.debugf("Using data directory: %s", opts.DataDir)
 	}
 
+	if deps.Indexer == nil {
+		panic("no")
+	}
+	if deps.Frogpond == nil {
+		panic("no")
+	}
+	if deps.Logger == nil {
+		panic("no")
+	}
 	return c
 }
 

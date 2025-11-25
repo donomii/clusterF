@@ -287,6 +287,51 @@ func (c *Cluster) serveDirectoryListing(w http.ResponseWriter, path string) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// writeHeadResponse writes metadata headers for HEAD responses without a body.
+func (c *Cluster) writeHeadResponse(w http.ResponseWriter, metadata types.FileMetadata) {
+	if metadata.IsDirectory {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-ClusterF-Is-Directory", "true")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	ct := metadata.ContentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
+	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
+	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339))
+	w.Header().Set("X-ClusterF-Is-Directory", "false")
+	if metadata.Checksum != "" {
+		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
+		w.Header().Set("ETag", fmt.Sprintf("\"%s\"", metadata.Checksum))
+	} else {
+		panic("no")
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// tryServeHeadLocally attempts to serve HEAD metadata directly from local storage.
+func (c *Cluster) tryServeHeadLocally(w http.ResponseWriter, path string) bool {
+	metadata, err := c.FileSystem.GetMetadata(path)
+	if err != nil {
+		if errors.Is(err, types.ErrIsDirectory) {
+			c.writeHeadResponse(w, types.FileMetadata{IsDirectory: true})
+			return true
+		}
+		return false
+	}
+
+	c.writeHeadResponse(w, metadata)
+	return true
+}
+
 func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path string) {
 	c.debugf("[FILES] HEAD request for path: %s", path)
 
@@ -295,6 +340,11 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-ClusterF-Is-Directory", "true")
 		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// If we have the metadata locally, serve it immediately to avoid races with partition updates.
+	if c.tryServeHeadLocally(w, path) {
 		return
 	}
 
@@ -483,7 +533,7 @@ func (c *Cluster) handleFileDeleteInternal(w http.ResponseWriter, r *http.Reques
 	c.debugf("[FILES] Internal DELETE request for path: %s", path)
 
 	// Internal requests should use cluster update time from header
-	if clusterHeader := r.Header.Get("X-ClusterF-Last-Cluster-Update"); clusterHeader != "" {
+	if clusterHeader := r.Header.Get("X-ClusterF-Modified-At"); clusterHeader != "" {
 		if deleteTime, err := parseHeaderTimestamp(clusterHeader); err == nil {
 			if err := c.FileSystem.DeleteFileWithTimestamp(c.AppContext(), path, deleteTime); err != nil {
 				if errors.Is(err, types.ErrFileNotFound) {
@@ -494,11 +544,11 @@ func (c *Cluster) handleFileDeleteInternal(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		} else {
-			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Last-Cluster-Update header: %v", err), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
 			return
 		}
 	} else {
-		http.Error(w, fmt.Sprintf("Missing X-ClusterF-Last-Cluster-Update header for internal file deletion: %s", path), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Missing X-ClusterF-Modified-At header for internal file deletion: %s", path), http.StatusBadRequest)
 		return
 	}
 
@@ -553,31 +603,11 @@ func (c *Cluster) handleFileHeadInternal(w http.ResponseWriter, r *http.Request,
 	}
 
 	if metadata.IsDirectory {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-ClusterF-Is-Directory", "true")
-		w.WriteHeader(http.StatusOK)
+		c.writeHeadResponse(w, metadata)
 		return
 	}
 
-	ct := metadata.ContentType
-	if ct == "" {
-		ct = "application/octet-stream"
-	}
-	if metadata.ModifiedAt.IsZero() {
-		panic("no")
-	}
-	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
-	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
-	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339))
-	w.Header().Set("X-ClusterF-Is-Directory", "false")
-	if metadata.Checksum != "" {
-		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
-		w.Header().Set("ETag", fmt.Sprintf("\"%s\"", metadata.Checksum))
-	} else {
-		panic("no")
-	}
-	w.WriteHeader(http.StatusOK)
+	c.writeHeadResponse(w, metadata)
 }
 
 func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path string) {
@@ -685,6 +715,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		errors     []string
 	)
 
+	now := time.Now()
 	for _, holderID := range partitionInfo.Holders {
 		var peer *types.PeerInfo
 		if holderID == c.ID() {
@@ -708,6 +739,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 
 		body, _, status, err := httpclient.SimpleDelete(r.Context(), c.HttpDataClient, deleteURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
+			httpclient.WithHeader("X-ClusterF-Modified-At", now.Format(time.RFC3339)),
 		)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))

@@ -1186,9 +1186,6 @@ func (pm *PartitionManager) calculatePartitionChecksum(ctx context.Context, part
 
 // getPartitionSyncInterval returns the partition sync interval from CRDT, or default
 func (pm *PartitionManager) getPartitionSyncInterval() time.Duration {
-	if !pm.hasFrogpond() {
-		return 1 * time.Second
-	}
 
 	dp := pm.deps.Frogpond.GetDataPoint("cluster/partition_sync_interval_seconds")
 	if dp.Deleted || len(dp.Value) == 0 {
