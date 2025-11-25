@@ -66,7 +66,6 @@ type PartitionManagerLike interface {
 	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error // Scan all files in all partitions, calling fn for each file
 	GetPartitionInfo(partitionID PartitionID) *PartitionInfo
 	RunReindex(ctx context.Context)
-	RunFullReindexAtStartup(ctx context.Context) // Run full reindex at startup, scanning entire store and publishing updates
 	MarkForReindex(pId PartitionID)
 	RemoveNodeFromPartitionWithTimestamp(nodeID NodeID, partitionName string, backdatedTime time.Time) error // Remove a node from a partition holder list with backdated timestamp
 }

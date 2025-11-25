@@ -757,8 +757,8 @@ func (c *Cluster) DataClient() *http.Client {
 func (c *Cluster) Start() {
 	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
 
+	c.initialPartitionMetadataUpdate(c.AppContext())
 	// Start all threads using ThreadManager
-	c.threadManager.StartThreadOnce("full-startup-reindex", c.runFullStartupReindex)
 	c.threadManager.StartThreadOnce("indexer-import", c.runIndexerImport)
 	c.threadManager.StartThread("filesync", c.runFilesync)
 	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
@@ -857,14 +857,6 @@ func (c *Cluster) runFilesync(ctx context.Context) {
 			c.Logger().Printf("[FILESYNC] File sync thread exiting; restarting")
 		}
 	}
-}
-
-func (c *Cluster) runFullStartupReindex(ctx context.Context) {
-	c.logger.Printf("Started runFullStartupReindex\n")
-	c.partitionManager.RunFullReindexAtStartup(ctx)
-	c.logger.Printf("Finished runFullStartupReindex\n")
-	<-ctx.Done()
-
 }
 
 func (c *Cluster) runIndexerImport(ctx context.Context) {

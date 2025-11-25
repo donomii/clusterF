@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"hash"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -106,142 +105,6 @@ func (pm *PartitionManager) RemoveNodeFromPartitionWithTimestamp(nodeID types.No
 	return nil
 }
 
-// RunFullReindexAtStartup runs a full reindex at startup, scanning through the entire store,
-// building the updates list, and publishing it. This is different from the incremental reindex.
-func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
-	if pm.deps.NoStore {
-		pm.debugf("[FULL_REINDEX] No-store mode: skipping full reindex at startup")
-		return
-	}
-
-	if !pm.hasFrogpond() {
-		pm.debugf("[FULL_REINDEX] No frogpond available: skipping full reindex at startup")
-		return
-	}
-
-	start := time.Now()
-	pm.deps.Logger.Printf("[FULL_REINDEX] Starting full reindex at startup")
-
-	// Build partition counts and checksums for all partitions by scanning the entire store
-	partitionsCount := make(map[types.PartitionID]int)
-	partitionsChecksum := make(map[types.PartitionID]hash.Hash)
-	partitionsLastUpdate := make(map[types.PartitionID]time.Time)
-	processedFiles := 0
-
-	// Get all partition stores
-	allPartitionStores, err := pm.deps.FileStore.GetAllPartitionStores()
-	if err != nil {
-		pm.deps.Logger.Printf("[FULL_REINDEX] Failed to get partition stores: %v", err)
-		return
-	}
-
-	pm.deps.Logger.Printf("[FULL_REINDEX] Found %d partition stores to scan", len(allPartitionStores))
-
-	// Scan through all partition stores
-	for _, partitionStore := range allPartitionStores {
-		if ctx.Err() != nil {
-			pm.deps.Logger.Printf("[FULL_REINDEX] Context cancelled during startup reindex")
-			return
-		}
-
-		pm.debugf("[FULL_REINDEX] Scanning partition store %s", partitionStore)
-		err := pm.deps.FileStore.ScanMetadataPartition(types.PartitionID(partitionStore), func(path string, metadata []byte) error {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			partitionID := types.PartitionIDForPath(path)
-
-			processedFiles++
-
-			var parsedMetadata types.FileMetadata
-			if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-				pm.errorf(metadata, "corrupt metadata for partition: "+string(partitionID))
-				// Parse error - count as existing file
-				partitionsCount[partitionID] = partitionsCount[partitionID] + 1
-				return nil
-			}
-
-			// Check if file is marked as deleted
-			if !parsedMetadata.Deleted {
-				// File is not deleted, count it
-				partitionsCount[partitionID] = partitionsCount[partitionID] + 1
-			}
-
-			// Add to checksum
-			hasher, ok := partitionsChecksum[partitionID]
-			if !ok {
-				hasher = sha256.New()
-			}
-			hasher.Write(metadata)
-			partitionsChecksum[partitionID] = hasher
-			return nil
-		})
-
-		if err != nil {
-			pm.deps.Logger.Printf("[FULL_REINDEX] Error scanning partition store %s: %v", partitionStore, err)
-			// Continue with other partitions
-			continue
-		}
-	}
-
-	pm.deps.Logger.Printf("[FULL_REINDEX] Processed %d files across %d partitions in %v",
-		processedFiles, len(partitionsCount), time.Since(start))
-
-	// Build all CRDT updates for publication
-	allUpdates := []frogpond.DataPoint{}
-	for partitionID, count := range partitionsCount {
-		if ctx.Err() != nil {
-			pm.deps.Logger.Printf("[FULL_REINDEX] Context cancelled during CRDT update building")
-			return
-		}
-
-		// If we have no files for this partition, remove ourselves as a holder
-		if count == 0 {
-			pm.removePartitionHolder(partitionID)
-			continue
-		}
-
-		// Update partition metadata in CRDT using individual keys per holder
-		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-
-		hasher, ok := partitionsChecksum[partitionID]
-		if !ok {
-			pm.deps.Logger.Printf("[FULL_REINDEX] ERROR: Unable to calculate checksum for partition %v", partitionID)
-			continue
-		}
-
-		// Add ourselves as a holder
-		holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-		lastUpdate := partitionsLastUpdate[partitionID]
-		// If we have files but no modification time, that's data corruption
-		if count > 0 && lastUpdate.IsZero() {
-			panic(fmt.Sprintf("Partition %s has %d files but no modification time - data corruption detected", partitionID, count))
-		}
-		if count > 0 {
-			holderData := types.HolderData{
-				File_count: count,
-				Checksum:   hex.EncodeToString(hasher.Sum(nil)),
-			}
-			holderJSON, _ := json.Marshal(holderData)
-
-			// Update file count metadata
-			metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
-			fileCountJSON, _ := json.Marshal(count)
-
-			// Add both updates to the list
-			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
-			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
-
-			pm.debugf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
-		}
-	}
-
-	// Publish all updates to peers in one batch
-	pm.sendUpdates(allUpdates)
-
-	pm.deps.Logger.Printf("[FULL_REINDEX] Completed full startup reindex: %d partitions, %d files, %d CRDT updates in %v",
-		len(partitionsCount), processedFiles, len(allUpdates), time.Since(start))
-}
 
 func (pm *PartitionManager) debugf(format string, args ...interface{}) string {
 	if pm.deps.Debugf != nil {
@@ -775,7 +638,7 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 }
 
 // updatePartitionMetadata updates partition info in the CRDT
-// Scans the database and counts the files, checeksums them, and then updates the CRDT
+// Scans the database and counts the files, checksums them, and then updates the CRDT
 func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPartitionID types.PartitionID) {
 	pm.logf("[PARTITION] Starting updatePartitionMetadata for partition %s", StartPartitionID)
 	if !pm.hasFrogpond() {
