@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/syncmap"
+	"github.com/donomii/frogpond"
 )
 
 const DefaultPartitionSyncIntervalSeconds = 300
@@ -48,17 +49,18 @@ type ClusterLike interface {
 	AppContext() context.Context                                   //Closed when the application shuts down
 	RecordDiskActivity(level DiskActivityLevel)                    // Track essential/non-essential disk activity
 	CanRunNonEssentialDiskOp() bool                                // Whether non-essential disk operations are allowed right now
+	LoadPeer(id NodeID) (*PeerInfo, bool)                          // Load peer info from CRDT or Discovery
 }
 
 // The partition manager, everything needed to access partitions and files
 // The FileStore should not be accessed directly, except by partitionManager
 type PartitionManagerLike interface {
-	StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error     // Store file in appropriate partition based on path, does not send to network
-	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)                                    // Get file and metadata from partition, including from other nodes
-	DeleteFileFromPartition(ctx context.Context, path string) error                                           // Delete file from partition, does not send to network
-	DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, lastClusterUpdate time.Time) error // Delete file from partition with explicit timestamp
-	GetMetadataFromPartition(path string) (FileMetadata, error)                                               // Get file metadata from partition
-	GetMetadataFromPeers(path string) (FileMetadata, error)                                                   // Get file metadata from other nodes
+	StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
+	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)                                // Get file and metadata from partition, including from other nodes
+	DeleteFileFromPartition(ctx context.Context, path string) error                                       // Delete file from partition, does not send to network
+	DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, modTime time.Time) error       // Delete file from partition with explicit timestamp
+	GetMetadataFromPartition(path string) (FileMetadata, error)                                           // Get file metadata from partition
+	GetMetadataFromPeers(path string) (FileMetadata, error)                                               // Get file metadata from other nodes
 	GetFileFromPeers(path string) ([]byte, FileMetadata, error)
 	CalculatePartitionName(path string) string                                // Calculate partition name for a given path
 	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error // Scan all files in all partitions, calling fn for each file
@@ -73,7 +75,7 @@ type PartitionManagerLike interface {
 type FileStoreLike interface {
 	Close()
 	SetEncryptionKey(key []byte)
-	Get(path string) (*FileData, error)
+	Get(path string) ([]byte, []byte, bool, error) //metadata, content, exists, error
 	GetMetadata(path string) ([]byte, error)
 	GetContent(path string) ([]byte, error)
 	Put(path string, metadata, content []byte) error
@@ -82,17 +84,16 @@ type FileStoreLike interface {
 	Scan(pathPrefix string, fn func(path string, metadata, content []byte) error) error
 	ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error
 	ScanMetadataPartition(partitionID PartitionID, fn func(path string, metadata []byte) error) error
-	CalculatePartitionChecksum(ctx context.Context, pathPrefix string) (string, error)
+	CalculatePartitionChecksum(ctx context.Context, partitionID PartitionID) (string, error)
 	GetAllPartitionStores() ([]PartitionStore, error)
 }
 
 type PartitionInfo struct {
-	ID           PartitionID           `json:"id"`
-	LastModified time.Time             `json:"last_modified"`
-	FileCount    int                   `json:"file_count"`
-	Holders      []NodeID              `json:"holders"`
-	Checksums    map[NodeID]string     `json:"checksums"`
-	HolderData   map[NodeID]HolderData `json:"holder_data"`
+	ID         PartitionID           `json:"id"`
+	FileCount  int                   `json:"file_count"`
+	Holders    []NodeID              `json:"holders"`
+	Checksums  map[NodeID]string     `json:"checksums"`
+	HolderData map[NodeID]HolderData `json:"holder_data"`
 }
 
 // Handles discovering peers on the network
@@ -144,9 +145,9 @@ type IndexerLike interface {
 type FileSystemLike interface {
 	CreateDirectory(path string) error
 	CreateDirectoryWithModTime(path string, modTime time.Time) error
-	StoreFileWithModTimeAndClusterUpdate(ctx context.Context, path string, data []byte, contentType string, modTime time.Time, lastClusterUpdate time.Time) (NodeID, error)
+	StoreFileWithModTimeAndClusterUpdate(ctx context.Context, path string, data []byte, contentType string, modTime time.Time) (NodeID, error)
 	DeleteFile(ctx context.Context, path string) error
-	DeleteFileWithTimestamp(ctx context.Context, path string, lastClusterUpdate time.Time) error
+	DeleteFileWithTimestamp(ctx context.Context, path string, modTime time.Time) error
 	MetadataForPath(path string) (FileMetadata, error)
 	MetadataViaAPI(ctx context.Context, path string) (FileMetadata, error)
 	// Additional methods for WebDAV support
@@ -186,18 +187,16 @@ type NodeInfo struct {
 
 // FileMetadata represents metadata for a file stored in the cluster
 type FileMetadata struct {
-	Name              string    `json:"name"`
-	Path              string    `json:"path"` // Full path like "/docs/readme.txt"
-	Size              int64     `json:"size"` // Total file size in bytes
-	ContentType       string    `json:"content_type"`
-	CreatedAt         time.Time `json:"created_at"`
-	ModifiedAt        time.Time `json:"modified_at"`
-	LastClusterUpdate time.Time `json:"last_cluster_update"`
-	IsDirectory       bool      `json:"is_directory"`
-	Checksum          string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
-	Holders           []NodeID  `json:"holders,omitempty"`
-	Deleted           bool      `json:"deleted,omitempty"`
-	DeletedAt         time.Time `json:"deleted_at,omitempty"`
+	Name        string    `json:"name"`
+	Path        string    `json:"path"` // Full path like "/docs/readme.txt"
+	Size        int64     `json:"size"` // Total file size in bytes
+	ContentType string    `json:"content_type"`
+	CreatedAt   time.Time `json:"created_at"`
+	ModifiedAt  time.Time `json:"modified_at"`
+	IsDirectory bool      `json:"is_directory"`
+	Checksum    string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
+	Deleted     bool      `json:"deleted,omitempty"`
+	DeletedAt   time.Time `json:"deleted_at,omitempty"`
 }
 
 type NodeData struct {
@@ -238,15 +237,6 @@ type SearchResult struct {
 	Holders     []NodeID  `json:"holders,omitempty"`
 }
 
-// FileData represents a complete file entry.
-type FileData struct {
-	Partition PartitionID
-	Path      string
-	Metadata  []byte
-	Content   []byte
-	Exists    bool
-}
-
 // Sent to the browser for display
 type PartitionStatistics struct {
 	Local_partitions      int `json:"local_partitions"`
@@ -281,9 +271,24 @@ type TranscodeStatistics struct {
 }
 
 type HolderData struct {
-	MostRecentModifiedTime time.Time `json:"most_recent_modified_time"`
-	File_count             int       `json:"file_count"`
-	Checksum               string    `json:"checksum"`
+	File_count int    `json:"file_count"`
+	Checksum   string `json:"checksum"`
+}
+
+type App struct {
+	NodeID                NodeID
+	NoStore               bool
+	Logger                *log.Logger
+	Debugf                func(string, ...interface{})
+	FileStore             FileStoreLike
+	HttpDataClient        *http.Client
+	Discovery             DiscoveryManagerLike
+	Cluster               ClusterLike
+	Frogpond              *frogpond.Node
+	SendUpdatesToPeers    func([]frogpond.DataPoint)
+	NotifyFileListChanged func()
+	GetCurrentRF          func() int
+	Indexer               IndexerLike
 }
 
 func CollapseToDirectory(relPath, basePath string) string {

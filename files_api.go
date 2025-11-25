@@ -447,7 +447,7 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 			contentType = metadata.ContentType
 		}
 
-		if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, metadata.ModifiedAt, metadata.LastClusterUpdate); err != nil {
+		if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, metadata.ModifiedAt); err != nil { //FIXME
 			http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -462,19 +462,9 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
 			return
 		}
-		// Internal requests should use cluster update time from header
-		if clusterHeader := r.Header.Get("X-ClusterF-Last-Cluster-Update"); clusterHeader != "" {
-			if clusterUpdateTime, err := parseHeaderTimestamp(clusterHeader); err == nil {
-				if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime, clusterUpdateTime); err != nil {
-					http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
-					return
-				}
-			} else {
-				http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Last-Cluster-Update header: %v", err), http.StatusBadRequest)
-				return
-			}
-		} else {
-			http.Error(w, fmt.Sprintf("Missing X-ClusterF-Last-Cluster-Update header for internal file upload: %s", path), http.StatusBadRequest)
+
+		if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -618,9 +608,6 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		contentType = "application/octet-stream"
 	}
 
-	// Set LastClusterUpdate timestamp - ONLY for external PUT requests
-	now := time.Now()
-
 	if isForwarded {
 		panic("Cannot forward to external api")
 	}
@@ -635,7 +622,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
 		return
 	}
-	if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime, now); err != nil {
+	if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -670,9 +657,6 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 	if isForwarded {
 		panic("Cannot forward to external api")
 	}
-
-	// Set LastClusterUpdate timestamp for external DELETE requests
-	now := time.Now()
 
 	partitionID := c.PartitionManager().CalculatePartitionName(path)
 	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
@@ -724,7 +708,6 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 
 		body, _, status, err := httpclient.SimpleDelete(r.Context(), c.HttpDataClient, deleteURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
-			httpclient.WithHeader("X-ClusterF-Last-Cluster-Update", now.Format(time.RFC3339)),
 		)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))

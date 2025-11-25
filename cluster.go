@@ -477,14 +477,8 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		panic("This repository requires an encryption key (use --encryption-key)")
 	}
 
-	// Initialize indexer first (needed by partition manager)
-	idx := indexer.NewIndexer(c.Logger())
-	idx.ConfigurePartitionMembership(c.frogpond, types.NodeID(c.NodeId), c.sendUpdatesToPeers, c.noStore)
-	c.indexer = idx
-	c.debugf("Initialized indexer\n")
-
 	// Initialize partition manager
-	deps := partitionmanager.Dependencies{
+	deps := &types.App{
 		NodeID:         types.NodeID(c.NodeId),
 		NoStore:        c.noStore,
 		Logger:         c.Logger(),
@@ -493,32 +487,19 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		HttpDataClient: c.HttpDataClient,
 		Discovery:      c.discoveryManager,
 		Cluster:        c,
-		LoadPeer: func(id types.NodeID) (*types.PeerInfo, bool) {
-			// First try peerAddrs (from Discovery)
-			peer, ok := c.peerAddrs.Load(types.NodeID(id))
-			if ok && peer != nil {
-				return &types.PeerInfo{
-					NodeID:   peer.NodeID,
-					Address:  peer.Address,
-					HTTPPort: peer.HTTPPort,
-				}, true
-			}
-			// Fallback: try CRDT nodes/ table
-			nodeData := c.GetNodeInfo(id)
-			if nodeData != nil && nodeData.Address != "" {
-				return &types.PeerInfo{
-					NodeID:   types.NodeID(nodeData.NodeID),
-					Address:  nodeData.Address,
-					HTTPPort: nodeData.HTTPPort,
-				}, true
-			}
-			return nil, false
-		},
+
 		Frogpond:           c.frogpond,
 		SendUpdatesToPeers: c.sendUpdatesToPeers,
 		GetCurrentRF:       c.getCurrentRF,
 		Indexer:            c.indexer,
 	}
+	// Initialize indexer first (needed by partition manager)
+	idx := indexer.NewIndexer(c.Logger(), deps)
+	idx.ConfigurePartitionMembership(c.frogpond, types.NodeID(c.NodeId), c.sendUpdatesToPeers, c.noStore)
+	c.indexer = idx
+	deps.Indexer = idx
+	c.debugf("Initialized indexer\n")
+
 	c.partitionManager = partitionmanager.NewPartitionManager(deps)
 	c.debugf("Initialized partition manager\n")
 
@@ -700,6 +681,29 @@ func xorEncryptString(data string, key []byte) string {
 		return string(result)
 	}
 	return hex.EncodeToString(result)
+}
+
+// Get data for peer
+func (c *Cluster) LoadPeer(id types.NodeID) (*types.PeerInfo, bool) {
+	// First try peerAddrs (from Discovery)
+	peer, ok := c.peerAddrs.Load(types.NodeID(id))
+	if ok && peer != nil {
+		return &types.PeerInfo{
+			NodeID:   peer.NodeID,
+			Address:  peer.Address,
+			HTTPPort: peer.HTTPPort,
+		}, true
+	}
+	// Fallback: try CRDT nodes/ table
+	nodeData := c.GetNodeInfo(id)
+	if nodeData != nil && nodeData.Address != "" {
+		return &types.PeerInfo{
+			NodeID:   types.NodeID(nodeData.NodeID),
+			Address:  nodeData.Address,
+			HTTPPort: nodeData.HTTPPort,
+		}, true
+	}
+	return nil, false
 }
 
 // verifyEncryptionKey verifies that the provided key can decrypt the test phrase

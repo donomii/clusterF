@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash"
-	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -28,33 +27,14 @@ const (
 	defaultReplicationFactor = 3
 )
 
-type Dependencies struct {
-	NodeID                types.NodeID
-	NoStore               bool
-	Logger                *log.Logger
-	Debugf                func(string, ...interface{})
-	FileStore             types.FileStoreLike
-	HttpDataClient        *http.Client
-	Discovery             types.DiscoveryManagerLike
-	Cluster               types.ClusterLike
-	LoadPeer              PeerLoader
-	Frogpond              *frogpond.Node
-	SendUpdatesToPeers    func([]frogpond.DataPoint)
-	NotifyFileListChanged func()
-	GetCurrentRF          func() int
-	Indexer               types.IndexerLike
-}
-
 type PartitionManager struct {
-	deps        Dependencies
+	deps        *types.App
 	ReindexList *syncmap.SyncMap[types.PartitionID, bool]
 }
 
 type PartitionVersion int64
 
-type PeerLoader func(types.NodeID) (*types.PeerInfo, bool)
-
-func NewPartitionManager(deps Dependencies) *PartitionManager {
+func NewPartitionManager(deps *types.App) *PartitionManager {
 	return &PartitionManager{deps: deps, ReindexList: syncmap.NewSyncMap[types.PartitionID, bool]()}
 }
 
@@ -185,11 +165,6 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 			if !parsedMetadata.Deleted {
 				// File is not deleted, count it
 				partitionsCount[partitionID] = partitionsCount[partitionID] + 1
-
-				// Track most recent modification time for this partition
-				if parsedMetadata.LastClusterUpdate.After(partitionsLastUpdate[partitionID]) {
-					partitionsLastUpdate[partitionID] = parsedMetadata.LastClusterUpdate
-				}
 			}
 
 			// Add to checksum
@@ -244,9 +219,8 @@ func (pm *PartitionManager) RunFullReindexAtStartup(ctx context.Context) {
 		}
 		if count > 0 {
 			holderData := types.HolderData{
-				MostRecentModifiedTime: lastUpdate,
-				File_count:             count,
-				Checksum:               hex.EncodeToString(hasher.Sum(nil)),
+				File_count: count,
+				Checksum:   hex.EncodeToString(hasher.Sum(nil)),
 			}
 			holderJSON, _ := json.Marshal(holderData)
 
@@ -336,10 +310,8 @@ func (pm *PartitionManager) notifyFileListChanged() {
 }
 
 func (pm *PartitionManager) loadPeer(id types.NodeID) (*types.PeerInfo, bool) {
-	if pm.deps.LoadPeer == nil {
-		return nil, false
-	}
-	return pm.deps.LoadPeer(id)
+
+	return pm.deps.Cluster.LoadPeer(id)
 }
 
 func (pm *PartitionManager) httpClient() *http.Client {
@@ -418,9 +390,9 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	//pm.logf("[PARTITION] Marked %v for reindex", partitionID)
 
 	// Debug: verify what we just stored
-	if storedData, err := pm.deps.FileStore.Get(path); err == nil && storedData.Exists {
+	if metadata_bytes, _, exists, err := pm.deps.FileStore.Get(path); err == nil && exists {
 		var parsedMeta types.FileMetadata
-		if json.Unmarshal(storedData.Metadata, &parsedMeta) == nil {
+		if json.Unmarshal(metadata_bytes, &parsedMeta) == nil {
 			if parsedMeta.Checksum == "" {
 				panic("fuck ai")
 				//pm.logf("[CHECKSUM_DEBUG] ERROR: Just stored %s but no checksum in metadata!", path)
@@ -512,9 +484,9 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	partitionID := HashToPartition(path)
 
 	// Get metadata and content atomically
-	fileData, err := pm.deps.FileStore.Get(path)
+	metadataBytes, contentBytes, exists, err := pm.deps.FileStore.Get(path)
 	if err != nil {
-		if fileData != nil && !fileData.Exists {
+		if !exists {
 			pm.debugf("[PARTITION] File %s not found locally (partition %s): %v", path, partitionID, err)
 			return []byte{}, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, err.Error())
 		}
@@ -522,7 +494,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 		return []byte{}, types.FileMetadata{}, fmt.Errorf("failed reading local store for %s (partition %s): %w", path, partitionID, err)
 	}
 
-	if !fileData.Exists {
+	if !exists {
 		pm.debugf("[PARTITION] File %s lookup returned empty record (partition %s)", path, partitionID)
 		return []byte{}, types.FileMetadata{}, pm.localFileNotFound(path, partitionID, "store returned empty record")
 
@@ -530,8 +502,8 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 
 	// Parse metadata
 	var metadata types.FileMetadata
-	if err := json.Unmarshal(fileData.Metadata, &metadata); err != nil {
-		return nil, types.FileMetadata{}, pm.errorf(fileData.Metadata, "corrupt file metadata")
+	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+		return nil, types.FileMetadata{}, pm.errorf(metadataBytes, "corrupt file metadata")
 	}
 
 	// Check if file is marked as deleted
@@ -546,14 +518,14 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 		panic("no")
 	}
 
-	if err := pm.verifyFileChecksum(fileData.Content, checksum, path, pm.deps.NodeID); err != nil {
+	if err := pm.verifyFileChecksum(contentBytes, checksum, path, pm.deps.NodeID); err != nil {
 		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.logf("[PARTITION] Local file corruption detected for %s: %v", path, err))
 	}
 	pm.debugf("[PARTITION] Local checksum verified for %s", path)
 
 	pm.debugf("[PARTITION] Found file %s locally in partition %s", path, partitionID)
-	pm.debugf("[PARTITION] Retrieved file %s: %d bytes content", path, len(fileData.Content))
-	return fileData.Content, metadata, nil
+	pm.debugf("[PARTITION] Retrieved file %s: %d bytes content", path, len(contentBytes))
+	return contentBytes, metadata, nil
 }
 
 func (pm *PartitionManager) localFileNotFound(path string, partitionID types.PartitionID, detail string) error {
@@ -753,7 +725,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 }
 
 // DeleteFileFromPartitionWithTimestamp removes a file from its partition with explicit timestamp
-func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, lastClusterUpdate time.Time) error {
+func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, modTime time.Time) error {
 	pm.recordEssentialDiskActivity()
 	// If in no-store mode, don't delete locally (we don't have it anyway)
 	if pm.deps.NoStore {
@@ -776,11 +748,10 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 
 	}
 
-	// Mark as deleted in metadata and set LastClusterUpdate
+	// Mark as deleted in metadata and set modTime
 	metadata.Deleted = true
-	metadata.DeletedAt = lastClusterUpdate
-	metadata.ModifiedAt = lastClusterUpdate
-	metadata.LastClusterUpdate = lastClusterUpdate
+	metadata.DeletedAt = modTime
+	metadata.ModifiedAt = modTime
 
 	// Store tombstone metadata and delete content
 	tombstoneJSON, _ := json.Marshal(metadata)
@@ -849,11 +820,6 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		if !parsedMetadata.Deleted {
 			// File is not deleted, count it
 			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
-
-			// Track most recent modification time for this partition
-			if parsedMetadata.LastClusterUpdate.After(partitionsLastUpdate[partitionID]) {
-				partitionsLastUpdate[partitionID] = parsedMetadata.LastClusterUpdate
-			}
 		}
 
 		return nil
@@ -894,9 +860,8 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			}
 			if partitionsCount[partitionID] > 0 {
 				holderData := types.HolderData{
-					MostRecentModifiedTime: lastUpdate,
-					File_count:             partitionsCount[partitionID],
-					Checksum:               hex.EncodeToString(hasher.Sum(nil)),
+					File_count: partitionsCount[partitionID],
+					Checksum:   hex.EncodeToString(hasher.Sum(nil)),
 				}
 				holderJSON, _ := json.Marshal(holderData)
 
@@ -973,7 +938,6 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 
 	var holders []types.NodeID
 	var totalFiles int
-	var maxTimestamp time.Time
 	checksums := make(map[types.NodeID]string)
 
 	holderMap := make(map[types.NodeID]types.HolderData)
@@ -1004,10 +968,6 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 			continue
 		}
 
-		if holderData.MostRecentModifiedTime.After(maxTimestamp) {
-			maxTimestamp = holderData.MostRecentModifiedTime
-		}
-
 		fileCount := holderData.File_count
 		if int(fileCount) > totalFiles {
 			totalFiles = int(fileCount) // Use the highest file count
@@ -1022,12 +982,11 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 	}
 
 	return &types.PartitionInfo{
-		ID:           partitionID,
-		LastModified: maxTimestamp,
-		FileCount:    totalFiles,
-		Holders:      holders,
-		Checksums:    checksums,
-		HolderData:   holderMap,
+		ID:         partitionID,
+		FileCount:  totalFiles,
+		Holders:    holders,
+		Checksums:  checksums,
+		HolderData: holderMap,
 	}
 }
 
@@ -1074,15 +1033,10 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.Part
 	for partitionID, nodeData := range partitionMap {
 		var holders []types.NodeID
 		var totalFiles int
-		var maxTimestamp time.Time
 		checksums := make(map[types.NodeID]string)
 
 		for nodeID, data := range nodeData {
 			holders = append(holders, types.NodeID(nodeID))
-
-			if data.MostRecentModifiedTime.After(maxTimestamp) {
-				maxTimestamp = data.MostRecentModifiedTime
-			}
 
 			if data.File_count > totalFiles {
 				totalFiles = data.File_count
@@ -1093,12 +1047,11 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.Part
 		}
 
 		result[types.PartitionID(partitionID)] = &types.PartitionInfo{
-			ID:           types.PartitionID(partitionID),
-			LastModified: maxTimestamp,
-			FileCount:    totalFiles,
-			Holders:      holders,
-			Checksums:    checksums,
-			HolderData:   nodeData,
+			ID:         types.PartitionID(partitionID),
+			FileCount:  totalFiles,
+			Holders:    holders,
+			Checksums:  checksums,
+			HolderData: nodeData,
 		}
 	}
 
@@ -1175,10 +1128,9 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 
 // PartitionSyncEntry represents a single file entry for partition sync
 type PartitionSyncEntry struct {
-	Path     string `json:"path"`
-	Metadata []byte `json:"metadata"`
-	Content  []byte `json:"content"`
-	Checksum string `json:"checksum"`
+	Path     string             `json:"path"`
+	Metadata types.FileMetadata `json:"metadata"`
+	Content  []byte             `json:"content"`
 }
 
 // PartitionSnapshot represents a consistent point-in-time view of a partition
@@ -1188,14 +1140,6 @@ type PartitionSnapshot struct {
 	Version     int64                `json:"version"`
 	Entries     []PartitionSyncEntry `json:"entries"`
 	Checksum    string               `json:"checksum"`
-}
-
-// calculateEntryChecksum calculates a checksum for a single entry
-func (pm *PartitionManager) calculateEntryChecksum(metadata, content []byte) string {
-	hash := sha256.New()
-	hash.Write(metadata)
-	hash.Write(content)
-	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // calculatePartitionChecksum computes a checksum for all files in a partition
@@ -1421,9 +1365,9 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 				// Compare with other holders' last modified
 				needSync := false
 				for _, holderID := range info.Holders {
-					if holderID != ourNodeId && !info.LastModified.Equal(ourHolderData.MostRecentModifiedTime) {
-						pm.debugf("[PARTITION] Timestamp mismatch for %s: ours %s=%s, theirs %s=%s",
-							partitionID, ourNodeId, ourHolderData.MostRecentModifiedTime, holderID, info.LastModified)
+					if holderID != ourNodeId && (info.Checksums[holderID] != ourHolderData.Checksum) {
+						pm.debugf("[PARTITION] Checksum mismatch for %s: ours %s=%s, theirs %s=%s",
+							partitionID, ourNodeId, ourHolderData.Checksum, holderID, info.Checksums[holderID])
 						needSync = true
 						break
 					}

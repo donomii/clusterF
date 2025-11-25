@@ -75,20 +75,19 @@ func (fs *DiskFileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
 }
 
 // Get loads both metadata and content for a path.
-func (fs *DiskFileStore) Get(path string) (*types.FileData, error) {
+func (fs *DiskFileStore) Get(path string) ([]byte, []byte, bool, error) {
 	defer metrics.StartGlobalTimer("disk_filestore.get")()
 	metrics.IncrementGlobalCounter("disk_filestore.get.calls")
 
-	partition := types.PartitionIDForPath(path)
 	metaPath, err := fs.metadataPath(path)
 	if err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
-		return nil, err
+		return nil, nil, false, err
 	}
 	contentPath, err := fs.contentPath(path)
 	if err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
-		return nil, err
+		return nil, nil, false, err
 	}
 
 	metadata, metaErr := os.ReadFile(metaPath)
@@ -96,16 +95,16 @@ func (fs *DiskFileStore) Get(path string) (*types.FileData, error) {
 
 	if errors.Is(metaErr, os.ErrNotExist) && errors.Is(contentErr, os.ErrNotExist) {
 		metrics.IncrementGlobalCounter("disk_filestore.get.notfound")
-		return &types.FileData{Partition: partition, Path: path, Exists: false}, fmt.Errorf("not found: %s", path)
+		return nil, nil, false, fmt.Errorf("not found: %s", path)
 	}
 
 	if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
 		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
-		return nil, metaErr
+		return nil, nil, false, metaErr
 	}
 	if contentErr != nil && !errors.Is(contentErr, os.ErrNotExist) {
 		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
-		return nil, contentErr
+		return nil, nil, false, contentErr
 	}
 
 	metadata, content = fs.decrypt(metadata, content)
@@ -113,13 +112,7 @@ func (fs *DiskFileStore) Get(path string) (*types.FileData, error) {
 	metrics.AddGlobalCounter("disk_filestore.get.metadata_bytes", int64(len(metadata)))
 	metrics.AddGlobalCounter("disk_filestore.get.content_bytes", int64(len(content)))
 
-	return &types.FileData{
-		Partition: partition,
-		Path:      path,
-		Metadata:  metadata,
-		Content:   content,
-		Exists:    true,
-	}, nil
+	return metadata, content, true, nil
 }
 
 // GetMetadata loads only metadata for a path.
@@ -523,7 +516,7 @@ func (fs *DiskFileStore) GetAllPartitionStores() ([]types.PartitionStore, error)
 }
 
 // CalculatePartitionChecksum reproduces the checksum calculation used by the existing store.
-func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPrefix string) (string, error) {
+func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) (string, error) {
 	defer metrics.StartGlobalTimer("disk_filestore.calculate_checksum")()
 	metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.calls")
 
@@ -531,12 +524,11 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPre
 		partition types.PartitionID
 		path      string
 		metadata  []byte
-		content   []byte
 	}
 
 	var entries []entry
 
-	err := fs.Scan(pathPrefix, func(path string, metadata, content []byte) error {
+	err := fs.ScanMetadataPartition(partitionID, func(path string, metadata []byte) error {
 		if ctx.Err() != nil {
 			metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.errors")
 			return ctx.Err()
@@ -546,12 +538,10 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPre
 		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
 			if !parsedMetadata.Deleted {
 				metaCopy := append([]byte(nil), metadata...)
-				contentCopy := append([]byte(nil), content...)
 				entries = append(entries, entry{
 					partition: types.PartitionIDForPath(path),
 					path:      path,
 					metadata:  metaCopy,
-					content:   contentCopy,
 				})
 			}
 		}
@@ -571,10 +561,7 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, pathPre
 
 	hash := sha256.New()
 	for _, e := range entries {
-		hash.Write([]byte(e.partition))
-		hash.Write([]byte(e.path))
 		hash.Write(e.metadata)
-		hash.Write(e.content)
 	}
 
 	metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.success")

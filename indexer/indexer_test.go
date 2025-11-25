@@ -10,6 +10,10 @@ import (
 	"github.com/donomii/clusterF/types"
 )
 
+func newTestApp() *types.App {
+	return &types.App{NoStore: true}
+}
+
 func containsPath(paths []string, target string) bool {
 	for _, p := range paths {
 		if p == target {
@@ -29,7 +33,7 @@ func TestIndexerBasics_Flat(t *testing.T) {
 
 func testIndexerBasics(t *testing.T, indexType IndexType) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-	idx := NewIndexerWithType(logger, indexType)
+	idx := NewIndexerWithType(logger, indexType, newTestApp())
 
 	// Test adding files
 	metadata1 := types.FileMetadata{
@@ -109,7 +113,7 @@ func TestIndexerUpdate_Flat(t *testing.T) {
 
 func testIndexerUpdate(t *testing.T, indexType IndexType) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-	idx := NewIndexerWithType(logger, indexType)
+	idx := NewIndexerWithType(logger, indexType, newTestApp())
 
 	// Add a file
 	metadata := types.FileMetadata{
@@ -155,7 +159,7 @@ func TestIndexerDeletedFiles_Flat(t *testing.T) {
 
 func testIndexerDeletedFiles(t *testing.T, indexType IndexType) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-	idx := NewIndexerWithType(logger, indexType)
+	idx := NewIndexerWithType(logger, indexType, newTestApp())
 
 	// Add a file
 	metadata := types.FileMetadata{
@@ -202,19 +206,19 @@ func TestIndexType(t *testing.T) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
 
 	// Test default (should be trie)
-	idx := NewIndexer(logger)
+	idx := NewIndexer(logger, newTestApp())
 	if idx.GetIndexType() != IndexTypeTrie {
 		t.Errorf("Expected default index type to be trie, got %s", idx.GetIndexType())
 	}
 
 	// Test explicit trie
-	idxTrie := NewIndexerWithType(logger, IndexTypeTrie)
+	idxTrie := NewIndexerWithType(logger, IndexTypeTrie, newTestApp())
 	if idxTrie.GetIndexType() != IndexTypeTrie {
 		t.Errorf("Expected trie index type, got %s", idxTrie.GetIndexType())
 	}
 
 	// Test explicit flat
-	idxFlat := NewIndexerWithType(logger, IndexTypeFlat)
+	idxFlat := NewIndexerWithType(logger, IndexTypeFlat, newTestApp())
 	if idxFlat.GetIndexType() != IndexTypeFlat {
 		t.Errorf("Expected flat index type, got %s", idxFlat.GetIndexType())
 	}
@@ -230,7 +234,7 @@ func BenchmarkPrefixSearch_Flat(b *testing.B) {
 
 func benchmarkPrefixSearch(b *testing.B, indexType IndexType) {
 	logger := log.New(os.Stdout, "[BENCH] ", log.LstdFlags)
-	idx := NewIndexerWithType(logger, indexType)
+	idx := NewIndexerWithType(logger, indexType, newTestApp())
 
 	// Add 1000 files
 	for i := 0; i < 1000; i++ {

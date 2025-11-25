@@ -128,7 +128,7 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 			break
 		}
 
-		ok, err := pm.applyPartitionEntry(entry, sourceNode)
+		ok, err := pm.applyPartitionEntry(entry, sourceNode, partitionID)
 		if err != nil {
 			pm.logf("[PARTITION] Failed to apply streamed entry %s (partition %s) from %s: %v", entry.Path, types.PartitionIDForPath(entry.Path), sourceNode, err)
 			continue
@@ -260,7 +260,7 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 			break
 		}
 
-		applied, err := pm.applyPartitionEntry(entry, peerID)
+		applied, err := pm.applyPartitionEntry(entry, peerID, partitionID)
 		if err != nil {
 			pm.logf("[PARTITION] Failed to apply sync entry '%s' (partition %s) from %s: %v", entry.Path, types.PartitionIDForPath(entry.Path), peerID, err)
 			continue
@@ -276,27 +276,25 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 	return syncCount, nil
 }
 
-func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID types.NodeID) (bool, error) {
-	expectedChecksum := pm.calculateEntryChecksum(entry.Metadata, entry.Content)
-	if entry.Checksum != expectedChecksum {
-		return false, fmt.Errorf("checksum mismatch for %s from %s: expected %s, got %s", entry.Path, peerID, expectedChecksum, entry.Checksum)
-	}
+func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID types.NodeID, partitionID types.PartitionID) (bool, error) {
 
 	if !pm.shouldUpdateEntry(entry) {
 		return false, nil
 	}
 
 	pm.recordEssentialDiskActivity()
-	if err := pm.deps.FileStore.Put(entry.Path, entry.Metadata, entry.Content); err != nil {
+	metadataBytes, err := json.Marshal(entry.Metadata)
+	if err != nil {
+		return false, fmt.Errorf("failed to encode metadata for entry %s: %v", entry.Path, err)
+	}
+
+	if err := pm.deps.FileStore.Put(entry.Path, metadataBytes, entry.Content); err != nil {
 		return false, fmt.Errorf("failed to store entry %s: %w", entry.Path, err)
 	}
 
-	var metadata types.FileMetadata
-	if err := json.Unmarshal(entry.Metadata, &metadata); err != nil {
-		return true, pm.errorf(entry.Metadata, fmt.Sprintf("corrupt metadata for entry %s: %v", entry.Path, err))
-	}
+	metadata := entry.Metadata
 	if metadata.Path == "" {
-		metadata.Path = entry.Path
+		panic("what the fuck were you thinking you stupid AI")
 	}
 
 	if pm.deps.Indexer != nil {
@@ -318,16 +316,7 @@ func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID
 		}
 	}
 
-	if metadata.LastClusterUpdate.After(currentHolderData.MostRecentModifiedTime) {
-		holderData := types.HolderData{
-			MostRecentModifiedTime: metadata.LastClusterUpdate,
-			File_count:             currentHolderData.File_count,
-			Checksum:               "",
-		}
-		holderJSON, _ := json.Marshal(holderData)
-		pm.sendUpdates(pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON))
-	}
-
+	pm.deps.Cluster.PartitionManager().MarkForReindex(partitionID)
 	return true, nil
 }
 
@@ -352,18 +341,19 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 
 func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, path string) (PartitionSyncEntry, error) {
 	pm.recordEssentialDiskActivity()
-	data, err := pm.deps.FileStore.Get(path)
+	localMetadataBytes, localContentBytes, localExists, err := pm.deps.FileStore.Get(path)
 	if err != nil {
 		return PartitionSyncEntry{}, err
 	}
-	if data == nil || !data.Exists {
+	if !localExists {
 		return PartitionSyncEntry{}, fmt.Errorf("entry %s missing", path)
 	}
-	metadata := data.Metadata
-	if len(metadata) == 0 {
-		return PartitionSyncEntry{}, fmt.Errorf("entry %s has no metadata", path)
+
+	metadata := types.FileMetadata{}
+	if err := json.Unmarshal(localMetadataBytes, &metadata); err != nil {
+		return PartitionSyncEntry{}, fmt.Errorf("failed to decode metadata for entry %s: %v", path, err)
 	}
-	content := data.Content
+	content := localContentBytes
 	if content == nil {
 		content = []byte{}
 	}
@@ -371,7 +361,6 @@ func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, p
 		Path:     path,
 		Metadata: metadata,
 		Content:  content,
-		Checksum: pm.calculateEntryChecksum(metadata, content),
 	}, nil
 }
 
@@ -495,26 +484,22 @@ func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peer
 func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bool {
 	pm.recordEssentialDiskActivity()
 	// Get our current version
-	localData, err := pm.deps.FileStore.Get(remoteEntry.Path)
-	if err != nil || !localData.Exists {
+	localMetadataBytes, _, localExists, err := pm.deps.FileStore.Get(remoteEntry.Path)
+	if err != nil || !localExists {
 		// We don't have this entry, accept it
 		return true
 	}
 
 	// Parse both metadata for CRDT comparison
 	var localMetadata, remoteMetadata types.FileMetadata
-	if err := json.Unmarshal(localData.Metadata, &localMetadata); err != nil {
+	if err := json.Unmarshal(localMetadataBytes, &localMetadata); err != nil {
 		pm.debugf("[PARTITION] Failed to parse local metadata for %s: %v", remoteEntry.Path, err)
 		return true // Accept remote if we can't parse local
 	}
-	if err := json.Unmarshal(remoteEntry.Metadata, &remoteMetadata); err != nil {
-		pm.debugf("[PARTITION] Failed to parse remote metadata for %s: %v", remoteEntry.Path, err)
-		return false // Reject remote if we can't parse it
-	}
 
-	// CRDT rule: use latest LastClusterUpdate timestamp, break ties with version
-	remoteTime := remoteMetadata.LastClusterUpdate
-	localTime := localMetadata.LastClusterUpdate
+	// CRDT rule: use latest ModifiedAt timestamp, break ties with version FIXME
+	remoteTime := remoteEntry.Metadata.ModifiedAt
+	localTime := localMetadata.ModifiedAt
 
 	// Remote is newer
 	if remoteTime.After(localTime) {

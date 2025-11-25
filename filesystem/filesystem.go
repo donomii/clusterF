@@ -106,11 +106,11 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 
 // StoreFileWithModTime stores a file using explicit modification time
 func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
-	return fs.StoreFileWithModTimeAndClusterUpdate(ctx, path, content, contentType, modTime, modTime)
+	return fs.StoreFileWithModTimeAndClusterUpdate(ctx, path, content, contentType, modTime)
 }
 
 // StoreFileWithModTimeAndClusterUpdate stores a file using explicit modification time and last cluster update time
-func (fs *ClusterFileSystem) StoreFileWithModTimeAndClusterUpdate(ctx context.Context, path string, content []byte, contentType string, modTime time.Time, lastClusterUpdate time.Time) (types.NodeID, error) {
+func (fs *ClusterFileSystem) StoreFileWithModTimeAndClusterUpdate(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
 	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {
 		return "", fmt.Errorf("invalid path: %s", path)
 	}
@@ -120,15 +120,14 @@ func (fs *ClusterFileSystem) StoreFileWithModTimeAndClusterUpdate(ctx context.Co
 
 	// Create file metadata for the file system layer
 	metadata := types.FileMetadata{
-		Name:              filepath.Base(path),
-		Path:              path,
-		Size:              int64(len(content)),
-		ContentType:       contentType,
-		CreatedAt:         modTime,
-		ModifiedAt:        modTime,
-		LastClusterUpdate: lastClusterUpdate,
-		IsDirectory:       false,
-		Checksum:          checksum,
+		Name:        filepath.Base(path),
+		Path:        path,
+		Size:        int64(len(content)),
+		ContentType: contentType,
+		CreatedAt:   modTime,
+		ModifiedAt:  modTime,
+		IsDirectory: false,
+		Checksum:    checksum,
 	}
 
 	if metadata.ModifiedAt.IsZero() {
@@ -398,16 +397,16 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 				partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
 				backdatedTime := time.Now().Add(-24 * time.Hour) // Backdate by 24 hours
 				fs.debugf("[FILES] Node %s not found in discovery peers, removing partition %s entries backdated to %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
-				
+
 				// Remove this node from the partition holder list
 				if err := fs.cluster.PartitionManager().RemoveNodeFromPartitionWithTimestamp(types.NodeID(nodeID), partitionName, backdatedTime); err != nil {
 					fs.debugf("[FILES] Failed to remove node %s from partition %s: %v", nodeID, partitionName, err)
 				}
-				
+
 				msg := fmt.Errorf("[FILES] Node %s not found in discovery peers", nodeID)
 				fs.debugf("%v", msg)
 				results <- forwardResult{node: types.NodeID(nodeID), err: msg}
-				
+
 				return
 			}
 
@@ -540,9 +539,9 @@ func (fs *ClusterFileSystem) DeleteFile(ctx context.Context, path string) error 
 }
 
 // DeleteFileWithTimestamp removes a file from the cluster with explicit timestamp
-func (fs *ClusterFileSystem) DeleteFileWithTimestamp(ctx context.Context, path string, lastClusterUpdate time.Time) error {
+func (fs *ClusterFileSystem) DeleteFileWithTimestamp(ctx context.Context, path string, modTime time.Time) error {
 	// Delete from partition system
-	if err := fs.cluster.PartitionManager().DeleteFileFromPartitionWithTimestamp(ctx, path, lastClusterUpdate); err != nil {
+	if err := fs.cluster.PartitionManager().DeleteFileFromPartitionWithTimestamp(ctx, path, modTime); err != nil {
 		return fmt.Errorf("failed to delete file: %v", err)
 	}
 

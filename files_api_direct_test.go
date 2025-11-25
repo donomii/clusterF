@@ -123,35 +123,35 @@ func TestFileAPI_Direct(t *testing.T) {
 
 	// Test direct GET operation (external)
 	t.Run("DirectGETExternal", func(t *testing.T) {
-	// Create HTTP request and response recorder
-	req := httptest.NewRequest(http.MethodGet, "/api/files"+testPath, nil)
-	// No X-ClusterF-Internal header means external request
-	
-	w := httptest.NewRecorder()
+		// Create HTTP request and response recorder
+		req := httptest.NewRequest(http.MethodGet, "/api/files"+testPath, nil)
+		// No X-ClusterF-Internal header means external request
 
-	// Call handleFileGet directly (the external version)
-	cluster.handleFileGet(w, req, testPath)
+		w := httptest.NewRecorder()
 
-	// Check response
-	if w.Code != http.StatusOK {
-	t.Fatalf("Expected status 200, got %d. Response: %s", w.Code, w.Body.String())
-	}
+		// Call handleFileGet directly (the external version)
+		cluster.handleFileGet(w, req, testPath)
 
-	// Check response body
-	responseData := w.Body.Bytes()
-	if !bytes.Equal(responseData, testData) {
-	t.Fatalf("Response data mismatch. Expected %q, got %q", testData, responseData)
-	}
+		// Check response
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d. Response: %s", w.Code, w.Body.String())
+		}
 
-	t.Logf("External GET response headers: %v", w.Header())
-	t.Logf("External GET response data: %q", responseData)
+		// Check response body
+		responseData := w.Body.Bytes()
+		if !bytes.Equal(responseData, testData) {
+			t.Fatalf("Response data mismatch. Expected %q, got %q", testData, responseData)
+		}
+
+		t.Logf("External GET response headers: %v", w.Header())
+		t.Logf("External GET response data: %q", responseData)
 	})
 
 	// Test direct HEAD operation
 	t.Run("DirectHEAD", func(t *testing.T) {
 		// Create HTTP request and response recorder
 		req := httptest.NewRequest(http.MethodHead, "/api/files"+testPath, nil)
-		
+
 		w := httptest.NewRecorder()
 
 		// Call handleFileHead directly
@@ -191,7 +191,7 @@ func TestFileAPI_Direct(t *testing.T) {
 	t.Run("DirectDELETE", func(t *testing.T) {
 		// Create HTTP request and response recorder
 		req := httptest.NewRequest(http.MethodDelete, "/api/files"+testPath, nil)
-		
+
 		w := httptest.NewRecorder()
 
 		// Call handleFileDelete directly
@@ -220,7 +220,7 @@ func TestFileAPI_Direct(t *testing.T) {
 		// Create HTTP request and response recorder
 		req := httptest.NewRequest(http.MethodGet, "/api/files"+testPath, nil)
 		req.Header.Set("X-ClusterF-Internal", "1")
-		
+
 		w := httptest.NewRecorder()
 
 		// Call handleFileGetInternal directly
@@ -294,43 +294,43 @@ func TestFileAPI_Direct(t *testing.T) {
 
 	// Test directory listing
 	t.Run("DirectGETDirectory", func(t *testing.T) {
-	// Create HTTP request for root directory
-	req := httptest.NewRequest(http.MethodGet, "/api/files/", nil)
-	req.Header.Set("X-ClusterF-Internal", "1")
-	
-	w := httptest.NewRecorder()
+		// Create HTTP request for root directory
+		req := httptest.NewRequest(http.MethodGet, "/api/files/", nil)
+		req.Header.Set("X-ClusterF-Internal", "1")
 
-	// Call handleFileGetInternal directly
-	cluster.handleFileGetInternal(w, req, "/")
+		w := httptest.NewRecorder()
 
-	// Check response
-	if w.Code != http.StatusOK {
-	t.Fatalf("Expected status 200, got %d. Response: %s", w.Code, w.Body.String())
-	}
+		// Call handleFileGetInternal directly
+		cluster.handleFileGetInternal(w, req, "/")
 
-	// Check content type
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-	t.Errorf("Expected Content-Type application/json, got %q", ct)
-	}
+		// Check response
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d. Response: %s", w.Code, w.Body.String())
+		}
 
-	responseBody := w.Body.String()
-	t.Logf("Directory listing response: %s", responseBody)
+		// Check content type
+		if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("Expected Content-Type application/json, got %q", ct)
+		}
 
-	// Note: After DELETE, our test file shouldn't be in the listing
-	// But we can still test that the directory listing works
-	if !strings.Contains(responseBody, "path") || !strings.Contains(responseBody, "entries") {
-	 t.Errorf("Expected directory listing format with 'path' and 'entries', got: %s", responseBody)
-	 }
+		responseBody := w.Body.String()
+		t.Logf("Directory listing response: %s", responseBody)
+
+		// Note: After DELETE, our test file shouldn't be in the listing
+		// But we can still test that the directory listing works
+		if !strings.Contains(responseBody, "path") || !strings.Contains(responseBody, "entries") {
+			t.Errorf("Expected directory listing format with 'path' and 'entries', got: %s", responseBody)
+		}
 	})
 
 	// Test direct POST operation (directory creation)
 	t.Run("DirectPOSTCreateDirectory", func(t *testing.T) {
 		dirPath := "/test-directory"
-		
+
 		// Create HTTP request for directory creation
 		req := httptest.NewRequest(http.MethodPost, "/api/files"+dirPath, nil)
 		req.Header.Set("X-Create-Directory", "true")
-		
+
 		w := httptest.NewRecorder()
 
 		// Call handleFilePost directly
@@ -355,7 +355,7 @@ func TestFileAPI_Direct(t *testing.T) {
 		// Create HTTP request without X-Create-Directory header
 		req := httptest.NewRequest(http.MethodPost, "/api/files/invalid-post", nil)
 		// Missing: X-Create-Directory header
-		
+
 		w := httptest.NewRecorder()
 
 		// Call handleFilePost directly
@@ -378,7 +378,7 @@ func TestFileAPI_Direct(t *testing.T) {
 	t.Run("DirectHEADDirectory", func(t *testing.T) {
 		// Create HTTP request for directory HEAD
 		req := httptest.NewRequest(http.MethodHead, "/api/files/", nil)
-		
+
 		w := httptest.NewRecorder()
 
 		// Call handleFileHead directly
@@ -522,45 +522,44 @@ func TestFileAPI_DirectErrorCases(t *testing.T) {
 	})
 
 	t.Run("EmptyFile", func(t *testing.T) {
-	body := bytes.NewReader([]byte{})
-	
-	req := httptest.NewRequest(http.MethodPut, "/api/files/empty.txt", body)
-	req.Header.Set("X-ClusterF-Modified-At", time.Now().Format(time.RFC3339))
-	// No Content-Type header for empty file
-	
-	w := httptest.NewRecorder()
-	cluster.handleFilePut(w, req, "/empty.txt")
+		body := bytes.NewReader([]byte{})
 
-	if w.Code != http.StatusCreated {
-	t.Fatalf("Expected status 201 for empty file, got %d. Response: %s", w.Code, w.Body.String())
-	}
+		req := httptest.NewRequest(http.MethodPut, "/api/files/empty.txt", body)
+		req.Header.Set("X-ClusterF-Modified-At", time.Now().Format(time.RFC3339))
+		// No Content-Type header for empty file
+
+		w := httptest.NewRecorder()
+		cluster.handleFilePut(w, req, "/empty.txt")
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("Expected status 201 for empty file, got %d. Response: %s", w.Code, w.Body.String())
+		}
 	})
 
 	// Test PUT with forwarded metadata (simulating peer-to-peer transfer) via internal API
 	t.Run("ForwardedFile", func(t *testing.T) {
 		testData := []byte("Forwarded file content")
 		filePath := "/forwarded-file.txt"
-		
+
 		// Create metadata
 		metadata := types.FileMetadata{
-			Path:               filePath,
-			Name:               "forwarded-file.txt",
-			Size:               int64(len(testData)),
-			ContentType:        "text/plain",
-			ModifiedAt:         time.Now(),
-			CreatedAt:          time.Now(),
-			Checksum:           "dummy-checksum",
-			LastClusterUpdate:  time.Now(),
+			Path:        filePath,
+			Name:        "forwarded-file.txt",
+			Size:        int64(len(testData)),
+			ContentType: "text/plain",
+			ModifiedAt:  time.Now(),
+			CreatedAt:   time.Now(),
+			Checksum:    "dummy-checksum",
 		}
 		metadataJSON, _ := json.Marshal(metadata)
 		metadataB64 := base64.StdEncoding.EncodeToString(metadataJSON)
-		
+
 		body := bytes.NewReader(testData)
 		req := httptest.NewRequest(http.MethodPut, "/internal/files"+filePath, body)
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("X-Forwarded-From", "peer-node-123")
 		req.Header.Set("X-ClusterF-Metadata", metadataB64)
-		
+
 		w := httptest.NewRecorder()
 		// Use internal handler which supports forwarded metadata
 		cluster.handleFilePutInternal(w, req, filePath)
@@ -580,12 +579,12 @@ func TestFileAPI_DirectErrorCases(t *testing.T) {
 	// Test PUT with invalid forwarded metadata via internal API
 	t.Run("InvalidForwardedMetadata", func(t *testing.T) {
 		body := bytes.NewReader([]byte("test"))
-		
+
 		req := httptest.NewRequest(http.MethodPut, "/internal/files/invalid-meta.txt", body)
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("X-Forwarded-From", "peer-node-123")
 		req.Header.Set("X-ClusterF-Metadata", "invalid-base64-metadata")
-		
+
 		w := httptest.NewRecorder()
 		// Use internal handler which supports forwarded metadata
 		cluster.handleFilePutInternal(w, req, "/invalid-meta.txt")
@@ -602,7 +601,7 @@ func TestFileAPI_DirectErrorCases(t *testing.T) {
 	// Test DELETE on non-existent file
 	t.Run("DeleteNonExistentFile", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/api/files/does-not-exist.txt", nil)
-		
+
 		w := httptest.NewRecorder()
 		cluster.handleFileDelete(w, req, "/does-not-exist.txt")
 

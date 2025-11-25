@@ -34,9 +34,8 @@ type Indexer struct {
 	backend   searchBackend
 
 	// Partition awareness
-	pathMetadata       map[string]types.FileMetadata             // active path -> metadata
-	partitionModLatest map[types.PartitionID]time.Time           // partition -> latest ModifiedAt
-	partitionActive    map[types.PartitionID]map[string]struct{} // partition -> active (non-deleted) paths
+	pathMetadata    map[string]types.FileMetadata             // active path -> metadata
+	partitionActive map[types.PartitionID]map[string]struct{} // partition -> active (non-deleted) paths
 
 	// Partition membership coordination
 	frogpond        *frogpond.Node
@@ -44,6 +43,7 @@ type Indexer struct {
 	sendUpdates     func([]frogpond.DataPoint)
 	noStore         bool
 	suppressUpdates atomic.Bool
+	deps            *types.App
 }
 
 type searchBackend interface {
@@ -231,18 +231,18 @@ func buildSearchResult(path string, metadata types.FileMetadata) types.SearchRes
 }
 
 // NewIndexer creates a new in-memory file indexer with trie-based index (default)
-func NewIndexer(logger *log.Logger) *Indexer {
-	return NewIndexerWithType(logger, IndexTypeTrie)
+func NewIndexer(logger *log.Logger, deps *types.App) *Indexer {
+	return NewIndexerWithType(logger, IndexTypeTrie, deps)
 }
 
 // NewIndexerWithType creates a new indexer with a specific implementation
-func NewIndexerWithType(logger *log.Logger, indexType IndexType) *Indexer {
+func NewIndexerWithType(logger *log.Logger, indexType IndexType, deps *types.App) *Indexer {
 	idx := &Indexer{
-		indexType:          indexType,
-		logger:             logger,
-		pathMetadata:       make(map[string]types.FileMetadata),
-		partitionModLatest: make(map[types.PartitionID]time.Time),
-		partitionActive:    make(map[types.PartitionID]map[string]struct{}),
+		indexType:       indexType,
+		logger:          logger,
+		pathMetadata:    make(map[string]types.FileMetadata),
+		partitionActive: make(map[types.PartitionID]map[string]struct{}),
+		deps:            deps,
 	}
 
 	switch indexType {
@@ -288,11 +288,6 @@ func (idx *Indexer) recomputePartitionLatestLocked(partitionID types.PartitionID
 			latest = meta.ModifiedAt
 		}
 	}
-	if latest.IsZero() {
-		delete(idx.partitionModLatest, partitionID)
-	} else {
-		idx.partitionModLatest[partitionID] = latest
-	}
 }
 
 func (idx *Indexer) addActivePathLocked(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
@@ -312,7 +307,6 @@ func (idx *Indexer) removeActivePathLocked(partitionID types.PartitionID, path s
 		delete(active, path)
 		if len(active) == 0 {
 			delete(idx.partitionActive, partitionID)
-			delete(idx.partitionModLatest, partitionID)
 		} else {
 			idx.recomputePartitionLatestLocked(partitionID)
 		}
@@ -402,7 +396,9 @@ func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionI
 	if idx.suppressUpdates.Load() || idx.noStore {
 		return nil
 	}
-
+	if idx.frogpond == nil || idx.nodeID == "" {
+		panic("wtf")
+	}
 	if idx.frogpond == nil || idx.sendUpdates == nil || idx.nodeID == "" {
 		return nil
 	}
@@ -418,23 +414,13 @@ func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionI
 		return nil
 	}
 
-	modTime := idx.partitionModLatest[partitionID]
-	if modTime.IsZero() {
-		for path := range paths {
-			if meta, ok := idx.pathMetadata[path]; ok && meta.ModifiedAt.After(modTime) {
-				modTime = meta.ModifiedAt
-			}
-		}
-		if modTime.IsZero() {
-			modTime = time.Now()
-		}
-		idx.partitionModLatest[partitionID] = modTime
+	checksum, err := idx.deps.FileStore.CalculatePartitionChecksum(idx.deps.Cluster.AppContext(), partitionID)
+	if err != nil {
+		return err
 	}
-
 	holder := types.HolderData{
-		MostRecentModifiedTime: modTime,
-		File_count:             len(paths),
-		Checksum:               "",
+		File_count: len(paths),
+		Checksum:   checksum,
 	}
 
 	payload, err := json.Marshal(holder)
