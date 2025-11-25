@@ -1367,11 +1367,16 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 		if ctx.Err() != nil {
 			return
 		}
-		// Partition store is like "p12" - mark all partitions that start with this
-		// Generate all possible partition IDs for this store (p12000 to p12999)
-		for i := 0; i < 1000; i++ {
-			partitionID := types.PartitionID(fmt.Sprintf("%s%03d", partitionStore, i))
-			pm.MarkForReindex(partitionID)
+
+		//If we are using partition stores, mark all partitions that start with this
+		//otherwise, we are getting a list of actual partitions
+		if len(partitionStore) == 3 {
+			// Partition store is like "p12" - mark all partitions that start with this
+			// Generate all possible partition IDs for this store (p12000 to p12999)
+			for i := 0; i < 1000; i++ {
+				partitionID := types.PartitionID(fmt.Sprintf("%s%03d", partitionStore, i))
+				pm.MarkForReindex(partitionID)
+			}
 		}
 	}
 }
