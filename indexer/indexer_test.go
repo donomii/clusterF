@@ -18,37 +18,39 @@ type testCluster struct {
 	logger *log.Logger
 }
 
-func (c *testCluster) PartitionManager() types.PartitionManagerLike                        { return nil }
-func (c *testCluster) DiscoveryManager() types.DiscoveryManagerLike                        { return nil }
-func (c *testCluster) Exporter() types.ExporterLike                                        { return nil }
-func (c *testCluster) Logger() *log.Logger                                                 { return c.logger }
-func (c *testCluster) ReplicationFactor() int                                              { return 0 }
-func (c *testCluster) NoStore() bool                                                       { return true }
-func (c *testCluster) ListDirectoryUsingSearch(string) ([]*types.FileMetadata, error)      { return nil, nil }
-func (c *testCluster) DataClient() *http.Client                                            { return nil }
-func (c *testCluster) ID() types.NodeID                                                    { return c.id }
-func (c *testCluster) GetAllNodes() map[types.NodeID]*types.NodeData                       { return nil }
-func (c *testCluster) GetNodesForPartition(string) []types.NodeID                          { return nil }
-func (c *testCluster) GetNodeInfo(types.NodeID) *types.NodeData                            { return nil }
-func (c *testCluster) GetPartitionSyncPaused() bool                                        { return false }
-func (c *testCluster) AppContext() context.Context                                         { return context.Background() }
-func (c *testCluster) RecordDiskActivity(types.DiskActivityLevel)                          {}
-func (c *testCluster) CanRunNonEssentialDiskOp() bool                                      { return true }
-func (c *testCluster) LoadPeer(types.NodeID) (*types.PeerInfo, bool)                       { return nil, false }
+func (c *testCluster) PartitionManager() types.PartitionManagerLike { return nil }
+func (c *testCluster) DiscoveryManager() types.DiscoveryManagerLike { return nil }
+func (c *testCluster) Exporter() types.ExporterLike                 { return nil }
+func (c *testCluster) Logger() *log.Logger                          { return c.logger }
+func (c *testCluster) ReplicationFactor() int                       { return 0 }
+func (c *testCluster) NoStore() bool                                { return true }
+func (c *testCluster) ListDirectoryUsingSearch(string) ([]*types.FileMetadata, error) {
+	return nil, nil
+}
+func (c *testCluster) DataClient() *http.Client                      { return nil }
+func (c *testCluster) ID() types.NodeID                              { return c.id }
+func (c *testCluster) GetAllNodes() map[types.NodeID]*types.NodeData { return nil }
+func (c *testCluster) GetNodesForPartition(string) []types.NodeID    { return nil }
+func (c *testCluster) GetNodeInfo(types.NodeID) *types.NodeData      { return nil }
+func (c *testCluster) GetPartitionSyncPaused() bool                  { return false }
+func (c *testCluster) AppContext() context.Context                   { return context.Background() }
+func (c *testCluster) RecordDiskActivity(types.DiskActivityLevel)    {}
+func (c *testCluster) CanRunNonEssentialDiskOp() bool                { return true }
+func (c *testCluster) LoadPeer(types.NodeID) (*types.PeerInfo, bool) { return nil, false }
 
 type testFileStore struct{}
 
-func (f *testFileStore) Close() {}
-func (f *testFileStore) SetEncryptionKey([]byte) {}
-func (f *testFileStore) Get(string) ([]byte, []byte, bool, error) { return nil, nil, false, nil }
-func (f *testFileStore) GetMetadata(string) ([]byte, error) { return nil, nil }
-func (f *testFileStore) GetContent(string) ([]byte, error) { return nil, nil }
-func (f *testFileStore) Put(string, []byte, []byte) error { return nil }
-func (f *testFileStore) PutMetadata(string, []byte) error { return nil }
-func (f *testFileStore) Delete(string) error { return nil }
+func (f *testFileStore) Close()                                                {}
+func (f *testFileStore) SetEncryptionKey([]byte)                               {}
+func (f *testFileStore) Get(string) ([]byte, []byte, bool, error)              { return nil, nil, false, nil }
+func (f *testFileStore) GetMetadata(string) ([]byte, error)                    { return nil, nil }
+func (f *testFileStore) GetContent(string) ([]byte, error)                     { return nil, nil }
+func (f *testFileStore) Put(string, []byte, []byte) error                      { return nil }
+func (f *testFileStore) PutMetadata(string, []byte) error                      { return nil }
+func (f *testFileStore) Delete(string) error                                   { return nil }
 func (f *testFileStore) Scan(string, func(string, []byte, []byte) error) error { return nil }
 func (f *testFileStore) ScanMetadata(string, func(string, []byte) error) error { return nil }
-func (f *testFileStore) ScanMetadataPartition(types.PartitionID, func(string, []byte) error) error {
+func (f *testFileStore) ScanMetadataPartition(context.Context, types.PartitionID, func(string, []byte) error) error {
 	return nil
 }
 func (f *testFileStore) CalculatePartitionChecksum(context.Context, types.PartitionID) (string, error) {
@@ -58,12 +60,12 @@ func (f *testFileStore) GetAllPartitionStores() ([]types.PartitionStore, error) 
 
 func newTestApp(logger *log.Logger) *types.App {
 	return &types.App{
-		NodeID:   "test-node",
-		NoStore:  true,
-		Logger:   logger,
-		FileStore: &testFileStore{},
-		Cluster:  &testCluster{id: "test-node", logger: logger},
-		Frogpond: frogpond.NewNode(),
+		NodeID:             "test-node",
+		NoStore:            true,
+		Logger:             logger,
+		FileStore:          &testFileStore{},
+		Cluster:            &testCluster{id: "test-node", logger: logger},
+		Frogpond:           frogpond.NewNode(),
 		SendUpdatesToPeers: func([]frogpond.DataPoint) {},
 	}
 }

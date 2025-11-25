@@ -61,6 +61,9 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 
 	keys := pm.ReindexList.Keys()
 	for _, key := range keys {
+		if ctx.Err() != nil {
+			return
+		}
 		value, _ := pm.ReindexList.Load(key)
 		if value {
 			pm.ReindexList.Store(key, false) // Clear the flag before re-indexing, as new items will not necessarily be caught during
@@ -656,7 +659,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	partitionsChecksums := make(map[types.PartitionID][]string)
 
 	// Should use FileStore to do this in a partition store aware way
-	pm.deps.FileStore.ScanMetadataPartition(StartPartitionID, func(path string, metadata []byte) error {
+	pm.deps.FileStore.ScanMetadataPartition(ctx, StartPartitionID, func(path string, metadata []byte) error {
 		partitionID := types.PartitionIDForPath(path)
 		if ctx.Err() != nil {
 			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))

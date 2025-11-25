@@ -367,7 +367,7 @@ func (fs *DiskFileStore) ScanMetadata(pathPrefix string, fn func(path string, me
 }
 
 // ScanMetadataPartition scans only files belonging to a specific partition
-func (fs *DiskFileStore) ScanMetadataPartition(partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {
+func (fs *DiskFileStore) ScanMetadataPartition(ctx context.Context, partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {
 	checkForRecursiveScan()
 	defer metrics.StartGlobalTimer("disk_filestore.scan_metadata_partition")()
 	metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.calls")
@@ -398,6 +398,9 @@ func (fs *DiskFileStore) ScanMetadataPartition(partitionID types.PartitionID, fn
 			}
 			metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.errors")
 			return walkErr
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 
 		if d.IsDir() {
@@ -442,7 +445,7 @@ func (fs *DiskFileStore) ScanMetadataPartition(partitionID types.PartitionID, fn
 	return nil
 }
 
-// GetAllPartitionStores returns all known partition store IDs.
+// GetAllPartitionStores returns all known partition IDs.
 func (fs *DiskFileStore) GetAllPartitionStores() ([]types.PartitionStore, error) {
 	defer metrics.StartGlobalTimer("disk_filestore.list_partitions")()
 	metrics.IncrementGlobalCounter("disk_filestore.list_partitions.calls")
@@ -528,7 +531,7 @@ func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, partiti
 
 	var entries []entry
 
-	err := fs.ScanMetadataPartition(partitionID, func(path string, metadata []byte) error {
+	err := fs.ScanMetadataPartition(ctx, partitionID, func(path string, metadata []byte) error {
 		if ctx.Err() != nil {
 			metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.errors")
 			return ctx.Err()

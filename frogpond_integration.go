@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -335,31 +334,6 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 	}
 }
 
-// calculateDataDirSize calculates the total size of all files in the data directory
-func (c *Cluster) calculateDataDirSize() int64 {
-	startTime := time.Now()
-	var totalSize int64
-	err := filepath.Walk(c.DataDir, func(path string, info os.FileInfo, err error) error {
-		if time.Since(startTime) > time.Second*10 {
-			c.debugf("[DISK_USAGE] Timeout while calculating data directory size")
-			return fmt.Errorf("timeout, used bytes scan taking too long")
-		}
-		if err != nil {
-			c.debugf("[DISK_USAGE] Error accessing file %s while calculating data directory size: %v", path, err)
-			return nil // Skip files with errors
-		}
-		if !info.IsDir() {
-			totalSize += info.Size()
-		}
-		return nil
-	})
-	if err != nil {
-		c.debugf("[DISK_USAGE] Error walking data directory %s: %v", c.DataDir, err)
-		return 0
-	}
-	return totalSize
-}
-
 // getDiskUsage gets disk size and free space for the data directory
 func (c *Cluster) getDiskUsage() (diskSize int64, diskFree int64) {
 	var stat unix.Statfs_t
@@ -382,14 +356,12 @@ func (c *Cluster) updateNodeMetadata() {
 
 	// Calculate disk usage information
 	metrics := c.loadDiskMetrics()
-	bytesStored := metrics.bytesStored
 	diskSize := metrics.diskSize
 	diskFree := metrics.diskFree
 
 	if c.CanRunNonEssentialDiskOp() {
-		bytesStored = c.calculateDataDirSize()
 		diskSize, diskFree = c.getDiskUsage()
-		c.recordDiskMetrics(bytesStored, diskSize, diskFree)
+		c.recordDiskMetrics(0, diskSize, diskFree)
 	} else {
 		c.debugf("[DISK_ACTIVITY] Disk inactive; using cached disk metrics for metadata update")
 	}
@@ -429,7 +401,7 @@ func (c *Cluster) updateNodeMetadata() {
 		DiscoveryPort: c.DiscoveryPort,
 		LastSeen:      time.Now(),
 		Available:     true,
-		BytesStored:   bytesStored,
+		BytesStored:   0,
 		DiskSize:      diskSize,
 		DiskFree:      diskFree,
 		IsStorage:     !c.noStore,
