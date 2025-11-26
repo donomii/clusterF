@@ -706,9 +706,13 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		// Update partition metadata in CRDT using individual keys per holder
 		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 
-		checksum := pm.calculatePartitionChecksum(ctx, StartPartitionID)
+		checksum, err := pm.CalculatePartitionChecksum(ctx, StartPartitionID)
 		if checksum == "" {
 			pm.deps.Logger.Printf("[FULL_REINDEX] ERROR: Unable to calculate checksum for partition %v", partitionID)
+			continue
+		}
+		if err != nil {
+			pm.deps.Logger.Printf("[FULL_REINDEX] ERROR: Unable to calculate checksum for partition %v: %v", partitionID, err)
 			continue
 		}
 
@@ -984,7 +988,6 @@ func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
 type PartitionSyncEntry struct {
 	Path     string             `json:"path"`
 	Metadata types.FileMetadata `json:"metadata"`
-	Content  []byte             `json:"content"`
 }
 
 // PartitionSnapshot represents a consistent point-in-time view of a partition
@@ -996,13 +999,14 @@ type PartitionSnapshot struct {
 	Checksum    string               `json:"checksum"`
 }
 
+type partitionChecksumEntry struct {
+	path     string
+	metadata []byte
+}
+
 // calculatePartitionChecksum computes a checksum for all files in a partition
-func (pm *PartitionManager) calculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) string {
-	entries := []struct {
-		path     string
-		metadata []byte
-		content  []byte
-	}{}
+func (pm *PartitionManager) CalculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) (string, error) {
+	entries := []partitionChecksumEntry{}
 
 	if err := pm.deps.FileStore.Scan("", func(path string, metadata, content []byte) error {
 		if ctx.Err() != nil {
@@ -1014,17 +1018,12 @@ func (pm *PartitionManager) calculatePartitionChecksum(ctx context.Context, part
 		var parsed types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsed); err == nil && !parsed.Deleted {
 			metaCopy := append([]byte(nil), metadata...)
-			contentCopy := append([]byte(nil), content...)
-			entries = append(entries, struct {
-				path     string
-				metadata []byte
-				content  []byte
-			}{path: path, metadata: metaCopy, content: contentCopy})
+			entries = append(entries, partitionChecksumEntry{path: path, metadata: metaCopy})
 		}
 		return nil
 	}); err != nil {
 		pm.debugf("[PARTITION] Failed to calculate checksum for %s: %v", partitionID, err)
-		return ""
+		return "", err
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
@@ -1033,14 +1032,10 @@ func (pm *PartitionManager) calculatePartitionChecksum(ctx context.Context, part
 
 	hash := sha256.New()
 	for _, e := range entries {
-		hash.Write([]byte(types.PartitionIDForPath(e.path)))
-		hash.Write([]byte{0})
-		hash.Write([]byte(e.path))
 		hash.Write(e.metadata)
-		hash.Write(e.content)
 	}
 
-	return hex.EncodeToString(hash.Sum(nil))
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // getPartitionSyncInterval returns the partition sync interval from CRDT, or default

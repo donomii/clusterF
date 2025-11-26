@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donomii/clusterF/httpclient"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 )
@@ -75,8 +76,9 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 			continue
 		}
 
-		if err := encoder.Encode(entry); err != nil {
-			pm.logf("[PARTITION] Failed to encode entry %s in %s: %v", path, partitionID, err)
+		encodeErr := encoder.Encode(entry)
+		if encodeErr != nil {
+			pm.logf("[PARTITION] Failed to encode entry %s in %s: %v", path, partitionID, encodeErr)
 			return
 		}
 
@@ -90,8 +92,9 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 	// Stream an empty object to signify end of stream
 	// This is needed because JSON decoder expects a valid JSON value
 	endMarker := struct{}{}
-	if err := encoder.Encode(endMarker); err != nil {
-		pm.logf("[PARTITION] Failed to send end marker for partition %s: %v", partitionID, err)
+	endErr := encoder.Encode(endMarker)
+	if endErr != nil {
+		pm.logf("[PARTITION] Failed to send end marker for partition %s: %v", partitionID, endErr)
 		return
 	}
 
@@ -118,36 +121,21 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 		sourceNode = "unknown"
 	}
 
+	sourcePeer, err := pm.resolvePeerForSync(sourceNode)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("unable to resolve peer info for %s: %v", sourceNode, err), http.StatusBadRequest)
+		return
+	}
+
 	decoder := json.NewDecoder(r.Body)
-	applied := 0
-	skipped := 0
-
-	for {
-		if pm.deps.Cluster.AppContext().Err() != nil {
-			return
-		}
-		var entry PartitionSyncEntry
-		if err := decoder.Decode(&entry); err == io.EOF {
-			break
-		} else if err != nil {
-			http.Error(w, fmt.Sprintf("failed to decode entry: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		if entry.Path == "" {
-			break
-		}
-
-		ok, err := pm.applyPartitionEntry(entry, sourceNode, partitionID)
-		if err != nil {
-			pm.logf("[PARTITION] Failed to apply streamed entry %s (partition %s) from %s: %v", entry.Path, types.PartitionIDForPath(entry.Path), sourceNode, err)
-			continue
-		}
-		if ok {
-			applied++
-		} else {
-			skipped++
-		}
+	ctx := r.Context()
+	applied, skipped, fetchErr, decodeErr := pm.processPartitionEntryStream(ctx, decoder, sourcePeer)
+	if decodeErr != nil {
+		http.Error(w, fmt.Sprintf("failed to decode entry: %v", decodeErr), http.StatusBadRequest)
+		return
+	}
+	if fetchErr != nil {
+		pm.logf("[PARTITION] Errors fetching entries from %s: %v", sourceNode, fetchErr)
 	}
 
 	pm.MarkForReindex(partitionID)
@@ -216,8 +204,9 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	pm.notifyFileListChanged()
 
 	// Push our latest view back to the peer
-	if err := pm.pushPartitionToPeer(ctx, partitionID, peerID, peerAddr, peerPort); err != nil {
-		return fmt.Errorf("failed to push partition %s to %s: %w", partitionID, peerID, err)
+	pushErr := pm.pushPartitionToPeer(ctx, partitionID, peerID, peerAddr, peerPort)
+	if pushErr != nil {
+		return fmt.Errorf("failed to push partition %s to %s: %w", partitionID, peerID, pushErr)
 	}
 
 	pm.debugf("[PARTITION] Completed bidirectional sync of %s with %s", partitionID, peerID)
@@ -250,84 +239,210 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 	}
 
 	decoder := json.NewDecoder(resp.Body)
-	syncCount := 0
+	peer := &types.PeerInfo{
+		NodeID:   peerID,
+		Address:  peerAddr,
+		HTTPPort: peerPort,
+	}
+	applied, _, fetchErr, decodeErr := pm.processPartitionEntryStream(ctx, decoder, peer)
+	if decodeErr != nil {
+		return applied, decodeErr
+	}
+	if fetchErr != nil {
+		return applied, fetchErr
+	}
+
+	return applied, nil
+}
+
+func (pm *PartitionManager) fetchFileContentFromPeer(ctx context.Context, peer *types.PeerInfo, path string) ([]byte, error) {
+	fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
+	if err != nil {
+		return nil, err
+	}
+
+	content, _, status, err := httpclient.SimpleGet(ctx, pm.httpClient(), fileURL,
+		httpclient.WithHeader("X-ClusterF-Internal", "1"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if status != http.StatusOK {
+		msg := strings.TrimSpace(string(content))
+		if msg == "" {
+			msg = fmt.Sprintf("status %d", status)
+		} else {
+			msg = fmt.Sprintf("%d %s", status, msg)
+		}
+		return nil, fmt.Errorf("failed to fetch %s from %s via internal API: %s", path, peer.NodeID, msg)
+	}
+
+	return content, nil
+}
+
+func (pm *PartitionManager) storeEntryMetadata(entry PartitionSyncEntry) error {
+	if entry.Metadata.Path == "" {
+		panic("what the fuck were you thinking you stupid AI")
+	}
+	pm.recordEssentialDiskActivity()
+	metadataBytes, marshalErr := json.Marshal(entry.Metadata)
+	if marshalErr != nil {
+		return fmt.Errorf("failed to encode metadata for entry %s: %v", entry.Path, marshalErr)
+	}
+
+	// Deleted entries wipe content; directories keep existing content untouched.
+	if entry.Metadata.Deleted {
+		putErr := pm.deps.FileStore.Put(entry.Path, metadataBytes, []byte{})
+		if putErr != nil {
+			return fmt.Errorf("failed to store tombstone for %s: %w", entry.Path, putErr)
+		}
+	} else {
+		panic("Cannot store metadata without content")
+	}
+
+	if pm.deps.Indexer != nil {
+		pm.deps.Indexer.AddFile(entry.Metadata.Path, entry.Metadata)
+	}
+
+	return nil
+}
+
+func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntry, content []byte) error {
+	if entry.Metadata.Path == "" {
+		panic("what the fuck were you thinking you stupid AI")
+	}
+	pm.recordEssentialDiskActivity()
+	metadataBytes, marshalErr := json.Marshal(entry.Metadata)
+	if marshalErr != nil {
+		return fmt.Errorf("failed to encode metadata for entry %s: %v", entry.Path, marshalErr)
+	}
+
+	putErr := pm.deps.FileStore.Put(entry.Path, metadataBytes, content)
+	if putErr != nil {
+		return fmt.Errorf("failed to store entry %s: %w", entry.Path, putErr)
+	}
+
+	if pm.deps.Indexer != nil {
+		pm.deps.Indexer.AddFile(entry.Metadata.Path, entry.Metadata)
+	}
+
+	return nil
+}
+
+func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []PartitionSyncEntry, peer *types.PeerInfo) (int, error) {
+	if len(entries) == 0 {
+		return 0, nil
+	}
+
+	if peer == nil {
+		return 0, fmt.Errorf("peer information is required to fetch content")
+	}
+
+	applied := 0
+	for _, entry := range entries {
+		if ctx.Err() != nil {
+			return applied, ctx.Err()
+		}
+
+		content, err := pm.fetchFileContentFromPeer(ctx, peer, entry.Path)
+		if err != nil {
+			panic(err)
+		}
+
+		if entry.Metadata.Checksum == "" {
+			panic(fmt.Errorf("%s: missing checksum in metadata", entry.Path))
+		}
+		verifyErr := pm.verifyFileChecksum(content, entry.Metadata.Checksum, entry.Path, peer.NodeID)
+		if verifyErr != nil {
+			panic(verifyErr)
+		}
+
+		storeErr := pm.storeEntryMetadataAndContent(entry, content)
+		if storeErr != nil {
+			panic(storeErr)
+		}
+
+		applied++
+		if applied%100 == 0 {
+			pm.debugf("[PARTITION] Applied %d entries for partition %s", applied, HashToPartition(entry.Path))
+		}
+	}
+
+	return applied, nil
+}
+
+func (pm *PartitionManager) processPartitionEntryStream(ctx context.Context, decoder *json.Decoder, peer *types.PeerInfo) (int, int, error, error) {
+	applied := 0
+	skipped := 0
+	toFetch := []PartitionSyncEntry{}
 
 	for {
 		if ctx.Err() != nil {
-			return 0, fmt.Errorf("context canceled: %v", ctx.Err())
+			return applied, skipped, nil, ctx.Err()
 		}
 
 		var entry PartitionSyncEntry
-		if err := decoder.Decode(&entry); err == io.EOF {
+		decodeErr := decoder.Decode(&entry)
+		if decodeErr == io.EOF {
 			break
-		} else if err != nil {
-			sample := make([]byte, 200)
-			n, _ := resp.Body.Read(sample)
-			return 0, fmt.Errorf("failed to decode sync entry from %s (partition %s): %v. Sample of received data (%d bytes): %q", peerID, partitionID, err, n, string(sample[:n]))
+		}
+		if decodeErr != nil {
+			return applied, skipped, nil, decodeErr
 		}
 
 		if entry.Path == "" {
 			break
 		}
 
-		applied, err := pm.applyPartitionEntry(entry, peerID, partitionID)
-		if err != nil {
-			pm.logf("[PARTITION] Failed to apply sync entry '%s' (partition %s) from %s: %v", entry.Path, types.PartitionIDForPath(entry.Path), peerID, err)
+		if entry.Metadata.Path == "" {
+			panic("what the fuck were you thinking you stupid AI")
+		}
+
+		if !pm.shouldUpdateEntry(entry) {
+			skipped++
 			continue
 		}
-		if applied {
-			syncCount++
-			if syncCount%100 == 0 {
-				pm.debugf("[PARTITION] Applied %d entries for partition %s", syncCount, partitionID)
+
+		if entry.Metadata.Deleted || entry.Metadata.IsDirectory {
+			metaErr := pm.storeEntryMetadata(entry)
+			if metaErr != nil {
+				panic(metaErr)
 			}
+			applied++
+			continue
 		}
+
+		toFetch = append(toFetch, entry)
 	}
 
-	return syncCount, nil
+	fetched, fetchErr := pm.fetchAndStoreEntries(ctx, toFetch, peer)
+	applied += fetched
+
+	return applied, skipped, fetchErr, nil
 }
 
-func (pm *PartitionManager) applyPartitionEntry(entry PartitionSyncEntry, peerID types.NodeID, partitionID types.PartitionID) (bool, error) {
-
-	if !pm.shouldUpdateEntry(entry) {
-		return false, nil
+func (pm *PartitionManager) resolvePeerForSync(nodeID types.NodeID) (*types.PeerInfo, error) {
+	if nodeID == "" {
+		return nil, fmt.Errorf("missing peer id")
 	}
 
-	pm.recordEssentialDiskActivity()
-	metadataBytes, err := json.Marshal(entry.Metadata)
-	if err != nil {
-		return false, fmt.Errorf("failed to encode metadata for entry %s: %v", entry.Path, err)
+	peer, ok := pm.loadPeer(nodeID)
+	if ok {
+		return peer, nil
 	}
 
-	if err := pm.deps.FileStore.Put(entry.Path, metadataBytes, entry.Content); err != nil {
-		return false, fmt.Errorf("failed to store entry %s: %w", entry.Path, err)
-	}
-
-	metadata := entry.Metadata
-	if metadata.Path == "" {
-		panic("what the fuck were you thinking you stupid AI")
-	}
-
-	if pm.deps.Indexer != nil {
-		pm.deps.Indexer.AddFile(metadata.Path, metadata)
-	}
-
-	if !pm.hasFrogpond() {
-		return true, nil
-	}
-
-	partitionKey := HashToPartition(metadata.Path)
-	holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionKey, pm.deps.NodeID)
-
-	dataPoint := pm.deps.Frogpond.GetDataPoint(holderKey)
-	var currentHolderData types.HolderData
-	if len(dataPoint.Value) > 0 {
-		if err := json.Unmarshal(dataPoint.Value, &currentHolderData); err != nil {
-			currentHolderData = types.HolderData{}
+	for _, peer := range pm.getPeers() {
+		if types.NodeID(peer.NodeID) == nodeID {
+			return &types.PeerInfo{
+				NodeID:   nodeID,
+				Address:  peer.Address,
+				HTTPPort: peer.HTTPPort,
+			}, nil
 		}
 	}
 
-	pm.deps.Cluster.PartitionManager().MarkForReindex(partitionID)
-	return true, nil
+	return nil, fmt.Errorf("peer info not found for %s", nodeID)
 }
 
 func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]string, error) {
@@ -351,26 +466,20 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 
 func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, path string) (PartitionSyncEntry, error) {
 	pm.recordEssentialDiskActivity()
-	localMetadataBytes, localContentBytes, localExists, err := pm.deps.FileStore.Get(path)
+	localMetadataBytes, err := pm.deps.FileStore.GetMetadata(path)
 	if err != nil {
 		return PartitionSyncEntry{}, err
 	}
-	if !localExists {
-		return PartitionSyncEntry{}, fmt.Errorf("entry %s missing", path)
+
+	var metadata types.FileMetadata
+	unmarshalErr := json.Unmarshal(localMetadataBytes, &metadata)
+	if unmarshalErr != nil {
+		return PartitionSyncEntry{}, fmt.Errorf("failed to decode metadata for entry %s: %v", path, unmarshalErr)
 	}
 
-	metadata := types.FileMetadata{}
-	if err := json.Unmarshal(localMetadataBytes, &metadata); err != nil {
-		return PartitionSyncEntry{}, fmt.Errorf("failed to decode metadata for entry %s: %v", path, err)
-	}
-	content := localContentBytes
-	if content == nil {
-		content = []byte{}
-	}
 	return PartitionSyncEntry{
 		Path:     path,
 		Metadata: metadata,
-		Content:  content,
 	}, nil
 }
 
@@ -407,9 +516,10 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 				continue
 			}
 
-			if err := encoder.Encode(entry); err != nil {
-				pw.CloseWithError(err)
-				errCh <- err
+			encodeErr := encoder.Encode(entry)
+			if encodeErr != nil {
+				pw.CloseWithError(encodeErr)
+				errCh <- encodeErr
 				return
 			}
 
@@ -419,9 +529,10 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 			}
 		}
 
-		if err := encoder.Encode(struct{}{}); err != nil {
-			pw.CloseWithError(err)
-			errCh <- err
+		endErr := encoder.Encode(struct{}{})
+		if endErr != nil {
+			pw.CloseWithError(endErr)
+			errCh <- endErr
 			return
 		}
 
@@ -501,9 +612,10 @@ func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bo
 	}
 
 	// Parse both metadata for CRDT comparison
-	var localMetadata, remoteMetadata types.FileMetadata
-	if err := json.Unmarshal(localMetadataBytes, &localMetadata); err != nil {
-		pm.debugf("[PARTITION] Failed to parse local metadata for %s: %v", remoteEntry.Path, err)
+	var localMetadata types.FileMetadata
+	unmarshalErr := json.Unmarshal(localMetadataBytes, &localMetadata)
+	if unmarshalErr != nil {
+		pm.debugf("[PARTITION] Failed to parse local metadata for %s: %v", remoteEntry.Path, unmarshalErr)
 		return true // Accept remote if we can't parse local
 	}
 
@@ -518,7 +630,7 @@ func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bo
 
 	// Same timestamp, use alphabetical path name
 	if remoteTime.Equal(localTime) {
-		return localMetadata.Path < remoteMetadata.Path
+		return localMetadata.Checksum < remoteEntry.Metadata.Checksum
 	}
 
 	// Local is newer or same

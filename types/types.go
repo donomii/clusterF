@@ -68,6 +68,7 @@ type PartitionManagerLike interface {
 	RunReindex(ctx context.Context)
 	MarkForReindex(pId PartitionID)
 	RemoveNodeFromPartitionWithTimestamp(nodeID NodeID, partitionName string, backdatedTime time.Time) error // Remove a node from a partition holder list with backdated timestamp
+	CalculatePartitionChecksum(ctx context.Context, partitionID PartitionID) (string, error)
 }
 
 // FileStoreLike abstracts the storage layer used by the partition manager.
@@ -83,7 +84,6 @@ type FileStoreLike interface {
 	Scan(pathPrefix string, fn func(path string, metadata, content []byte) error) error
 	ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error
 	ScanMetadataPartition(ctx context.Context, partitionID PartitionID, fn func(path string, metadata []byte) error) error
-	CalculatePartitionChecksum(ctx context.Context, partitionID PartitionID) (string, error)
 	GetAllPartitionStores() ([]PartitionStore, error)
 }
 

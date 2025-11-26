@@ -404,7 +404,7 @@ func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionI
 		return nil
 	}
 
-	checksum, err := idx.deps.FileStore.CalculatePartitionChecksum(idx.deps.Cluster.AppContext(), partitionID)
+	checksum, err := idx.deps.Cluster.PartitionManager().CalculatePartitionChecksum(idx.deps.Cluster.AppContext(), partitionID)
 	if err != nil {
 		return err
 	}

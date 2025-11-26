@@ -2,8 +2,6 @@ package partitionmanager
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -516,60 +514,6 @@ func (fs *DiskFileStore) GetAllPartitionStores() ([]types.PartitionStore, error)
 	metrics.IncrementGlobalCounter("disk_filestore.list_partitions.success")
 	metrics.AddGlobalCounter("disk_filestore.list_partitions.count", int64(len(partitions)))
 	return partitions, nil
-}
-
-// CalculatePartitionChecksum reproduces the checksum calculation used by the existing store.
-func (fs *DiskFileStore) CalculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) (string, error) {
-	defer metrics.StartGlobalTimer("disk_filestore.calculate_checksum")()
-	metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.calls")
-
-	type entry struct {
-		partition types.PartitionID
-		path      string
-		metadata  []byte
-	}
-
-	var entries []entry
-
-	err := fs.ScanMetadataPartition(ctx, partitionID, func(path string, metadata []byte) error {
-		if ctx.Err() != nil {
-			metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.errors")
-			return ctx.Err()
-		}
-
-		var parsedMetadata types.FileMetadata
-		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
-			if !parsedMetadata.Deleted {
-				metaCopy := append([]byte(nil), metadata...)
-				entries = append(entries, entry{
-					partition: types.PartitionIDForPath(path),
-					path:      path,
-					metadata:  metaCopy,
-				})
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.errors")
-		return "", err
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].partition == entries[j].partition {
-			return entries[i].path < entries[j].path
-		}
-		return entries[i].partition < entries[j].partition
-	})
-
-	hash := sha256.New()
-	for _, e := range entries {
-		hash.Write(e.metadata)
-	}
-
-	metrics.IncrementGlobalCounter("disk_filestore.calculate_checksum.success")
-	metrics.AddGlobalCounter("disk_filestore.calculate_checksum.entries", int64(len(entries)))
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // walkMetadataFiles executes fn for every metadata file.

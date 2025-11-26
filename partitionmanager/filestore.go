@@ -2,14 +2,10 @@ package partitionmanager
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -759,61 +755,4 @@ func (fs *FileStore) GetAllPartitionStores() ([]types.PartitionStore, error) {
 	metrics.AddGlobalCounter("filestore.list_partitions.count", int64(len(partitions)))
 	metrics.IncrementGlobalCounter("filestore.list_partitions.success")
 	return partitions, nil
-}
-
-// CalculatePartitionChecksum computes a consistent checksum for all files matching the prefix
-func (fs *FileStore) CalculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) (string, error) {
-	defer metrics.StartGlobalTimer("filestore.calculate_checksum")()
-	metrics.IncrementGlobalCounter("filestore.calculate_checksum.calls")
-
-	// Collect all non-deleted entries atomically
-	type entry struct {
-		partition types.PartitionID
-		path      string
-		metadata  []byte
-	}
-	var entries []entry
-
-	err := fs.ScanMetadataPartition(ctx, partitionID, func(path string, metadata []byte) error {
-		if ctx.Err() != nil {
-			metrics.IncrementGlobalCounter("filestore.calculate_checksum.errors")
-			return ctx.Err()
-		}
-
-		var parsedMetadata types.FileMetadata
-		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
-			if !parsedMetadata.Deleted {
-				metaCopy := append([]byte(nil), metadata...)
-				entries = append(entries, entry{
-					partition: types.PartitionIDForPath(path),
-					path:      path,
-					metadata:  metaCopy,
-				})
-			}
-		}
-		return nil
-	})
-
-	if err != nil {
-		metrics.IncrementGlobalCounter("filestore.calculate_checksum.errors")
-		return "", err
-	}
-
-	// Sort entries deterministically by partition then path
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].partition == entries[j].partition {
-			return entries[i].path < entries[j].path
-		}
-		return entries[i].partition < entries[j].partition
-	})
-
-	// Hash in sorted order
-	hash := sha256.New()
-	for _, e := range entries {
-		hash.Write(e.metadata)
-	}
-
-	metrics.AddGlobalCounter("filestore.calculate_checksum.entries", int64(len(entries)))
-	metrics.IncrementGlobalCounter("filestore.calculate_checksum.success")
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }
