@@ -244,7 +244,7 @@ func TestDeepDirectorySearch(t *testing.T) {
 
 	t.Log("Creating deep directory structure...")
 	for _, tf := range testFiles {
-		_, err := fs.StoreFileWithModTime(context.TODO(), tf.path, []byte(tf.content), "text/plain", time.Now())
+		_, err := fs.InsertFileIntoCluster(context.TODO(), tf.path, []byte(tf.content), "text/plain", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store %s: %v", tf.path, err)
 		}
@@ -290,7 +290,7 @@ func TestLargeDirectoryListing(t *testing.T) {
 	for i := 0; i < numFiles; i++ {
 		path := fmt.Sprintf("/large/file%04d.dat", i)
 		content := fmt.Sprintf("File number %d", i)
-		_, err := fs.StoreFileWithModTime(context.TODO(), path, []byte(content), "application/octet-stream", time.Now())
+		_, err := fs.InsertFileIntoCluster(context.TODO(), path, []byte(content), "application/octet-stream", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store file %d: %v", i, err)
 		}
@@ -346,7 +346,7 @@ func TestFunnyFileNames(t *testing.T) {
 
 	t.Log("Creating files with funny names...")
 	for _, path := range testFiles {
-		_, err := fs.StoreFileWithModTime(context.TODO(), path, []byte("test content"), "text/plain", time.Now())
+		_, err := fs.InsertFileIntoCluster(context.TODO(), path, []byte("test content"), "text/plain", time.Now())
 		if err != nil {
 			t.Logf("Warning: Failed to store %s: %v", path, err)
 			continue
@@ -386,7 +386,7 @@ func TestSearchPatterns(t *testing.T) {
 
 	t.Log("Creating search test files...")
 	for _, tf := range testFiles {
-		_, err := fs.StoreFileWithModTime(context.TODO(), tf.path, []byte(tf.content), "application/octet-stream", time.Now())
+		_, err := fs.InsertFileIntoCluster(context.TODO(), tf.path, []byte(tf.content), "application/octet-stream", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store %s: %v", tf.path, err)
 		}
@@ -439,7 +439,7 @@ func TestEmptyDirectories(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create one file to establish a directory structure
-	_, err := fs.StoreFileWithModTime(context.TODO(), "/empty/sub/file.txt", []byte("only file"), "text/plain", time.Now())
+	_, err := fs.InsertFileIntoCluster(context.TODO(), "/empty/sub/file.txt", []byte("only file"), "text/plain", time.Now())
 	if err != nil {
 		t.Fatalf("Failed to store file: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestListDirectoryRootPath(t *testing.T) {
 
 	t.Log("Creating root-level test files...")
 	for _, path := range testFiles {
-		_, err := fs.StoreFileWithModTime(context.TODO(), path, []byte("content"), "text/plain", time.Now())
+		_, err := fs.InsertFileIntoCluster(context.TODO(), path, []byte("content"), "text/plain", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store %s: %v", path, err)
 		}
@@ -511,7 +511,7 @@ func TestConcurrentDirectoryOperations(t *testing.T) {
 			for i := 0; i < filesPerGoroutine; i++ {
 				path := fmt.Sprintf("/concurrent/g%d/file%d.txt", id, i)
 				content := fmt.Sprintf("goroutine %d file %d", id, i)
-				_, err := fs.StoreFileWithModTime(context.TODO(), path, []byte(content), "text/plain", time.Now())
+				_, err := fs.InsertFileIntoCluster(context.TODO(), path, []byte(content), "text/plain", time.Now())
 				if err != nil {
 					t.Errorf("Goroutine %d failed to store file %d: %v", id, i, err)
 				}

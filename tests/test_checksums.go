@@ -152,7 +152,7 @@ func TestChecksumFunctionality(t *testing.T) {
 
 	// Test 1: Store file with checksum
 	t.Log("Test 1: Storing file with checksum")
-	_, err = fs.StoreFileWithModTime(context.TODO(), testPath, testContent, testContentType, testModTime)
+	_, err = fs.InsertFileIntoCluster(context.TODO(), testPath, testContent, testContentType, testModTime)
 	if err != nil {
 		t.Fatalf("Failed to store file: %v", err)
 	}

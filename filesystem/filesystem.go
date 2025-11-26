@@ -655,11 +655,13 @@ func (fs *ClusterFileSystem) MetadataViaAPI(ctx context.Context, path string) (t
 
 // CreateDirectory is a no-op since directories are inferred from file paths
 func (fs *ClusterFileSystem) CreateDirectory(path string) error {
+	// This exists entirely because the AI is fucking stupid and keeps recreating it
 	return nil // Directories are inferred from file paths
 }
 
 // CreateDirectoryWithModTime is a no-op since directories are inferred from file paths
 func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime time.Time) error {
+	// This exists entirely because the AI is fucking stupid and keeps recreating it
 	return nil // Directories are inferred from file paths
 }
 

@@ -440,6 +440,10 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "context canceled", http.StatusServiceUnavailable)
 		return
 	}
+	if c.NoStore() {
+		http.Error(w, "no store", http.StatusServiceUnavailable)
+		return
+	}
 	// Update current file for monitoring
 	c.currentFile.Store(path)
 	defer c.currentFile.Store("")
@@ -776,6 +780,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 }
 
 func (c *Cluster) handleFilePost(w http.ResponseWriter, r *http.Request, path string) {
+	// This exists entirely because the AI is fucking stupid and keeps recreating it
 	createDir := strings.EqualFold(r.Header.Get("X-Create-Directory"), "true")
 	if !createDir {
 		http.Error(w, fmt.Sprintf("Unsupported POST operation for %s (only directory creation supported via X-Create-Directory header)", path), http.StatusBadRequest)

@@ -787,14 +787,14 @@ func (c *Cluster) runDiscoveryManager(ctx context.Context) {
 }
 
 func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
-	if c.discoveryManager == nil {
-		return
-	}
 
 	knownPeers := make(map[types.NodeID]bool)
 
 	checkPeers := func() {
 		for _, peer := range c.discoveryManager.GetPeers() {
+			if ctx.Err() != nil {
+				return
+			}
 			if peer == nil {
 				continue
 			}
@@ -814,6 +814,9 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 	defer ticker.Stop()
 
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -829,10 +832,10 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 // FullSyncAllPeers requests a full store sync from every currently discovered peer.
 // Primarily used by tests to force deterministic synchronization.
 func (c *Cluster) FullSyncAllPeers() {
-	if c.discoveryManager == nil {
-		return
-	}
 	for _, peer := range c.discoveryManager.GetPeers() {
+		if c.ctx.Err() != nil {
+			return
+		}
 		if peer == nil {
 			continue
 		}
@@ -1655,13 +1658,16 @@ func (c *Cluster) handleClusterRestart(w http.ResponseWriter, r *http.Request) {
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
 // Returns true on success, false on failure
 func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
+	if c.AppContext().Err() != nil {
+		return false
+	}
 	fullStoreURL, err := urlutil.BuildHTTPURL(peer.Address, peer.HTTPPort, "/frogpond/fullstore")
 	if err != nil {
 		c.Logger().Printf("[FULL_SYNC] Failed to build full store URL for %s: %v", peer.NodeID, err)
 		return false
 	}
 
-	body, _, status, err := httpclient.SimpleGet(context.Background(), c.HttpDataClient, fullStoreURL)
+	body, _, status, err := httpclient.SimpleGet(c.AppContext(), c.HttpDataClient, fullStoreURL)
 	if err != nil {
 		c.Logger().Printf("[FULL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
 		return false
@@ -1669,6 +1675,10 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 
 	if status != http.StatusOK {
 		c.Logger().Printf("[FULL_SYNC] Peer %s returned status %d", peer.NodeID, status)
+		return false
+	}
+
+	if c.AppContext().Err() != nil {
 		return false
 	}
 
@@ -1681,6 +1691,9 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 
 	// Apply the peer's data and get any resulting updates
 	resultingUpdates := c.frogpond.AppendDataPoints(peerData)
+	if c.AppContext().Err() != nil {
+		return false
+	}
 	c.sendUpdatesToPeers(resultingUpdates)
 
 	c.Logger().Printf("[FULL_SYNC] Successfully synced %d data points from %s", len(peerData), peer.NodeID)

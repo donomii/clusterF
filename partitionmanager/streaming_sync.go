@@ -35,6 +35,10 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 		return
 	default:
 	}
+	if pm.deps.Cluster.NoStore() {
+		http.Error(w, "no store", http.StatusServiceUnavailable)
+		return
+	}
 
 	if pm.deps.Cluster != nil && pm.deps.Cluster.GetPartitionSyncPaused() {
 		http.Error(w, "sync paused", http.StatusServiceUnavailable)
@@ -95,14 +99,17 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 		flusher.Flush()
 	}
 
-	pm.MarkForReindex(partitionID)
-
 	pm.debugf("[PARTITION] Completed streaming %d entries for partition %s", entriesStreamed, partitionID)
 }
 
 func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *http.Request, partitionID types.PartitionID) {
 	if pm.deps.Cluster != nil && pm.deps.Cluster.GetPartitionSyncPaused() {
 		http.Error(w, "sync paused", http.StatusServiceUnavailable)
+		return
+	}
+
+	if pm.deps.Cluster.NoStore() {
+		http.Error(w, "no store", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -116,6 +123,9 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 	skipped := 0
 
 	for {
+		if pm.deps.Cluster.AppContext().Err() != nil {
+			return
+		}
 		var entry PartitionSyncEntry
 		if err := decoder.Decode(&entry); err == io.EOF {
 			break
