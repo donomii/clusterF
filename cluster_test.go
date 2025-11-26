@@ -533,33 +533,33 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 
 			// Verify retrieval from same node
 			success = CheckSuccessWithTimeout(func() bool {
-			resp, err = client.Get(baseURL + "/api/files" + filePath)
-			if err != nil {
-			  t.Logf("GET request error for file %d: %v", i, err)
-			  return false
-			}
-			if resp.StatusCode != http.StatusOK {
-			 body, _ := io.ReadAll(resp.Body)
-			t.Logf("GET request for file %d failed with status %d. Response body: %s", i, resp.StatusCode, string(body))
-			clearResponseBody(resp)
-			 return false
-			}
-			return true
+				resp, err = client.Get(baseURL + "/api/files" + filePath)
+				if err != nil {
+					t.Logf("GET request error for file %d: %v", i, err)
+					return false
+				}
+				if resp.StatusCode != http.StatusOK {
+					body, _ := io.ReadAll(resp.Body)
+					t.Logf("GET request for file %d failed with status %d. Response body: %s", i, resp.StatusCode, string(body))
+					clearResponseBody(resp)
+					return false
+				}
+				return true
 			}, 2000, 20000) // Retry for up to 20 seconds
 			if !success {
-			if err != nil {
-			 errCh <- fmt.Errorf("GET request failed: %v", err)
-			 } else if resp != nil {
-						body, _ := io.ReadAll(resp.Body)
-						errCh <- fmt.Errorf("GET request failed with status %d. Response body: %s", resp.StatusCode, string(body))
-					} else {
-						errCh <- fmt.Errorf("GET request failed: no response")
-					}
-					if resp != nil {
-						clearResponseBody(resp)
-					}
-					return
+				if err != nil {
+					errCh <- fmt.Errorf("GET request failed: %v", err)
+				} else if resp != nil {
+					body, _ := io.ReadAll(resp.Body)
+					errCh <- fmt.Errorf("GET request failed with status %d. Response body: %s", resp.StatusCode, string(body))
+				} else {
+					errCh <- fmt.Errorf("GET request failed: no response")
 				}
+				if resp != nil {
+					clearResponseBody(resp)
+				}
+				return
+			}
 
 			// Verify ModifiedAt header matches what we uploaded
 			modifiedAt := resp.Header.Get("X-ClusterF-Modified-At")
@@ -757,7 +757,7 @@ func TestCluster_FileSizes(t *testing.T) {
 				})
 
 				if !result.Success {
-				t.Fatalf("File size test for %d bytes failed: %v", size, result.Error)
+					t.Fatalf("File size test for %d bytes failed: %v", size, result.Error)
 				}
 
 				t.Logf("File size test passed: %d files of %d bytes in %v",
@@ -1136,9 +1136,9 @@ func TestCluster_LocalStorage(t *testing.T) {
 
 	t.Logf("Storing file %s\n", filePath)
 	// Store file
-	_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now())
+	_, err := cluster.FileSystem.InsertFileIntoCluster(context.TODO(), filePath, testData, "text/plain", time.Now())
 	if err != nil {
-		t.Fatalf("StoreFileWithModTimeAndClusterUpdate failed: %v", err)
+		t.Fatalf("InsertFileIntoCluster failed: %v", err)
 	}
 	t.Logf("Stored file %s\n", filePath)
 
@@ -1215,7 +1215,7 @@ func TestCluster_Encryption(t *testing.T) {
 		testData := []byte("Sensitive encrypted data")
 		filePath := "/encrypted-file.txt"
 
-		_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now())
+		_, err := cluster.FileSystem.InsertFileIntoCluster(context.TODO(), filePath, testData, "text/plain", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store encrypted file: %v", err)
 		}
@@ -1295,7 +1295,7 @@ func TestCluster_Encryption(t *testing.T) {
 		testData := []byte("Unencrypted data")
 		filePath := "/unencrypted-file.txt"
 
-		_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now())
+		_, err := cluster.FileSystem.InsertFileIntoCluster(context.TODO(), filePath, testData, "text/plain", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store unencrypted file: %v", err)
 		}
@@ -1476,7 +1476,7 @@ func TestCluster_EncryptionOnDisk(t *testing.T) {
 		testData := []byte(distinctPhrase)
 		filePath := "/test-phrase-file.txt"
 
-		_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now())
+		_, err := cluster.FileSystem.InsertFileIntoCluster(context.TODO(), filePath, testData, "text/plain", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store file: %v", err)
 		}
@@ -1534,7 +1534,7 @@ func TestCluster_EncryptionOnDisk(t *testing.T) {
 		testData := []byte(distinctPhrase)
 		filePath := "/test-phrase-file.txt"
 
-		_, err := cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "text/plain", time.Now())
+		_, err := cluster.FileSystem.InsertFileIntoCluster(context.TODO(), filePath, testData, "text/plain", time.Now())
 		if err != nil {
 			t.Fatalf("Failed to store file: %v", err)
 		}
@@ -1607,14 +1607,14 @@ func BenchmarkCluster_FileOperations(b *testing.B) {
 	b.Run("StoreFile", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			filePath := fmt.Sprintf("/bench-file-%d.txt", i)
-			_, _ = cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "application/octet-stream", time.Now())
+			_, _ = cluster.FileSystem.InsertFileIntoCluster(context.TODO(), filePath, testData, "application/octet-stream", time.Now())
 		}
 	})
 
 	// Store some files for read benchmark
 	for i := 0; i < 100; i++ {
 		filePath := fmt.Sprintf("/read-bench-file-%d.txt", i)
-		_, _ = cluster.FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testData, "application/octet-stream", time.Now())
+		_, _ = cluster.FileSystem.InsertFileIntoCluster(context.TODO(), filePath, testData, "application/octet-stream", time.Now())
 	}
 
 	b.Run("GetFile", func(b *testing.B) {

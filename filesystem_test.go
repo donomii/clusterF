@@ -55,7 +55,7 @@ func TestFileSystem_BasicOperations(t *testing.T) {
 
 	// Test 1: Store and retrieve a small file
 	testContent := []byte("Hello, distributed file system!")
-	_, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), "/test.txt", testContent, "text/plain", nextTestModTime())
+	_, err := fs.InsertFileIntoCluster(context.TODO(), "/test.txt", testContent, "text/plain", nextTestModTime())
 	if err != nil {
 		t.Fatalf("Failed to store file: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestFileSystem_Directories(t *testing.T) {
 
 	// Test 3: Store file in nested directory to create the directory structure
 	testContent := []byte("Project documentation")
-	_, err = fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), "/documents/projects/readme.txt", testContent, "text/plain", nextTestModTime())
+	_, err = fs.InsertFileIntoCluster(context.TODO(), "/documents/projects/readme.txt", testContent, "text/plain", nextTestModTime())
 	if err != nil {
 		t.Fatalf("Failed to store file in nested directory: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestFileSystem_LargeFiles(t *testing.T) {
 		largeContent[i] = byte(i % 256)
 	}
 
-	_, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), "/large.bin", largeContent, "application/octet-stream", nextTestModTime())
+	_, err := fs.InsertFileIntoCluster(context.TODO(), "/large.bin", largeContent, "application/octet-stream", nextTestModTime())
 	if err != nil {
 		t.Fatalf("Failed to store large file: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 	// Store file on node 0
 	testContent := []byte("Multi-node replicated file content")
 	filePath := "/replicated.txt"
-	if _, err := nodes[0].FileSystem.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, testContent, "text/plain", nextTestModTime()); err != nil {
+	if _, err := nodes[0].FileSystem.InsertFileIntoCluster(context.TODO(), filePath, testContent, "text/plain", nextTestModTime()); err != nil {
 		t.Fatalf("Failed to store file on node 0: %v", err)
 	}
 
@@ -413,7 +413,7 @@ func TestFileSystem_ErrorConditions(t *testing.T) {
 	}
 
 	// Test 2: Try to create file with invalid path
-	_, err = fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), "../invalid", []byte("test"), "text/plain", nextTestModTime())
+	_, err = fs.InsertFileIntoCluster(context.TODO(), "../invalid", []byte("test"), "text/plain", nextTestModTime())
 	if err == nil {
 		t.Fatalf("Expected error for invalid path")
 	}
@@ -446,14 +446,14 @@ func BenchmarkFileSystem_SmallFiles(b *testing.B) {
 	b.Run("Store", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			path := fmt.Sprintf("/bench-small-%d.txt", i)
-			_, _ = fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), path, testContent, "text/plain", nextTestModTime())
+			_, _ = fs.InsertFileIntoCluster(context.TODO(), path, testContent, "text/plain", nextTestModTime())
 		}
 	})
 
 	// Store some files for read benchmark
 	for i := 0; i < 100; i++ {
 		path := fmt.Sprintf("/read-bench-%d.txt", i)
-		_, _ = fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), path, testContent, "text/plain", nextTestModTime())
+		_, _ = fs.InsertFileIntoCluster(context.TODO(), path, testContent, "text/plain", nextTestModTime())
 	}
 
 	b.Run("Retrieve", func(b *testing.B) {
@@ -490,7 +490,7 @@ func BenchmarkFileSystem_LargeFiles(b *testing.B) {
 	b.Run("Store1MB", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			path := fmt.Sprintf("/bench-large-%d.bin", i)
-			_, _ = fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), path, largeContent, "application/octet-stream", nextTestModTime())
+			_, _ = fs.InsertFileIntoCluster(context.TODO(), path, largeContent, "application/octet-stream", nextTestModTime())
 		}
 	})
 }

@@ -501,7 +501,7 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 			contentType = metadata.ContentType
 		}
 
-		if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, metadata.ModifiedAt); err != nil { //FIXME
+		if _, err := c.FileSystem.StoreFileWithModTimeDirect(c.AppContext(), path, content, contentType, metadata.ModifiedAt); err != nil { //FIXME
 			http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -517,7 +517,7 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 
-		if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime); err != nil {
+		if _, err := c.FileSystem.StoreFileWithModTimeDirect(c.AppContext(), path, content, contentType, localModTime); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -634,20 +634,9 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
-	forwardedFrom := r.Header.Get("X-Forwarded-From")
-	isForwarded := forwardedFrom != ""
-
-	if isForwarded {
-		panic("Cannot forward to external api")
-	}
-
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
-	}
-
-	if isForwarded {
-		panic("Cannot forward to external api")
 	}
 
 	modHeader := r.Header.Get("X-ClusterF-Modified-At")
@@ -660,18 +649,21 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		http.Error(w, fmt.Sprintf("Invalid X-ClusterF-Modified-At header: %v", err), http.StatusBadRequest)
 		return
 	}
-	if _, err := c.FileSystem.StoreFileWithModTimeAndClusterUpdate(c.AppContext(), path, content, contentType, localModTime); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to store file: %v", err), http.StatusInternalServerError)
+
+	_, err = c.FileSystem.InsertFileIntoCluster(r.Context(), path, content, contentType, localModTime)
+	if err != nil {
+		c.debugf("[FILES] Forwarded PUT %s", path)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"path":    path,
+			"size":    len(content),
+		})
 		return
 	}
 
-	c.debugf("[FILES] Stored %s (%d bytes)", path, len(content))
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"path":    path,
-		"size":    len(content),
-	})
+	message := fmt.Sprintf("Failed to upload %s: %s", path, err)
+	http.Error(w, message, http.StatusInternalServerError)
 }
 
 func parseHeaderTimestamp(value string) (time.Time, error) {

@@ -32,7 +32,7 @@ type FileSystem interface {
 
 Maps to cluster operations:
 - `Mkdir()` → cluster.CreateDirectory()
-- `OpenFile()` → cluster.GetFile() / cluster.StoreFileWithModTime()
+- `OpenFile()` → cluster.GetFile() / cluster.InsertFileIntoCluster()
 - `RemoveAll()` → cluster.DeleteFile()
 - `Stat()` → cluster.GetMetadata()
 - `Rename()` → Get + Store + Delete (atomic rename doesn't exist)

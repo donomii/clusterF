@@ -64,9 +64,8 @@ func (w *clusterFileWriter) Close() error {
 		contentType = "application/octet-stream"
 	}
 
-	// FIXME context?
-	//FUCK AI
-	if _, err := w.cfs.fs.StoreFileWithModTimeAndClusterUpdate(context.Background(), w.clusterPath, data, contentType, time.Now()); err != nil {
+	// FIXME context?  Use the context from the request?
+	if _, err := w.cfs.fs.InsertFileIntoCluster(context.Background(), w.clusterPath, data, contentType, time.Now()); err != nil {
 		return webdav.NewHTTPError(http.StatusInternalServerError, err)
 	}
 
@@ -476,7 +475,7 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 						continue // Skip files that can't be read
 					}
 					//FUCK AI
-					_, _ = cfs.fs.StoreFileWithModTimeAndClusterUpdate(ctx, newDstPath, data, entry.ContentType, entry.ModifiedAt)
+					_, _ = cfs.fs.InsertFileIntoCluster(ctx, newDstPath, data, entry.ContentType, entry.ModifiedAt)
 				}
 			}
 		}
@@ -496,7 +495,7 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 			panic("no")
 		}
 		//FUCK AI
-		if _, err := cfs.fs.StoreFileWithModTimeAndClusterUpdate(ctx, dstClusterPath, data, contentType, fullMeta.ModifiedAt); err != nil {
+		if _, err := cfs.fs.InsertFileIntoCluster(ctx, dstClusterPath, data, contentType, fullMeta.ModifiedAt); err != nil {
 			return false, webdav.NewHTTPError(http.StatusInternalServerError, err)
 		}
 	}

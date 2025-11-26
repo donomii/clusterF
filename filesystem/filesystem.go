@@ -104,13 +104,9 @@ func decodeForwardedMetadata(metadataJSON []byte) (time.Time, int64, error) {
 	return meta.ModifiedAt, meta.Size, nil
 }
 
-// StoreFileWithModTime stores a file using explicit modification time
-func (fs *ClusterFileSystem) StoreFileWithModTime(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
-	return fs.StoreFileWithModTimeAndClusterUpdate(ctx, path, content, contentType, modTime)
-}
-
-// StoreFileWithModTimeAndClusterUpdate stores a file using explicit modification time and last cluster update time
-func (fs *ClusterFileSystem) StoreFileWithModTimeAndClusterUpdate(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
+// InsertFileIntoCluster stores a file using explicit modification time
+func (fs *ClusterFileSystem) InsertFileIntoCluster(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
+	//FIXME deduplicate with StoreFileWithModTimeDirect
 	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {
 		return "", fmt.Errorf("invalid path: %s", path)
 	}
@@ -136,11 +132,39 @@ func (fs *ClusterFileSystem) StoreFileWithModTimeAndClusterUpdate(ctx context.Co
 
 	//fs.debugf("[CHECKSUM_DEBUG] Enhanced metadata for %s has checksum: %s", path, enhancedMetadata["checksum"])
 	metadataJSON, _ := json.Marshal(metadata)
-
 	// For no-store clients, forward uploads to storage nodes
-	if fs.cluster.NoStore() {
-		return fs.forwardUploadToStorageNode(path, metadataJSON, content, contentType)
+
+	return fs.forwardUploadToStorageNode(path, metadataJSON, content, contentType)
+
+}
+
+// StoreFileWithModTimeAndClusterDirect stores a file on the local node using explicit modification time and last cluster update time
+func (fs *ClusterFileSystem) StoreFileWithModTimeDirect(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
+	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {
+		return "", fmt.Errorf("invalid path: %s", path)
 	}
+	// Calculate checksum for file integrity
+	checksum := calculateChecksum(content)
+	//fs.debugf("[CHECKSUM_DEBUG] Calculated checksum for %s: %s", path, checksum)
+
+	// Create file metadata for the file system layer
+	metadata := types.FileMetadata{
+		Name:        filepath.Base(path),
+		Path:        path,
+		Size:        int64(len(content)),
+		ContentType: contentType,
+		CreatedAt:   modTime,
+		ModifiedAt:  modTime,
+		IsDirectory: false,
+		Checksum:    checksum,
+	}
+
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
+	}
+
+	//fs.debugf("[CHECKSUM_DEBUG] Enhanced metadata for %s has checksum: %s", path, enhancedMetadata["checksum"])
+	metadataJSON, _ := json.Marshal(metadata)
 
 	if err := fs.cluster.PartitionManager().StoreFileInPartition(ctx, path, metadataJSON, content); err != nil {
 		return "", logerrf("failed to store file: %v", err)

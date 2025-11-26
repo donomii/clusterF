@@ -35,7 +35,7 @@ func TestPerformLocalSearch(t *testing.T) {
 
 	now := time.Now()
 	for path, content := range testFiles {
-		if _, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), path, content, "text/plain", now); err != nil {
+		if _, err := fs.InsertFileIntoCluster(context.TODO(), path, content, "text/plain", now); err != nil {
 			t.Fatalf("Failed to store test file %s: %v", path, err)
 		}
 	}
@@ -136,7 +136,7 @@ func TestPerformLocalSearch_DeletedFiles(t *testing.T) {
 	fs := cluster.FileSystem
 
 	filePath := "/test-file.txt"
-	if _, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), filePath, []byte("test content"), "text/plain", time.Now()); err != nil {
+	if _, err := fs.InsertFileIntoCluster(context.TODO(), filePath, []byte("test content"), "text/plain", time.Now()); err != nil {
 		t.Fatalf("Failed to store test file: %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestScanAllFiles(t *testing.T) {
 	}
 
 	for path, content := range testFiles {
-		if _, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), path, content, "text/plain", time.Now()); err != nil {
+		if _, err := fs.InsertFileIntoCluster(context.TODO(), path, content, "text/plain", time.Now()); err != nil {
 			t.Fatalf("Failed to store test file %s: %v", path, err)
 		}
 	}
@@ -234,10 +234,10 @@ func TestScanAllFiles_WithError(t *testing.T) {
 
 	fs := cluster.FileSystem
 
-	if _, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), "/file1.txt", []byte("Content 1"), "text/plain", time.Now()); err != nil {
+	if _, err := fs.InsertFileIntoCluster(context.TODO(), "/file1.txt", []byte("Content 1"), "text/plain", time.Now()); err != nil {
 		t.Fatalf("Failed to store test file: %v", err)
 	}
-	if _, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), "/file2.txt", []byte("Content 2"), "text/plain", time.Now()); err != nil {
+	if _, err := fs.InsertFileIntoCluster(context.TODO(), "/file2.txt", []byte("Content 2"), "text/plain", time.Now()); err != nil {
 		t.Fatalf("Failed to store test file: %v", err)
 	}
 
@@ -281,7 +281,7 @@ func TestScanMetadata(t *testing.T) {
 	}
 
 	for path, data := range testFiles {
-		if _, err := fs.StoreFileWithModTimeAndClusterUpdate(context.TODO(), path, data.content, data.contentType, time.Now()); err != nil {
+		if _, err := fs.InsertFileIntoCluster(context.TODO(), path, data.content, data.contentType, time.Now()); err != nil {
 			t.Fatalf("Failed to store test file %s: %v", path, err)
 		}
 	}

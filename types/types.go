@@ -144,7 +144,7 @@ type IndexerLike interface {
 type FileSystemLike interface {
 	CreateDirectory(path string) error
 	CreateDirectoryWithModTime(path string, modTime time.Time) error
-	StoreFileWithModTimeAndClusterUpdate(ctx context.Context, path string, data []byte, contentType string, modTime time.Time) (NodeID, error)
+	StoreFileWithModTimeDirect(ctx context.Context, path string, data []byte, contentType string, modTime time.Time) (NodeID, error)
 	DeleteFile(ctx context.Context, path string) error
 	DeleteFileWithTimestamp(ctx context.Context, path string, modTime time.Time) error
 	MetadataForPath(path string) (FileMetadata, error)
@@ -152,6 +152,7 @@ type FileSystemLike interface {
 	// Additional methods for WebDAV support
 	GetFile(path string) ([]byte, FileMetadata, error)
 	ListDirectory(path string) ([]*FileMetadata, error)
+	InsertFileIntoCluster(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (NodeID, error)
 }
 
 // PeerInfo represents information about a discovered peer
