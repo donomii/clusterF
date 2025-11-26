@@ -188,7 +188,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 		}
 		return fmt.Errorf("peer '%s' not found for partition '%s'. Available peers: [%s]", peerID, partitionID, strings.Join(availablePeers, ", "))
 	}
-
+ 
 	pm.debugf("[PARTITION] Starting bidirectional streaming sync of %s with %s", partitionID, peerID)
 
 	syncCount, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peerAddr, peerPort)
@@ -495,18 +495,28 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 	var sentCount int64
 
 	go func() {
+		var streamErr error
+		defer func() {
+			if r := recover(); r != nil {
+				streamErr = fmt.Errorf("panic while streaming partition %s to %s: %v", partitionID, peerID, r)
+			}
+			if streamErr != nil {
+				pw.CloseWithError(streamErr)
+			} else {
+				pw.Close()
+			}
+			errCh <- streamErr
+		}()
+
 		paths, listErr := pm.partitionPaths(partitionID)
 		if listErr != nil {
-			pw.CloseWithError(listErr)
-			errCh <- listErr
+			streamErr = listErr
 			return
 		}
 
 		for _, path := range paths {
 			if ctx.Err() != nil {
-				err := ctx.Err()
-				pw.CloseWithError(err)
-				errCh <- err
+				streamErr = ctx.Err()
 				return
 			}
 
@@ -518,8 +528,7 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 
 			encodeErr := encoder.Encode(entry)
 			if encodeErr != nil {
-				pw.CloseWithError(encodeErr)
-				errCh <- encodeErr
+				streamErr = encodeErr
 				return
 			}
 
@@ -531,13 +540,9 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 
 		endErr := encoder.Encode(struct{}{})
 		if endErr != nil {
-			pw.CloseWithError(endErr)
-			errCh <- endErr
+			streamErr = endErr
 			return
 		}
-
-		pw.Close()
-		errCh <- nil
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, pushURL, pr)
