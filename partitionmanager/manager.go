@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/httpclient"
+	"github.com/donomii/clusterF/metrics"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
@@ -1006,28 +1007,46 @@ type partitionChecksumEntry struct {
 
 // calculatePartitionChecksum computes a checksum for all files in a partition
 func (pm *PartitionManager) CalculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) (string, error) {
-	entries := []partitionChecksumEntry{}
+	defer metrics.StartGlobalTimer("partition.calculate_checksum")()
+	metrics.IncrementGlobalCounter("partition.calculate_checksum.calls")
 
-	if err := pm.deps.FileStore.Scan("", func(path string, metadata, content []byte) error {
+	type entry struct {
+		partition types.PartitionID
+		path      string
+		metadata  []byte
+	}
+
+	var entries []entry
+
+	err := pm.deps.FileStore.ScanMetadataPartition(ctx, partitionID, func(path string, metadata []byte) error {
 		if ctx.Err() != nil {
+			metrics.IncrementGlobalCounter("partition.calculate_checksum.errors")
 			return ctx.Err()
 		}
-		if types.PartitionIDForPath(path) != partitionID {
-			return nil
-		}
-		var parsed types.FileMetadata
-		if err := json.Unmarshal(metadata, &parsed); err == nil && !parsed.Deleted {
-			metaCopy := append([]byte(nil), metadata...)
-			entries = append(entries, partitionChecksumEntry{path: path, metadata: metaCopy})
+
+		var parsedMetadata types.FileMetadata
+		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
+			if !parsedMetadata.Deleted {
+				metaCopy := append([]byte(nil), metadata...)
+				entries = append(entries, entry{
+					partition: types.PartitionIDForPath(path),
+					path:      path,
+					metadata:  metaCopy,
+				})
+			}
 		}
 		return nil
-	}); err != nil {
-		pm.debugf("[PARTITION] Failed to calculate checksum for %s: %v", partitionID, err)
+	})
+	if err != nil {
+		metrics.IncrementGlobalCounter("partition.calculate_checksum.errors")
 		return "", err
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].path < entries[j].path
+		if entries[i].partition == entries[j].partition {
+			return entries[i].path < entries[j].path
+		}
+		return entries[i].partition < entries[j].partition
 	})
 
 	hash := sha256.New()
@@ -1035,6 +1054,8 @@ func (pm *PartitionManager) CalculatePartitionChecksum(ctx context.Context, part
 		hash.Write(e.metadata)
 	}
 
+	metrics.IncrementGlobalCounter("partition.calculate_checksum.success")
+	metrics.AddGlobalCounter("partition.calculate_checksum.entries", int64(len(entries)))
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
