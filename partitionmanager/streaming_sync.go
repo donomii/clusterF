@@ -188,7 +188,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 		}
 		return fmt.Errorf("peer '%s' not found for partition '%s'. Available peers: [%s]", peerID, partitionID, strings.Join(availablePeers, ", "))
 	}
- 
+
 	pm.debugf("[PARTITION] Starting bidirectional streaming sync of %s with %s", partitionID, peerID)
 
 	syncCount, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peerAddr, peerPort)
@@ -345,6 +345,7 @@ func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []
 			return applied, ctx.Err()
 		}
 
+		pm.logf("[PARTITION SYNC] Fetching %s from %s", entry.Path, peer.NodeID)
 		content, err := pm.fetchFileContentFromPeer(ctx, peer, entry.Path)
 		if err != nil {
 			panic(err)
@@ -578,7 +579,12 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 		return fmt.Errorf("peer %s rejected partition push (%s)", peerID, msg)
 	}
 
-	streamErr := <-errCh
+	var streamErr error
+	select {
+	case streamErr = <-errCh:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	if streamErr != nil && streamErr != io.EOF {
 		return fmt.Errorf("failed to stream partition %s to %s: %w", partitionID, peerID, streamErr)
 	}
