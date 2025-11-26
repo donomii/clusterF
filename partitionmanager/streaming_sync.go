@@ -18,6 +18,10 @@ import (
 
 // handlePartitionSync serves partition data with object-by-object streaming or accepts updates
 func (pm *PartitionManager) HandlePartitionSync(w http.ResponseWriter, r *http.Request, partitionID types.PartitionID) {
+	if pm.deps.Cluster.NoStore() {
+		http.Error(w, "no store", http.StatusServiceUnavailable)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		pm.handlePartitionSyncGet(w, r, partitionID)
@@ -41,6 +45,10 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 		return
 	}
 
+	fmt.Printf("Allowing sync for partition %s because NoStore is set to %v\n", partitionID, pm.deps.Cluster.NoStore())
+	pm.logf("Allowing sync for partition %s because NoStore is set to %v\n", partitionID, pm.deps.Cluster.NoStore())
+	pm.debugf("Allowing sync for partition %s because NoStore is set to %v\n", partitionID, pm.deps.Cluster.NoStore())
+
 	if pm.deps.Cluster != nil && pm.deps.Cluster.GetPartitionSyncPaused() {
 		http.Error(w, "sync paused", http.StatusServiceUnavailable)
 		return
@@ -61,6 +69,7 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 		return
 	}
 
+	pm.logf("[PARTITION SYNC] Streaming %d files for partition %s", len(paths), partitionID)
 	entriesStreamed := 0
 	for _, path := range paths {
 		select {
@@ -154,7 +163,7 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 // syncPartitionWithPeer synchronizes a partition using object-by-object streaming in both directions
 func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID) error {
 	// No-store nodes should never sync partitions
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		pm.debugf("[PARTITION] No-store mode: refusing to sync partition %s", partitionID)
 		return fmt.Errorf("no-store mode: cannot sync partitions")
 	}
@@ -215,6 +224,9 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 }
 
 func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) (int, error) {
+	if pm.deps.Cluster.NoStore() {
+		return 0, fmt.Errorf("no store")
+	}
 	syncURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
 	if err != nil {
 		return 0, fmt.Errorf("failed to build sync URL: %v", err)
@@ -256,6 +268,9 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 }
 
 func (pm *PartitionManager) fetchFileContentFromPeer(ctx context.Context, peer *types.PeerInfo, path string) ([]byte, error) {
+	if pm.deps.Cluster.NoStore() {
+		return nil, fmt.Errorf("no store")
+	}
 	fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
 	if err != nil {
 		return nil, err
@@ -282,6 +297,9 @@ func (pm *PartitionManager) fetchFileContentFromPeer(ctx context.Context, peer *
 }
 
 func (pm *PartitionManager) storeEntryMetadata(entry PartitionSyncEntry) error {
+	if pm.deps.Cluster.NoStore() {
+		return fmt.Errorf("no store")
+	}
 	if entry.Metadata.Path == "" {
 		panic("what the fuck were you thinking you stupid AI")
 	}
@@ -312,6 +330,9 @@ func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntr
 	if entry.Metadata.Path == "" {
 		panic("what the fuck were you thinking you stupid AI")
 	}
+	if pm.deps.Cluster.NoStore() {
+		return fmt.Errorf("no store")
+	}
 	pm.recordEssentialDiskActivity()
 	metadataBytes, marshalErr := json.Marshal(entry.Metadata)
 	if marshalErr != nil {
@@ -331,6 +352,9 @@ func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntr
 }
 
 func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []PartitionSyncEntry, peer *types.PeerInfo) (int, error) {
+	if pm.deps.Cluster.NoStore() {
+		return 0, fmt.Errorf("no store")
+	}
 	if len(entries) == 0 {
 		return 0, nil
 	}
@@ -374,6 +398,9 @@ func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []
 }
 
 func (pm *PartitionManager) processPartitionEntryStream(ctx context.Context, decoder *json.Decoder, peer *types.PeerInfo) (int, int, error, error) {
+	if pm.deps.Cluster.NoStore() {
+		return 0, 0, fmt.Errorf("no store"), nil
+	}
 	applied := 0
 	skipped := 0
 	toFetch := []PartitionSyncEntry{}
@@ -485,6 +512,9 @@ func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, p
 }
 
 func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) error {
+	if pm.deps.Cluster.NoStore() {
+		return fmt.Errorf("no store")
+	}
 	pushURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
 	if err != nil {
 		return fmt.Errorf("failed to build push URL: %v", err)
@@ -598,7 +628,7 @@ func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peer
 		return
 	}
 
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		return // No-store nodes don't claim to hold partitions
 	}
 

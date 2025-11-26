@@ -260,7 +260,7 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 	cluster.Debug = debug
 
 	// Log no-store mode if active
-	if noStore {
+	if cluster.NoStore() {
 		cluster.Logger().Printf("📱 Running in CLIENT MODE (--no-store): participating in CRDT but not storing files locally")
 	}
 

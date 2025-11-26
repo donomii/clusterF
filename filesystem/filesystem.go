@@ -140,6 +140,9 @@ func (fs *ClusterFileSystem) InsertFileIntoCluster(ctx context.Context, path str
 
 // StoreFileWithModTimeAndClusterDirect stores a file on the local node using explicit modification time and last cluster update time
 func (fs *ClusterFileSystem) StoreFileWithModTimeDirect(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
+	if fs.cluster.NoStore() {
+		panic("fuck you")
+	}
 	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {
 		return "", fmt.Errorf("invalid path: %s", path)
 	}

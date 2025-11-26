@@ -441,8 +441,8 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if c.NoStore() {
-		http.Error(w, "no store", http.StatusServiceUnavailable)
-		return
+		c.Logger().Printf("[FILES] NO-STORE node received internal PUT for %s (forwarded=%v)", path, r.Header.Get("X-Forwarded-From") != "")
+		panic("fuck you")
 	}
 	// Update current file for monitoring
 	c.currentFile.Store(path)
@@ -628,8 +628,9 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	defer c.currentFile.Store("")
 
 	// Debug: log all file uploads with no-store status
-	if c.noStore {
+	if c.NoStore() {
 		c.Logger().Printf("[FILES] NO-STORE node received PUT for %s (forwarded=%v)", path, r.Header.Get("X-Forwarded-From") != "")
+		panic("fuck you")
 	}
 
 	content, err := io.ReadAll(r.Body)

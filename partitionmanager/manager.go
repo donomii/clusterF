@@ -223,6 +223,9 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if pm.deps.Cluster.NoStore() {
+		panic("wtf")
+	}
 	pm.recordEssentialDiskActivity()
 	// If in no-store mode, don't store locally
 	if pm.deps.NoStore {
@@ -707,7 +710,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		// Update partition metadata in CRDT using individual keys per holder
 		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 
-		checksum, err := pm.CalculatePartitionChecksum(ctx, StartPartitionID)
+		checksum, err := pm.CalculatePartitionChecksum(ctx, partitionID)
 		if checksum == "" {
 			pm.deps.Logger.Printf("[FULL_REINDEX] ERROR: Unable to calculate checksum for partition %v", partitionID)
 			continue

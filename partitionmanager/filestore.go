@@ -590,6 +590,7 @@ func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metada
 
 	for _, storeID := range partitions {
 		fs.debugf("ScanMetadata: acquiring read lock for partition store %s", storeID)
+
 		fs.rLockPartition(storeID)
 
 		metadataKV, contentKV, err := fs.openPartitionStores(storeID)
