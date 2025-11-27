@@ -497,11 +497,11 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 		return nil
 	})
 
-	idx.lock()
-	defer idx.unlock()
 	idx.suppressUpdates.Store(false)
 	var publishErr error
 	if err == nil {
+		idx.lock()
+		defer idx.unlock()
 		publishErr = idx.publishAllPartitionMembershipLocked()
 	}
 
