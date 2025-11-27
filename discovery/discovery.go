@@ -64,7 +64,7 @@ func NewDiscoveryManager(nodeID string, httpPort int, discoveryPort int, tm *thr
 		logger:            logger,
 		peers:             syncmap.NewSyncMap[string, *types.PeerInfo](),
 		broadcastInterval: 5 * time.Second,
-		peerTimeout:       30 * time.Second, // The peer timeout must be larger than the peer rebroadcast
+		peerTimeout:       60 * time.Second, // The peer timeout must be larger than the peer rebroadcast
 		threadManager:     tm,
 		debug:             false,
 	}
@@ -306,7 +306,7 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 
 // cleanupLoop removes stale peers
 func (dm *DiscoveryManager) cleanupLoop(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(dm.peerTimeout)
 	defer ticker.Stop()
 
 	for {
@@ -326,7 +326,7 @@ func (dm *DiscoveryManager) cleanupStalePeers() {
 
 	dm.peers.Range(func(nodeID string, peer *types.PeerInfo) bool {
 		if now.Sub(peer.LastSeen) > dm.peerTimeout && nodeID != dm.nodeID {
-			//dm.logger.Printf("Peer %s timed out, removing", nodeID)
+			dm.logger.Printf("Peer %s timed out, removing", nodeID)
 			dm.peers.Delete(nodeID)
 		}
 		return true

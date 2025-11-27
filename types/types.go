@@ -149,10 +149,12 @@ type FileSystemLike interface {
 	DeleteFileWithTimestamp(ctx context.Context, path string, modTime time.Time) error
 	MetadataForPath(path string) (FileMetadata, error)
 	MetadataViaAPI(ctx context.Context, path string) (FileMetadata, error)
+	PeerHasUpToDateFile(peer *PeerInfo, path string, modTime time.Time, size int64) (bool, error)
+	ClusterHasUpToDateFile(path string, modTime time.Time, size int64) (bool, FileMetadata, error)
 	// Additional methods for WebDAV support
 	GetFile(path string) ([]byte, FileMetadata, error)
 	ListDirectory(path string) ([]*FileMetadata, error)
-	InsertFileIntoCluster(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (NodeID, error)
+	InsertFileIntoCluster(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) ([]NodeID, error)
 }
 
 // PeerInfo represents information about a discovered peer
@@ -197,6 +199,7 @@ type FileMetadata struct {
 	Checksum    string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
 	Deleted     bool      `json:"deleted,omitempty"`
 	DeletedAt   time.Time `json:"deleted_at,omitempty"`
+	Holders     []NodeID  `json:"holders,omitempty"`
 }
 
 type NodeData struct {

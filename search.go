@@ -298,6 +298,19 @@ func (c *Cluster) ListDirectoryUsingSearch(path string) ([]*types.FileMetadata, 
 			Checksum:    result.Checksum,
 			ModifiedAt:  result.ModifiedAt,
 			CreatedAt:   result.CreatedAt,
+			Holders:     result.Holders,
+		}
+		if !metadata.IsDirectory {
+			hasLocal := false
+			for _, holder := range metadata.Holders {
+				if holder == c.ID() {
+					hasLocal = true
+					break
+				}
+			}
+			if !hasLocal {
+				metadata.Holders = append(metadata.Holders, c.ID())
+			}
 		}
 
 		fileMetadata = append(fileMetadata, metadata)

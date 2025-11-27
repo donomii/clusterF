@@ -627,16 +627,16 @@ func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs
 	}
 
 	// Check if file already exists with same content (via external API)
-	lookupCtx := ctx
-	if lookupCtx == nil {
-		lookupCtx = context.Background()
-	}
-	if meta, err := e.fs.MetadataViaAPI(lookupCtx, clusterPath); err == nil {
-		if metadataMatches(meta, st.Size(), st.ModTime()) {
+
+	upToDate, metadata, err := e.fs.ClusterHasUpToDateFile(clusterPath, st.ModTime(), st.Size())
+	if err != nil {
+		// Problem retrieving it, we should probably try to insert it anyway
+	} else {
+		if upToDate {
 			e.logger.Printf("[IMPORT] Skipping synchronised file %s", clusterPath)
 			return
 		} else {
-			e.logger.Printf(`[IMPORT] Updating existing file "%s" in cluster: %+v, local size: %v, local time %v`, clusterPath, meta, st.Size(), st.ModTime())
+			e.logger.Printf(`[IMPORT] Updating existing file "%s" in cluster: %+v, local size: %v, local time %v`, clusterPath, metadata, st.Size(), st.ModTime())
 
 		}
 	}
@@ -648,15 +648,11 @@ func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs
 	}
 
 	ct := contentTypeFromExt(p)
-	targetNode, err := e.fs.InsertFileIntoCluster(ctx, clusterPath, data, ct, st.ModTime())
+	targetNodes, err := e.fs.InsertFileIntoCluster(ctx, clusterPath, data, ct, st.ModTime())
 	if err != nil {
 		e.logger.Printf("[IMPORT] Synchronisation failed for %v: %v", clusterPath, err)
 	} else {
-		nodeLabel := string(targetNode)
-		if nodeLabel == "" {
-			nodeLabel = "existing replicas (up to date)"
-		}
-		e.logger.Printf("[IMPORT] Synchronised %s via %s", clusterPath, nodeLabel)
+		e.logger.Printf("[IMPORT] Synchronised %s via %s", clusterPath, targetNodes)
 	}
 }
 

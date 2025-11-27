@@ -1013,10 +1013,22 @@ func (pm *PartitionManager) CalculatePartitionChecksum(ctx context.Context, part
 	defer metrics.StartGlobalTimer("partition.calculate_checksum")()
 	metrics.IncrementGlobalCounter("partition.calculate_checksum.calls")
 
+	type checksumMetadata struct {
+		Path string `json:"path"` // Full path like "/docs/readme.txt"
+		Size int64  `json:"size"` // Total file size in bytes
+
+		CreatedAt  time.Time `json:"created_at"`
+		ModifiedAt time.Time `json:"modified_at"`
+
+		Checksum  string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
+		Deleted   bool      `json:"deleted,omitempty"`
+		DeletedAt time.Time `json:"deleted_at,omitempty"`
+	}
+
 	type entry struct {
 		partition types.PartitionID
 		path      string
-		metadata  []byte
+		metadata  checksumMetadata
 	}
 
 	var entries []entry
@@ -1030,11 +1042,19 @@ func (pm *PartitionManager) CalculatePartitionChecksum(ctx context.Context, part
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
 			if !parsedMetadata.Deleted {
-				metaCopy := append([]byte(nil), metadata...)
+				chMeta := checksumMetadata{
+					Path:       path,
+					Size:       parsedMetadata.Size,
+					CreatedAt:  parsedMetadata.CreatedAt,
+					ModifiedAt: parsedMetadata.ModifiedAt,
+					Checksum:   parsedMetadata.Checksum,
+					Deleted:    parsedMetadata.Deleted,
+					DeletedAt:  parsedMetadata.DeletedAt,
+				}
 				entries = append(entries, entry{
 					partition: types.PartitionIDForPath(path),
 					path:      path,
-					metadata:  metaCopy,
+					metadata:  chMeta,
 				})
 			}
 		}
@@ -1054,7 +1074,8 @@ func (pm *PartitionManager) CalculatePartitionChecksum(ctx context.Context, part
 
 	hash := sha256.New()
 	for _, e := range entries {
-		hash.Write(e.metadata)
+		data, _ := json.Marshal(e.metadata)
+		hash.Write(data)
 	}
 
 	metrics.IncrementGlobalCounter("partition.calculate_checksum.success")
@@ -1225,7 +1246,6 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 		}
 		info := allPartitions[partitionID]
 		if len(info.Holders) >= currentRF {
-			// Check if we have this partition and if our lastModified timestamp matches other holders
 			hasPartition := false
 			ourHolderData, ok := info.HolderData[ourNodeId]
 
@@ -1235,7 +1255,6 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 			if hasPartition {
 
-				// Compare with other holders' last modified
 				needSync := false
 				for _, holderID := range info.Holders {
 					if holderID != ourNodeId && (info.Checksums[holderID] != ourHolderData.Checksum) {
