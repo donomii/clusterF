@@ -33,8 +33,6 @@ type Indexer struct {
 	logger    *log.Logger
 	backend   searchBackend
 
-	// Partition awareness
-	pathMetadata    *syncmap.SyncMap[string, types.FileMetadata]                            // active path -> metadata
 	partitionActive *syncmap.SyncMap[types.PartitionID, *syncmap.SyncMap[string, struct{}]] // partition -> active (non-deleted) paths
 
 	deps *types.App
@@ -234,7 +232,6 @@ func NewIndexerWithType(logger *log.Logger, indexType IndexType, deps *types.App
 	idx := &Indexer{
 		indexType:       indexType,
 		logger:          logger,
-		pathMetadata:    syncmap.NewSyncMap[string, types.FileMetadata](),
 		partitionActive: syncmap.NewSyncMap[types.PartitionID, *syncmap.SyncMap[string, struct{}]](),
 		deps:            deps,
 	}
@@ -303,20 +300,6 @@ func (idx *Indexer) ensureActivePartitionEntryLocked(partitionID types.Partition
 	return paths
 }
 
-func (idx *Indexer) recomputePartitionLatestLocked(partitionID types.PartitionID) {
-	active, ok := idx.partitionActive.Load(partitionID)
-	if !ok {
-		return
-	}
-	latest := time.Time{}
-	active.Range(func(path string, _ struct{}) bool {
-		if meta, ok := idx.pathMetadata.Load(path); ok && meta.ModifiedAt.After(latest) {
-			latest = meta.ModifiedAt
-		}
-		return true
-	})
-}
-
 func (idx *Indexer) addActivePathLocked(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
 	active := idx.ensureActivePartitionEntryLocked(partitionID)
 	active.Store(path, struct{}{})
@@ -325,8 +308,6 @@ func (idx *Indexer) addActivePathLocked(partitionID types.PartitionID, path stri
 	if metaCopy.ModifiedAt.IsZero() {
 		metaCopy.ModifiedAt = time.Now()
 	}
-	idx.pathMetadata.Store(path, metaCopy)
-	idx.recomputePartitionLatestLocked(partitionID)
 }
 
 func (idx *Indexer) removeActivePathLocked(partitionID types.PartitionID, path string) {
@@ -334,11 +315,9 @@ func (idx *Indexer) removeActivePathLocked(partitionID types.PartitionID, path s
 		active.Delete(path)
 		if active.Len() == 0 {
 			idx.partitionActive.Delete(partitionID)
-		} else {
-			idx.recomputePartitionLatestLocked(partitionID)
 		}
 	}
-	idx.pathMetadata.Delete(path)
+
 }
 
 func (idx *Indexer) removeFromSearchLocked(partitionID types.PartitionID, path string) {
