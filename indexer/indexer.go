@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -263,24 +264,33 @@ func (idx *Indexer) logf(format string, args ...interface{}) {
 	}
 }
 
+func (idx *Indexer) callerName() string {
+	if pc, _, _, ok := runtime.Caller(2); ok {
+		if fn := runtime.FuncForPC(pc); fn != nil {
+			return fn.Name()
+		}
+	}
+	return "unknown"
+}
+
 func (idx *Indexer) lock() {
+	idx.logf("[INDEXER] idx.mu locked (write) by %s", idx.callerName())
 	idx.mu.Lock()
-	idx.logf("[INDEXER] idx.mu locked (write)")
 }
 
 func (idx *Indexer) unlock() {
 	idx.mu.Unlock()
-	idx.logf("[INDEXER] idx.mu unlocked (write)")
+	idx.logf("[INDEXER] idx.mu unlocked (write) by %s", idx.callerName())
 }
 
 func (idx *Indexer) rlock() {
+	idx.logf("[INDEXER] idx.mu locked (read) by %s", idx.callerName())
 	idx.mu.RLock()
-	idx.logf("[INDEXER] idx.mu locked (read)")
 }
 
 func (idx *Indexer) runlock() {
 	idx.mu.RUnlock()
-	idx.logf("[INDEXER] idx.mu unlocked (read)")
+	idx.logf("[INDEXER] idx.mu unlocked (read) by %s", idx.callerName())
 }
 
 func (idx *Indexer) partitionForPath(path string) types.PartitionID {
