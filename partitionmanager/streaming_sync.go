@@ -198,7 +198,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 		return fmt.Errorf("peer '%s' not found for partition '%s'. Available peers: [%s]", peerID, partitionID, strings.Join(availablePeers, ", "))
 	}
 
-	pm.debugf("[PARTITION] Starting bidirectional streaming sync of %s with %s", partitionID, peerID)
+	pm.debugf("[PARTITION] Starting bidirectional streaming sync of %s with %s, %v:%v", partitionID, peerID, peerAddr, peerPort)
 
 	syncCount, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peerAddr, peerPort)
 	if err != nil {
@@ -231,6 +231,7 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 	if err != nil {
 		return 0, fmt.Errorf("failed to build sync URL: %v", err)
 	}
+	pm.debugf("[PARTITION] Downloading partition %s from %s", partitionID, syncURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, syncURL, nil)
 	if err != nil {
