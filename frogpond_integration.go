@@ -325,17 +325,15 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.logger.Printf("Started updateNodeMetadata\n")
+
 			// Update our node metadata
 			c.updateNodeMetadata()
-			c.logger.Printf("Finish updateNodeMetadata\n")
+			c.logger.Print("Updated NodeMetadata\n")
 
-			c.logger.Printf("Started persistCRDTToFile\n")
 			// Persist CRDT state to KV
 			c.persistCRDTToFile()
-			c.logger.Printf("Finish persistCRDTToFile\n")
+			c.logger.Print("Wrote persistCRDTToFile to disk\n")
 		}
-		fmt.Printf("Waiting %v before next sync\n", time.Duration(c.GetPartitionSyncInterval())*time.Second)
 		ticker.Reset(time.Duration(c.GetPartitionSyncInterval()) * time.Second)
 	}
 }

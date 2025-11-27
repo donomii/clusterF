@@ -821,9 +821,8 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.logger.Printf("Started requestFullStoreFromPeer\n")
 			checkPeers()
-			c.logger.Printf("Finished requestFullStoreFromPeer\n")
+			c.logger.Printf("Synchronised frogpond\n")
 			ticker.Reset(time.Duration(c.GetPartitionSyncInterval()) * time.Second)
 		}
 	}

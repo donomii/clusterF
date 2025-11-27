@@ -53,9 +53,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	if pm.deps.Cluster.NoStore() {
 		return
 	}
-	if pm.getPartitionSyncPaused() {
-		return
-	}
+
 	start := time.Now()
 	//pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
 	count := 0
@@ -63,6 +61,9 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	keys := pm.ReindexList.Keys()
 	for _, key := range keys {
 		if ctx.Err() != nil {
+			return
+		}
+		if pm.getPartitionSyncPaused() {
 			return
 		}
 		value, _ := pm.ReindexList.Load(key)
@@ -653,6 +654,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	if !pm.hasFrogpond() {
 		return
 	}
+
 	start := time.Now()
 
 	// In no-store mode, don't claim to hold partitions
@@ -1101,7 +1103,6 @@ func (pm *PartitionManager) getPartitionSyncInterval() time.Duration {
 	}
 
 	dur := time.Duration(seconds) * time.Second
-	fmt.Printf("getPartitionSyncInterval: %v", dur)
 	return dur
 }
 

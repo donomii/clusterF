@@ -626,6 +626,7 @@ func (e *Syncer) insertWithRetry(ctx context.Context, clusterPath string, data [
 
 		if backoff = backoff * 2; backoff > 30*time.Second {
 			backoff = 30 * time.Second
+			e.logger.Printf("[IMPORT] Slow upload for %s: %v", clusterPath, err)
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
