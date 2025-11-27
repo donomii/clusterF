@@ -614,6 +614,25 @@ func (e *Syncer) importFromDir(ctx context.Context) error {
 	})
 }
 
+func (e *Syncer) insertWithRetry(ctx context.Context, clusterPath string, data []byte, contentType string, modTime time.Time) ([]types.NodeID, error) {
+	backoff := time.Second
+	for {
+		targetNodes, err := e.fs.InsertFileIntoCluster(ctx, clusterPath, data, contentType, modTime)
+		if err == nil {
+			return targetNodes, nil
+		}
+
+		time.Sleep(backoff)
+
+		if backoff = backoff * 2; backoff > 30*time.Second {
+			backoff = 30 * time.Second
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	}
+}
+
 func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs.FileInfo, throttle chan struct{}) {
 	defer func() {
 		if e.setCurrentFile != nil {
@@ -648,7 +667,7 @@ func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs
 	}
 
 	ct := contentTypeFromExt(p)
-	targetNodes, err := e.fs.InsertFileIntoCluster(ctx, clusterPath, data, ct, st.ModTime())
+	targetNodes, err := e.insertWithRetry(ctx, clusterPath, data, ct, st.ModTime())
 	if err != nil {
 		e.logger.Printf("[IMPORT] Synchronisation failed for %v: %v", clusterPath, err)
 	} else {
