@@ -263,6 +263,26 @@ func (idx *Indexer) logf(format string, args ...interface{}) {
 	}
 }
 
+func (idx *Indexer) lock() {
+	idx.mu.Lock()
+	idx.logf("[INDEXER] idx.mu locked (write)")
+}
+
+func (idx *Indexer) unlock() {
+	idx.mu.Unlock()
+	idx.logf("[INDEXER] idx.mu unlocked (write)")
+}
+
+func (idx *Indexer) rlock() {
+	idx.mu.RLock()
+	idx.logf("[INDEXER] idx.mu locked (read)")
+}
+
+func (idx *Indexer) runlock() {
+	idx.mu.RUnlock()
+	idx.logf("[INDEXER] idx.mu unlocked (read)")
+}
+
 func (idx *Indexer) partitionForPath(path string) types.PartitionID {
 	return types.PartitionIDForPath(path)
 }
@@ -324,8 +344,8 @@ func (idx *Indexer) upsertSearchLocked(partitionID types.PartitionID, path strin
 
 // PrefixSearch returns all files matching a path prefix
 func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
+	idx.rlock()
+	defer idx.runlock()
 
 	if idx.backend == nil {
 		return nil
@@ -335,8 +355,8 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 
 // AddFile adds or updates a file in the index
 func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
+	idx.lock()
+	defer idx.unlock()
 
 	effectivePath := path
 	if metadata.Path != "" {
@@ -365,8 +385,8 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 
 // DeleteFile removes a file from the index
 func (idx *Indexer) DeleteFile(path string) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
+	idx.lock()
+	defer idx.unlock()
 
 	partitionID := idx.partitionForPath(path)
 	idx.removeActivePathLocked(partitionID, path)
@@ -378,8 +398,8 @@ func (idx *Indexer) DeleteFile(path string) {
 
 // FilesForPartition returns the tracked paths for a partition in sorted order.
 func (idx *Indexer) FilesForPartition(partitionID types.PartitionID) []string {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
+	idx.rlock()
+	defer idx.runlock()
 
 	if idx.backend == nil {
 		return []string{}
@@ -461,8 +481,8 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 		return nil
 	})
 
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
+	idx.lock()
+	defer idx.unlock()
 	idx.suppressUpdates.Store(false)
 	var publishErr error
 	if err == nil {
