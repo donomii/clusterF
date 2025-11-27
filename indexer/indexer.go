@@ -274,23 +274,23 @@ func (idx *Indexer) callerName() string {
 }
 
 func (idx *Indexer) lock() {
-	idx.logf("[INDEXER] idx.mu locked (write) by %s", idx.callerName())
+	//idx.logf("[INDEXER] idx.mu locked (write) by %s", idx.callerName())
 	idx.mu.Lock()
 }
 
 func (idx *Indexer) unlock() {
 	idx.mu.Unlock()
-	idx.logf("[INDEXER] idx.mu unlocked (write) by %s", idx.callerName())
+	//idx.logf("[INDEXER] idx.mu unlocked (write) by %s", idx.callerName())
 }
 
 func (idx *Indexer) rlock() {
-	idx.logf("[INDEXER] idx.mu locked (read) by %s", idx.callerName())
+	//idx.logf("[INDEXER] idx.mu locked (read) by %s", idx.callerName())
 	idx.mu.RLock()
 }
 
 func (idx *Indexer) runlock() {
 	idx.mu.RUnlock()
-	idx.logf("[INDEXER] idx.mu unlocked (read) by %s", idx.callerName())
+	//idx.logf("[INDEXER] idx.mu unlocked (read) by %s", idx.callerName())
 }
 
 func (idx *Indexer) partitionForPath(path string) types.PartitionID {
@@ -408,12 +408,6 @@ func (idx *Indexer) DeleteFile(path string) {
 
 // FilesForPartition returns the tracked paths for a partition in sorted order.
 func (idx *Indexer) FilesForPartition(partitionID types.PartitionID) []string {
-	// Print entire callstack here to help with debugging
-	idx.logf("[INDEXER] FilesForPartition(%s) called by %s", partitionID, idx.callerName())
-	stack := make([]byte, 4096)
-	runtime.Stack(stack, false)
-	idx.logf("[INDEXER] FilesForPartition(%s) stack: %s", partitionID, string(stack))
-
 	idx.rlock()
 	defer idx.runlock()
 
@@ -497,7 +491,7 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 		return nil
 	})
 
-	idx.suppressUpdates.Store(false)
+	idx.suppressUpdates.Store(false) //FIXME make this a defer
 	var publishErr error
 	if err == nil {
 		idx.lock()
