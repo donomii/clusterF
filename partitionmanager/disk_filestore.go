@@ -23,6 +23,7 @@ type DiskFileStore struct {
 	baseDir     string // Holds the metadata and content directories
 	metadataDir string // Holds the partitions directories containing metadata
 	contentDir  string // Holds the partitions directories containing content
+	controlDir  string // Holds per-partition control files (timestamps, etc)
 
 	encryptionKey []byte // XOR encryption key (nil = no encryption)
 }
@@ -39,9 +40,11 @@ func NewDiskFileStore(baseDir string) *DiskFileStore {
 		baseDir:     baseDir,
 		metadataDir: filepath.Join(baseDir, "metadata"),
 		contentDir:  filepath.Join(baseDir, "contents"),
+		controlDir:  filepath.Join(baseDir, "controlfiles"),
 	}
 	_ = os.MkdirAll(store.metadataDir, 0o755)
 	_ = os.MkdirAll(store.contentDir, 0o755)
+	_ = os.MkdirAll(store.controlDir, 0o755)
 	return store
 }
 
@@ -84,7 +87,7 @@ func (fs *DiskFileStore) partitionTimestampPath(partitionID types.PartitionID, f
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(fs.metadataDir, partitionPath, filename), nil
+	return filepath.Join(fs.controlDir, partitionPath, filename), nil
 }
 
 func (fs *DiskFileStore) writePartitionTimestamp(partitionID types.PartitionID, filename string, ts time.Time) error {
