@@ -391,7 +391,7 @@ func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []
 
 		applied++
 		if applied%100 == 0 {
-			pm.debugf("[PARTITION] Applied %d entries for partition %s", applied, HashToPartition(entry.Path))
+			pm.logf("[PARTITION] Applied %d entries for partition %s", applied, HashToPartition(entry.Path))
 		}
 	}
 
