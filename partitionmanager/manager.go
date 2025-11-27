@@ -140,6 +140,16 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) string {
 	return ""
 }
 
+func (pm *PartitionManager) recordPartitionTimestamp(partitionID types.PartitionID, filename string, ts time.Time) {
+	fs, ok := pm.deps.FileStore.(*DiskFileStore)
+	if !ok || partitionID == "" {
+		return
+	}
+	if err := fs.writePartitionTimestamp(partitionID, filename, ts); err != nil {
+		pm.debugf("[PARTITION] Failed to write %s for %s: %v", filename, partitionID, err)
+	}
+}
+
 // errorf creates a detailed error with full stack trace and human-readable dump
 func (pm *PartitionManager) errorf(received []byte, errorMessage string) error {
 	// Get full stack trace
@@ -746,6 +756,14 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 	// Publish all updates to peers in one batch
 	pm.sendUpdates(allUpdates)
+
+	if len(partitionsCount) == 0 {
+		pm.recordPartitionTimestamp(StartPartitionID, lastReindexTimestampFile, start)
+	} else {
+		for partitionID := range partitionsCount {
+			pm.recordPartitionTimestamp(partitionID, lastReindexTimestampFile, start)
+		}
+	}
 	pm.debugf("[updatePartitionMetadata] CRDT update for all partitions in %v finished scan after %v seconds", StartPartitionID, time.Since(start))
 }
 
@@ -1402,6 +1420,8 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 		return
 	}
 
+	diskStore, hasDiskStore := pm.deps.FileStore.(*DiskFileStore)
+
 	// Mark all possible partitions for reindex based on partition stores
 	for _, partitionStore := range partitionStores {
 		if ctx.Err() != nil {
@@ -1417,6 +1437,45 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 				partitionID := types.PartitionID(fmt.Sprintf("%s%03d", partitionStore, i))
 				pm.MarkForReindex(partitionID)
 			}
+			continue
+		}
+
+		partitionID := types.PartitionID(partitionStore)
+		if partitionID == "" {
+			continue
+		}
+
+		if !hasDiskStore {
+			pm.MarkForReindex(partitionID)
+			continue
+		}
+
+		lastUpdate, err := diskStore.readPartitionTimestamp(partitionID, lastUpdateTimestampFile)
+		if err != nil {
+			pm.debugf("[PARTITION] Failed to read last update timestamp for %s: %v", partitionID, err)
+			pm.MarkForReindex(partitionID)
+			continue
+		}
+
+		lastReindex, err := diskStore.readPartitionTimestamp(partitionID, lastReindexTimestampFile)
+		if err != nil {
+			pm.debugf("[PARTITION] Failed to read last reindex timestamp for %s: %v", partitionID, err)
+			pm.MarkForReindex(partitionID)
+			continue
+		}
+
+		lastSync, err := diskStore.readPartitionTimestamp(partitionID, lastSyncTimestampFile)
+		if err != nil {
+			pm.debugf("[PARTITION] Failed to read last sync timestamp for %s: %v", partitionID, err)
+			pm.MarkForReindex(partitionID)
+			continue
+		}
+
+		needsReindex := lastUpdate.IsZero() || lastReindex.IsZero() || lastUpdate.After(lastReindex)
+		needsResync := lastUpdate.IsZero() || lastSync.IsZero() || lastUpdate.After(lastSync)
+
+		if needsReindex || needsResync {
+			pm.MarkForReindex(partitionID)
 		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/donomii/clusterF/metrics"
 	"github.com/donomii/clusterF/types"
@@ -25,6 +26,12 @@ type DiskFileStore struct {
 
 	encryptionKey []byte // XOR encryption key (nil = no encryption)
 }
+
+const (
+	lastReindexTimestampFile = "last_reindex_start.txt"
+	lastSyncTimestampFile    = "last_sync_start.txt"
+	lastUpdateTimestampFile  = "last_update.txt"
+)
 
 // NewDiskFileStore creates a new disk-backed filestore rooted at baseDir.
 func NewDiskFileStore(baseDir string) *DiskFileStore {
@@ -70,6 +77,49 @@ func (fs *DiskFileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
 		return metadata, content
 	}
 	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
+}
+
+func (fs *DiskFileStore) partitionTimestampPath(partitionID types.PartitionID, filename string) (string, error) {
+	partitionPath, err := partitionDirectoryPath(partitionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(fs.metadataDir, partitionPath, filename), nil
+}
+
+func (fs *DiskFileStore) writePartitionTimestamp(partitionID types.PartitionID, filename string, ts time.Time) error {
+	path, err := fs.partitionTimestampPath(partitionID, filename)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(ts.Format(time.RFC3339Nano)+"\n"), 0o644)
+}
+
+func (fs *DiskFileStore) readPartitionTimestamp(partitionID types.PartitionID, filename string) (time.Time, error) {
+	path, err := fs.partitionTimestampPath(partitionID, filename)
+	if err != nil {
+		return time.Time{}, err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return time.Time{}, nil
+		}
+		return time.Time{}, err
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b)))
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed, nil
+}
+
+func (fs *DiskFileStore) recordPartitionUpdateTimestamp(path string, ts time.Time) error {
+	partitionID := types.PartitionIDForPath(path)
+	return fs.writePartitionTimestamp(partitionID, lastUpdateTimestampFile, ts)
 }
 
 // Get loads both metadata and content for a path.
@@ -179,6 +229,8 @@ func (fs *DiskFileStore) Put(path string, metadata, content []byte) error {
 		return err
 	}
 
+	partitionID := types.PartitionIDForPath(path)
+
 	if err := ensureParentDir(metaPath); err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
 		return err
@@ -210,6 +262,11 @@ func (fs *DiskFileStore) Put(path string, metadata, content []byte) error {
 	if !modTime.IsZero() {
 		_ = os.Chtimes(contentPath, modTime, modTime)
 	}
+	writeTime := time.Now()
+	if err := fs.writePartitionTimestamp(partitionID, lastUpdateTimestampFile, writeTime); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
+		return err
+	}
 	metrics.IncrementGlobalCounter("disk_filestore.put.success")
 	metrics.AddGlobalCounter("disk_filestore.put.metadata_bytes", int64(len(metadata)))
 	metrics.AddGlobalCounter("disk_filestore.put.content_bytes", int64(len(content)))
@@ -226,12 +283,17 @@ func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
 		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
 		return err
 	}
+	partitionID := types.PartitionIDForPath(path)
 	if err := ensureParentDir(metaPath); err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
 		return err
 	}
 	encMetadata, _ := fs.encrypt(metadata, nil)
 	if err := os.WriteFile(metaPath, encMetadata, 0o644); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
+		return err
+	}
+	if err := fs.writePartitionTimestamp(partitionID, lastUpdateTimestampFile, time.Now()); err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
 		return err
 	}
@@ -264,6 +326,7 @@ func (fs *DiskFileStore) Delete(path string) error {
 		metrics.IncrementGlobalCounter("disk_filestore.delete.errors")
 		return err
 	}
+	partitionID := types.PartitionIDForPath(path)
 
 	if removeErr := os.Remove(metaPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 		metrics.IncrementGlobalCounter("disk_filestore.delete.errors")
@@ -272,6 +335,10 @@ func (fs *DiskFileStore) Delete(path string) error {
 	if removeErr := os.Remove(contentPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 		metrics.IncrementGlobalCounter("disk_filestore.delete.errors")
 		return removeErr
+	}
+	if err := fs.writePartitionTimestamp(partitionID, lastUpdateTimestampFile, time.Now()); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.delete.errors")
+		return err
 	}
 	metrics.IncrementGlobalCounter("disk_filestore.delete.success")
 	return nil

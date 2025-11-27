@@ -171,6 +171,8 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 		return fmt.Errorf("frogpond node is not configured")
 	}
 
+	syncStart := time.Now()
+
 	// Find peer address
 	var peerAddr string
 	var peerPort int
@@ -219,6 +221,8 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	if pushErr != nil {
 		return fmt.Errorf("failed to push partition %s to %s: %w", partitionID, peerID, pushErr)
 	}
+
+	pm.recordPartitionTimestamp(partitionID, lastSyncTimestampFile, syncStart)
 
 	pm.debugf("[PARTITION] Completed bidirectional sync of %s with %s", partitionID, peerID)
 
