@@ -408,6 +408,12 @@ func (idx *Indexer) DeleteFile(path string) {
 
 // FilesForPartition returns the tracked paths for a partition in sorted order.
 func (idx *Indexer) FilesForPartition(partitionID types.PartitionID) []string {
+	// Print entire callstack here to help with debugging
+	idx.logf("[INDEXER] FilesForPartition(%s) called by %s", partitionID, idx.callerName())
+	stack := make([]byte, 4096)
+	runtime.Stack(stack, false)
+	idx.logf("[INDEXER] FilesForPartition(%s) stack: %s", partitionID, string(stack))
+
 	idx.rlock()
 	defer idx.runlock()
 
