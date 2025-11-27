@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/tchap/go-patricia/patricia"
 )
@@ -34,13 +34,10 @@ type Indexer struct {
 	backend   searchBackend
 
 	// Partition awareness
-	pathMetadata    map[string]types.FileMetadata             // active path -> metadata
-	partitionActive map[types.PartitionID]map[string]struct{} // partition -> active (non-deleted) paths
+	pathMetadata    *syncmap.SyncMap[string, types.FileMetadata]                            // active path -> metadata
+	partitionActive *syncmap.SyncMap[types.PartitionID, *syncmap.SyncMap[string, struct{}]] // partition -> active (non-deleted) paths
 
-	// Partition membership coordination
-
-	suppressUpdates atomic.Bool
-	deps            *types.App
+	deps *types.App
 }
 
 type searchBackend interface {
@@ -237,8 +234,8 @@ func NewIndexerWithType(logger *log.Logger, indexType IndexType, deps *types.App
 	idx := &Indexer{
 		indexType:       indexType,
 		logger:          logger,
-		pathMetadata:    make(map[string]types.FileMetadata),
-		partitionActive: make(map[types.PartitionID]map[string]struct{}),
+		pathMetadata:    syncmap.NewSyncMap[string, types.FileMetadata](),
+		partitionActive: syncmap.NewSyncMap[types.PartitionID, *syncmap.SyncMap[string, struct{}]](),
 		deps:            deps,
 	}
 
@@ -297,47 +294,51 @@ func (idx *Indexer) partitionForPath(path string) types.PartitionID {
 	return types.PartitionIDForPath(path)
 }
 
-func (idx *Indexer) ensureActivePartitionEntryLocked(partitionID types.PartitionID) map[string]struct{} {
-	if paths, ok := idx.partitionActive[partitionID]; ok {
+func (idx *Indexer) ensureActivePartitionEntryLocked(partitionID types.PartitionID) *syncmap.SyncMap[string, struct{}] {
+	if paths, ok := idx.partitionActive.Load(partitionID); ok {
 		return paths
 	}
-	paths := make(map[string]struct{})
-	idx.partitionActive[partitionID] = paths
+	paths := syncmap.NewSyncMap[string, struct{}]()
+	idx.partitionActive.Store(partitionID, paths)
 	return paths
 }
 
 func (idx *Indexer) recomputePartitionLatestLocked(partitionID types.PartitionID) {
-	active := idx.partitionActive[partitionID]
+	active, ok := idx.partitionActive.Load(partitionID)
+	if !ok {
+		return
+	}
 	latest := time.Time{}
-	for path := range active {
-		if meta, ok := idx.pathMetadata[path]; ok && meta.ModifiedAt.After(latest) {
+	active.Range(func(path string, _ struct{}) bool {
+		if meta, ok := idx.pathMetadata.Load(path); ok && meta.ModifiedAt.After(latest) {
 			latest = meta.ModifiedAt
 		}
-	}
+		return true
+	})
 }
 
 func (idx *Indexer) addActivePathLocked(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
 	active := idx.ensureActivePartitionEntryLocked(partitionID)
-	active[path] = struct{}{}
+	active.Store(path, struct{}{})
 
 	metaCopy := metadata
 	if metaCopy.ModifiedAt.IsZero() {
 		metaCopy.ModifiedAt = time.Now()
 	}
-	idx.pathMetadata[path] = metaCopy
+	idx.pathMetadata.Store(path, metaCopy)
 	idx.recomputePartitionLatestLocked(partitionID)
 }
 
 func (idx *Indexer) removeActivePathLocked(partitionID types.PartitionID, path string) {
-	if active, ok := idx.partitionActive[partitionID]; ok {
-		delete(active, path)
-		if len(active) == 0 {
-			delete(idx.partitionActive, partitionID)
+	if active, ok := idx.partitionActive.Load(partitionID); ok {
+		active.Delete(path)
+		if active.Len() == 0 {
+			idx.partitionActive.Delete(partitionID)
 		} else {
 			idx.recomputePartitionLatestLocked(partitionID)
 		}
 	}
-	delete(idx.pathMetadata, path)
+	idx.pathMetadata.Delete(path)
 }
 
 func (idx *Indexer) removeFromSearchLocked(partitionID types.PartitionID, path string) {
@@ -419,14 +420,15 @@ func (idx *Indexer) FilesForPartition(partitionID types.PartitionID) []string {
 
 // updatePartitionMembershipLocked pushes our holder state for the partition into the CRDT.
 func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionID) error {
-	if idx.suppressUpdates.Load() {
-		return nil
-	}
 
 	holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionID, idx.deps.Cluster.ID())
-	paths := idx.partitionActive[partitionID]
+	paths, ok := idx.partitionActive.Load(partitionID)
+	pathCount := 0
+	if ok {
+		pathCount = paths.Len()
+	}
 
-	if len(paths) == 0 {
+	if pathCount == 0 {
 		updates := idx.deps.Frogpond.DeleteDataPoint(holderKey, 30*time.Minute)
 		if len(updates) > 0 {
 			idx.deps.SendUpdatesToPeers(updates)
@@ -439,7 +441,7 @@ func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionI
 		return err
 	}
 	holder := types.HolderData{
-		File_count: len(paths),
+		File_count: pathCount,
 		Checksum:   checksum,
 	}
 
@@ -474,8 +476,6 @@ func (idx *Indexer) publishAllPartitionMembershipLocked() error {
 func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManagerLike) error {
 	idx.logger.Printf("[INDEXER] Starting import of filestore (type: %s)", idx.indexType)
 
-	idx.suppressUpdates.Store(true)
-
 	total := 0
 	active := 0
 	err := pm.ScanAllFiles(func(filePath string, metadata types.FileMetadata) error {
@@ -491,7 +491,6 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 		return nil
 	})
 
-	idx.suppressUpdates.Store(false) //FIXME make this a defer
 	var publishErr error
 	if err == nil {
 		idx.lock()
