@@ -689,7 +689,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-			pm.errorf(metadata, "corrupt metadata for partition: "+string(partitionID))
+			pm.errorf(metadata, "corrupt metadata for partition: "+string(partitionID)+" path: "+path)
 			// Parse error count as existing file
 			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 			return nil
