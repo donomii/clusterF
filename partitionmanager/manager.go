@@ -1169,7 +1169,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		pm.logf("Started PeriodicPartitionCheck\n")
+
 		select {
 		case <-ctx.Done():
 			return
@@ -1206,7 +1206,7 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 				}
 			}
 		}
-		pm.logf("Finished PeriodicPartitionCheck\n")
+
 	}
 }
 

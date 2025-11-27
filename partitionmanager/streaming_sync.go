@@ -45,10 +45,6 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 		return
 	}
 
-	fmt.Printf("Allowing sync for partition %s because NoStore is set to %v\n", partitionID, pm.deps.Cluster.NoStore())
-	pm.logf("Allowing sync for partition %s because NoStore is set to %v\n", partitionID, pm.deps.Cluster.NoStore())
-	pm.debugf("Allowing sync for partition %s because NoStore is set to %v\n", partitionID, pm.deps.Cluster.NoStore())
-
 	if pm.deps.Cluster != nil && pm.deps.Cluster.GetPartitionSyncPaused() {
 		http.Error(w, "sync paused", http.StatusServiceUnavailable)
 		return
@@ -69,7 +65,7 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 		return
 	}
 
-	pm.logf("[PARTITION SYNC] Streaming %d files for partition %s", len(paths), partitionID)
+	pm.debugf("[PARTITION SYNC] Streaming %d files for partition %s", len(paths), partitionID)
 	entriesStreamed := 0
 	for _, path := range paths {
 		select {
@@ -158,6 +154,9 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 	pm.debugf("[PARTITION] Applied %d entries from %s for partition %s (skipped %d)", applied, sourceNode, partitionID, skipped)
+	if applied > 0 {
+		pm.logf("[PARTITION] Applied %d entries from %s for partition %s (skipped %d)", applied, sourceNode, partitionID, skipped)
+	}
 }
 
 // syncPartitionWithPeer synchronizes a partition using object-by-object streaming in both directions
@@ -208,6 +207,9 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	pm.MarkForReindex(partitionID)
 
 	pm.debugf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
+	if syncCount > 0 {
+		pm.logf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
+	}
 
 	// Notify frontend that file list may have changed
 	pm.notifyFileListChanged()
@@ -391,7 +393,7 @@ func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []
 
 		applied++
 		if applied%100 == 0 {
-			pm.logf("[PARTITION] Applied %d entries for partition %s", applied, HashToPartition(entry.Path))
+			pm.debugf("[PARTITION] Applied %d entries for partition %s", applied, HashToPartition(entry.Path))
 		}
 	}
 
