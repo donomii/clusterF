@@ -705,6 +705,13 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		return nil
 	})
 
+	numPartitions := len(partitionsCount)
+	if numPartitions == 0 {
+		pm.removePartitionHolder(StartPartitionID)
+		pm.logf("[PARTITION] Removed %s as holder for %s", pm.deps.NodeID, StartPartitionID)
+		return
+	}
+
 	pm.debugf("[updatePartitionMetadata] Finished scan for partition %v after %v seconds", StartPartitionID, time.Since(start))
 
 	// Build all CRDT updates for publication
