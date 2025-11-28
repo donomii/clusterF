@@ -660,7 +660,7 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 // updatePartitionMetadata updates partition info in the CRDT
 // Scans the database and counts the files, checksums them, and then updates the CRDT
 func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPartitionID types.PartitionID) {
-	pm.logf("[PARTITION] Starting updatePartitionMetadata for partition %s", StartPartitionID)
+
 	if !pm.hasFrogpond() {
 		return
 	}
@@ -676,6 +676,8 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 	partitionsCount := make(map[types.PartitionID]int)
 	partitionsChecksums := make(map[types.PartitionID][]string)
+
+	pm.debugf("[PARTITION] Starting updatePartitionMetadata for partition %s", StartPartitionID)
 
 	// Should use FileStore to do this in a partition store aware way
 	pm.deps.FileStore.ScanMetadataPartition(ctx, StartPartitionID, func(path string, metadata []byte) error {
@@ -750,7 +752,11 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
 			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
 
-			pm.debugf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
+			pm.logf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
+		} else {
+			// Remove ourselves as a holder
+			pm.removePartitionHolder(partitionID)
+			pm.logf("[FULL_REINDEX] Removed %s as holder for %s", pm.deps.NodeID, partitionID)
 		}
 	}
 
