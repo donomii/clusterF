@@ -201,23 +201,23 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 
 	pm.debugf("[PARTITION] Starting bidirectional streaming sync of %s with %s, %v:%v", partitionID, peerID, peerAddr, peerPort)
 
-	syncCount, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peerAddr, peerPort)
+	applied, skipped, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peerAddr, peerPort)
 	if err != nil {
 		return err
 	}
 
 	pm.MarkForReindex(partitionID)
 
-	pm.debugf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
-	if syncCount > 0 {
-		pm.logf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, syncCount)
+	pm.debugf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, applied)
+	if applied > 0 {
+		pm.logf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, applied)
 	}
 
 	// Notify frontend that file list may have changed
 	pm.notifyFileListChanged()
 
 	// Push our latest view back to the peer
-	pushErr := pm.pushPartitionToPeer(ctx, partitionID, peerID, peerAddr, peerPort)
+	sentCount, pushErr := pm.pushPartitionToPeer(ctx, partitionID, peerID, peerAddr, peerPort)
 	if pushErr != nil {
 		return fmt.Errorf("failed to push partition %s to %s: %w", partitionID, peerID, pushErr)
 	}
@@ -226,27 +226,31 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 
 	pm.debugf("[PARTITION] Completed bidirectional sync of %s with %s", partitionID, peerID)
 
+	if applied+skipped+sentCount == 0 {
+		pm.removePartitionHolder(partitionID)
+		pm.logf("[PARTITION] Removed %s as holder for %s", pm.deps.NodeID, partitionID)
+	}
 	return nil
 }
 
-func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) (int, error) {
+func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) (int, int, error) {
 	if pm.deps.Cluster.NoStore() {
-		return 0, fmt.Errorf("no store")
+		return 0, 0, fmt.Errorf("no store")
 	}
 	syncURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
 	if err != nil {
-		return 0, fmt.Errorf("failed to build sync URL: %v", err)
+		return 0, 0, fmt.Errorf("failed to build sync URL: %v", err)
 	}
 	pm.debugf("[PARTITION] Downloading partition %s from %s", partitionID, syncURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, syncURL, nil)
 	if err != nil {
-		return 0, fmt.Errorf("failed to build sync request: %v", err)
+		return 0, 0, fmt.Errorf("failed to build sync request: %v", err)
 	}
 
 	resp, err := pm.httpClient().Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("failed to request partition sync: %v", err)
+		return 0, 0, fmt.Errorf("failed to request partition sync: %v", err)
 	}
 	defer func() {
 		io.Copy(io.Discard, resp.Body)
@@ -254,7 +258,7 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("peer returned error %d '%s'", resp.StatusCode, resp.Status)
+		return 0, 0, fmt.Errorf("peer returned error %d '%s'", resp.StatusCode, resp.Status)
 	}
 
 	decoder := json.NewDecoder(resp.Body)
@@ -263,15 +267,15 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 		Address:  peerAddr,
 		HTTPPort: peerPort,
 	}
-	applied, _, fetchErr, decodeErr := pm.processPartitionEntryStream(ctx, decoder, peer)
+	applied, skipped, fetchErr, decodeErr := pm.processPartitionEntryStream(ctx, decoder, peer)
 	if decodeErr != nil {
-		return applied, decodeErr
+		return applied, skipped, decodeErr
 	}
 	if fetchErr != nil {
-		return applied, fetchErr
+		return applied, skipped, fetchErr
 	}
 
-	return applied, nil
+	return applied, skipped, nil
 }
 
 func (pm *PartitionManager) fetchFileContentFromPeer(ctx context.Context, peer *types.PeerInfo, path string) ([]byte, error) {
@@ -518,13 +522,13 @@ func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, p
 	}, nil
 }
 
-func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) error {
+func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) (int, error) {
 	if pm.deps.Cluster.NoStore() {
-		return fmt.Errorf("no store")
+		return 0, fmt.Errorf("no store")
 	}
 	pushURL, err := urlutil.BuildHTTPURL(peerAddr, peerPort, "/api/partition-sync/"+string(partitionID))
 	if err != nil {
-		return fmt.Errorf("failed to build push URL: %v", err)
+		return 0, fmt.Errorf("failed to build push URL: %v", err)
 	}
 
 	pr, pw := io.Pipe()
@@ -587,7 +591,7 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 	if err != nil {
 		pw.CloseWithError(err)
 		<-errCh
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-ClusterF-Node", string(pm.deps.NodeID))
@@ -596,7 +600,7 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 	if err != nil {
 		pw.CloseWithError(err)
 		<-errCh
-		return err
+		return 0, err
 	}
 	defer func() {
 		io.Copy(io.Discard, resp.Body)
@@ -611,23 +615,23 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 			msg = resp.Status
 		}
 		if streamErr != nil {
-			return fmt.Errorf("peer %s rejected partition push (%s): %v", peerID, msg, streamErr)
+			return 0, fmt.Errorf("peer %s rejected partition push (%s): %v", peerID, msg, streamErr)
 		}
-		return fmt.Errorf("peer %s rejected partition push (%s)", peerID, msg)
+		return 0, fmt.Errorf("peer %s rejected partition push (%s)", peerID, msg)
 	}
 
 	var streamErr error
 	select {
 	case streamErr = <-errCh:
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, ctx.Err()
 	}
 	if streamErr != nil && streamErr != io.EOF {
-		return fmt.Errorf("failed to stream partition %s to %s: %w", partitionID, peerID, streamErr)
+		return 0, fmt.Errorf("failed to stream partition %s to %s: %w", partitionID, peerID, streamErr)
 	}
 
 	pm.debugf("[PARTITION] Pushed %d entries for partition %s to %s", sentCount, partitionID, peerID)
-	return nil
+	return int(sentCount), nil
 }
 
 func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peerID types.NodeID, backdate time.Duration) {
