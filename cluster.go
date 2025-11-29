@@ -249,7 +249,11 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	}
 
 	if opts.Logger == nil {
-		opts.Logger = log.New(os.Stdout, "("+id+") ", log.LstdFlags|log.Lshortfile)
+		if opts.Debug {
+			opts.Logger = log.New(os.Stdout, "("+id+") ", log.LstdFlags|log.Lshortfile)
+		} else {
+			opts.Logger = log.New(os.Stdout, id+" ", log.Ldate|log.Ltime)
+		}
 	}
 
 	if opts.DiscoveryPort == 0 {
