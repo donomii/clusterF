@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/frogpond"
 )
@@ -16,9 +17,10 @@ import (
 type testCluster struct {
 	id     types.NodeID
 	logger *log.Logger
+	pm     types.PartitionManagerLike
 }
 
-func (c *testCluster) PartitionManager() types.PartitionManagerLike { return nil }
+func (c *testCluster) PartitionManager() types.PartitionManagerLike { return c.pm }
 func (c *testCluster) DiscoveryManager() types.DiscoveryManagerLike { return nil }
 func (c *testCluster) Exporter() types.ExporterLike                 { return nil }
 func (c *testCluster) Logger() *log.Logger                          { return c.logger }
@@ -59,15 +61,20 @@ func (f *testFileStore) CalculatePartitionChecksum(context.Context, types.Partit
 func (f *testFileStore) GetAllPartitionStores() ([]types.PartitionStore, error) { return nil, nil }
 
 func newTestApp(logger *log.Logger) *types.App {
-	return &types.App{
+	app := &types.App{
 		NodeID:             "test-node",
 		NoStore:            true,
 		Logger:             logger,
 		FileStore:          &testFileStore{},
-		Cluster:            &testCluster{id: "test-node", logger: logger},
 		Frogpond:           frogpond.NewNode(),
 		SendUpdatesToPeers: func([]frogpond.DataPoint) {},
 	}
+
+	cluster := &testCluster{id: "test-node", logger: logger}
+	app.Cluster = cluster
+	cluster.pm = partitionmanager.NewPartitionManager(app)
+
+	return app
 }
 
 func newTestIndexer(logger *log.Logger, indexType IndexType) *Indexer {

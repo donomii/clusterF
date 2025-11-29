@@ -143,7 +143,6 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 		pm.logf("[PARTITION] Errors fetching entries from %s: %v", sourceNode, fetchErr)
 	}
 
-	pm.MarkForReindex(partitionID)
 	pm.notifyFileListChanged()
 
 	response := map[string]int{
@@ -206,7 +205,9 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 		return err
 	}
 
-	pm.MarkForReindex(partitionID)
+	if applied > 0 {
+		pm.MarkForReindex(partitionID)
+	}
 
 	pm.debugf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, applied)
 	if applied > 0 {
@@ -358,6 +359,8 @@ func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntr
 	if pm.deps.Indexer != nil {
 		pm.deps.Indexer.AddFile(entry.Metadata.Path, entry.Metadata)
 	}
+
+	pm.MarkForReindex(types.PartitionIDForPath(entry.Metadata.Path))
 
 	return nil
 }
