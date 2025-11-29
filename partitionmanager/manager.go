@@ -847,10 +847,10 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 
 		// Check if the node is active in nodes/ section
 		if !pm.isNodeActive(holder) {
-			pm.debugf("[PARTITION] Holder %s for partition %s not in active nodes, removing from holders list", holder, partitionID)
+			pm.debugf("[PARTITION] Holder %s for partition %s not in active nodes", holder, partitionID)
 			// Remove this holder from CRDT
-			updates := pm.deps.Frogpond.DeleteDataPoint(string(dp.Key), 30*time.Minute)
-			pm.sendUpdates(updates)
+			//updates := pm.deps.Frogpond.DeleteDataPoint(string(dp.Key), 30*time.Minute)
+			//pm.sendUpdates(updates)
 			continue
 		}
 
@@ -1441,7 +1441,7 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			return
 		}
 
-		//If we are using partition stores, mark all partitions that start with this
+		//If we are using partition stores, mark all partitions that start with this partition store ID
 		//otherwise, we are getting a list of actual partitions
 		if len(partitionStore) == 3 {
 			// Partition store is like "p12" mark all partitions that start with this
@@ -1453,42 +1453,42 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			continue
 		}
 
-		partitionID := types.PartitionID(partitionStore)
-		if partitionID == "" {
-			continue
-		}
-
-		if !hasDiskStore {
+		if hasDiskStore {
+			partitionID := types.PartitionID(partitionStore)
+			if partitionID == "" {
+				panic("wtf")
+			}
 			pm.MarkForReindex(partitionID)
-			continue
-		}
 
-		lastUpdate, err := diskStore.readPartitionTimestamp(partitionID, lastUpdateTimestampFile)
-		if err != nil {
-			pm.debugf("[PARTITION] Failed to read last update timestamp for %s: %v", partitionID, err)
-			pm.MarkForReindex(partitionID)
-			continue
-		}
+			lastUpdate, err := diskStore.readPartitionTimestamp(partitionID, lastUpdateTimestampFile)
+			if err != nil {
+				pm.debugf("[PARTITION] Failed to read last update timestamp for %s: %v", partitionID, err)
+				pm.MarkForReindex(partitionID)
+				continue
+			}
 
-		lastReindex, err := diskStore.readPartitionTimestamp(partitionID, lastReindexTimestampFile)
-		if err != nil {
-			pm.debugf("[PARTITION] Failed to read last reindex timestamp for %s: %v", partitionID, err)
-			pm.MarkForReindex(partitionID)
-			continue
-		}
+			lastReindex, err := diskStore.readPartitionTimestamp(partitionID, lastReindexTimestampFile)
+			if err != nil {
+				pm.debugf("[PARTITION] Failed to read last reindex timestamp for %s: %v", partitionID, err)
+				pm.MarkForReindex(partitionID)
+				continue
+			}
 
-		lastSync, err := diskStore.readPartitionTimestamp(partitionID, lastSyncTimestampFile)
-		if err != nil {
-			pm.debugf("[PARTITION] Failed to read last sync timestamp for %s: %v", partitionID, err)
-			pm.MarkForReindex(partitionID)
-			continue
-		}
+			lastSync, err := diskStore.readPartitionTimestamp(partitionID, lastSyncTimestampFile)
+			if err != nil {
+				pm.debugf("[PARTITION] Failed to read last sync timestamp for %s: %v", partitionID, err)
+				pm.MarkForReindex(partitionID)
+				continue
+			}
 
-		needsReindex := lastUpdate.IsZero() || lastReindex.IsZero() || lastUpdate.After(lastReindex)
-		needsResync := lastUpdate.IsZero() || lastSync.IsZero() || lastUpdate.After(lastSync)
+			needsReindex := lastReindex.IsZero() || lastUpdate.After(lastReindex)
+			needsResync := lastSync.IsZero() || lastUpdate.After(lastSync)
 
-		if needsReindex || needsResync {
-			pm.MarkForReindex(partitionID)
+			if needsReindex || needsResync {
+				pm.MarkForReindex(partitionID)
+			}
+		} else {
+			panic("partition stores not active, and no disk store")
 		}
 	}
 }
