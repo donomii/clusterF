@@ -587,8 +587,6 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadat
 		return types.FileMetadata{}, fmt.Errorf("no registered holders available for partition %s", partitionID)
 	}
 
-	//pm.debugf("[PARTITION] Fetching metadata %s from partition %s holders: %v", path, partitionID, partition.Holders)
-
 	for _, peer := range orderedPeers {
 		metadata, err := pm.fetchMetadataFromPeer(peer, path)
 		if err != nil {
@@ -1363,8 +1361,8 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 				} else {
 					// Remove the holder from the crdt for this partition
 					// maybe not a good idea?
-					pm.logf("[PARTITION] Removing node %s from partition %s", holderID, partitionID)
-					pm.RemoveNodeFromPartitionWithTimestamp(holderID, string(partitionID), time.Now().Add(-30*time.Minute))
+					pm.logf("[PARTITION] Should remove node %s from partition %s because no available peers", holderID, partitionID)
+					//pm.RemoveNodeFromPartitionWithTimestamp(holderID, string(partitionID), time.Now().Add(-30*time.Minute))
 				}
 			}
 		}
@@ -1512,19 +1510,6 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 
 	for _, info := range allPartitions {
 
-		// Check that all holders are active nodes
-
-		//FIXME
-		/*
-			for _, holder := range info.Holders {
-				if !pm.isNodeActive(holder) {
-					// Remove inactive holder from CRDT
-					pm.debugf("[PARTITION] Removing inactive holder %s from partition %s", holder, info.ID)
-					updates := pm.deps.Frogpond.DeleteDataPoint(fmt.Sprintf("partitions/%s/holders/%s", info.ID, holder), 30*time.Minute)
-					pm.sendUpdates(updates)
-				}
-			}
-		*/
 		if len(info.Holders) < currentRF {
 			underReplicated++
 			// Check if we need to sync this partition (we don't have it but should)
