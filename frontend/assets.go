@@ -36,6 +36,12 @@ var embeddedMetrics []byte
 //go:embed metrics.js
 var embeddedMetricsJS []byte
 
+//go:embed under-replicated.html
+var embeddedUnderReplicated []byte
+
+//go:embed under-replicated.js
+var embeddedUnderReplicatedJS []byte
+
 var embeddedAssets = map[string][]byte{
 	"file-browser.html":       embeddedFileBrowser,
 	"cluster-visualizer.html": embeddedClusterVisualizer,
@@ -46,6 +52,8 @@ var embeddedAssets = map[string][]byte{
 	"monitor.js":              embeddedMonitorJS,
 	"metrics.html":            embeddedMetrics,
 	"metrics.js":              embeddedMetricsJS,
+	"under-replicated.html":   embeddedUnderReplicated,
+	"under-replicated.js":     embeddedUnderReplicatedJS,
 }
 
 func loadAsset(name string) ([]byte, error) {

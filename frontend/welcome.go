@@ -69,6 +69,12 @@ func (f *Frontend) HandleWelcome(w http.ResponseWriter, r *http.Request) {
                 <a href="/monitor">Open Monitor Dashboard</a>
             </div>
 
+            <div class="endpoint-card" onclick="window.location='/under-replicated'">
+                <h3>🧭 Under-Replicated</h3>
+                <p>Partition health and missing copies</p>
+                <a href="/under-replicated">Open Under-Replicated Report</a>
+            </div>
+
             <div class="endpoint-card" onclick="window.location='/metrics'">
                 <h3>📈 Metrics</h3>
                 <p>Live counters & timers</p>

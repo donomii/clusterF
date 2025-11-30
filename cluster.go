@@ -761,7 +761,7 @@ func (c *Cluster) DataClient() *http.Client {
 func (c *Cluster) Start() {
 	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
 
-	c.initialPartitionMetadataUpdate(c.AppContext())
+	c.threadManager.StartThreadOnce("update-partition-metadata", func(ctx context.Context) { c.initialPartitionMetadataUpdate(c.AppContext()) })
 	// Start all threads using ThreadManager
 	c.threadManager.StartThreadOnce("indexer-import", c.runIndexerImport)
 	c.threadManager.StartThread("filesync", c.runFilesync)
@@ -1075,6 +1075,8 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/monitor.js", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleMonitorJS))
 	mux.HandleFunc("/metrics", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleMetricsPage))
 	mux.HandleFunc("/metrics.js", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleMetricsJS))
+	mux.HandleFunc("/under-replicated", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleUnderReplicatedPage))
+	mux.HandleFunc("/under-replicated.js", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleUnderReplicatedJS))
 	mux.HandleFunc("/api/cluster-stats", corsMiddleware(c.Debug, c.Logger(), c, c.handleClusterStats))
 	mux.HandleFunc("/api/metrics", corsMiddleware(c.Debug, c.Logger(), c, c.handleMetricsAPI))
 	mux.HandleFunc("/cluster-visualizer.html", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleVisualizer))
@@ -1097,6 +1099,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/api/partition-stats", corsMiddleware(c.Debug, c.Logger(), c, c.handlePartitionStats))
 	// Integrity check endpoint
 	mux.HandleFunc("/api/integrity-check", corsMiddleware(c.Debug, c.Logger(), c, c.handleIntegrityCheck))
+	mux.HandleFunc("/api/under-replicated", corsMiddleware(c.Debug, c.Logger(), c, c.handleUnderReplicatedReport))
 	// Search API
 	mux.HandleFunc("/api/search", corsMiddleware(c.Debug, c.Logger(), c, c.handleSearchAPI))
 	// Transcode API
@@ -1295,6 +1298,35 @@ func (c *Cluster) handlePartitionStats(w http.ResponseWriter, r *http.Request) {
 	stats := c.partitionManager.GetPartitionStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+// handleUnderReplicatedReport returns a report of under-replicated partitions
+// and the files they contain (when available locally).
+func (c *Cluster) handleUnderReplicatedReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if c.partitionManager == nil {
+		http.Error(w, "partition manager unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	partitions, err := c.partitionManager.ListUnderReplicatedFiles(r.Context())
+	if err != nil {
+		c.Logger().Printf("[UNDER-REP] Failed to build report: %v", err)
+		http.Error(w, "failed to build under-replicated report", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"replication_factor": c.getCurrentRF(),
+		"partitions":         partitions,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleIntegrityCheck performs file integrity verification

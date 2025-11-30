@@ -251,6 +251,31 @@ type PartitionStatistics struct {
 	Partition_count_limit int `json:"partition_count_limit"`
 }
 
+// UnderReplicatedFile represents a single file that lives in a partition with
+// fewer holders than the replication factor.
+type UnderReplicatedFile struct {
+	PartitionID     PartitionID `json:"partition_id"`
+	Path            string      `json:"path"`
+	Size            int64       `json:"size"`
+	ModifiedAt      time.Time   `json:"modified_at"`
+	Holders         []NodeID    `json:"holders"`
+	MissingReplicas int         `json:"missing_replicas"`
+}
+
+// UnderReplicatedPartition groups the files that are currently under-replicated
+// for a given partition.
+type UnderReplicatedPartition struct {
+	PartitionID        PartitionID           `json:"partition_id"`
+	Holders            []NodeID              `json:"holders"`
+	ReplicationFactor  int                   `json:"replication_factor"`
+	MissingReplicas    int                   `json:"missing_replicas"`
+	FileCount          int                   `json:"file_count"`
+	Files              []UnderReplicatedFile `json:"files,omitempty"`
+	FilesUnavailable   bool                  `json:"files_unavailable,omitempty"`
+	UnavailableMessage string                `json:"unavailable_message,omitempty"`
+	PartitionCRDT      *PartitionInfo        `json:"partition_crdt,omitempty"`
+}
+
 // Sent to the browser for display
 type NodeStatus struct {
 	Node_id            string              `json:"node_id"`

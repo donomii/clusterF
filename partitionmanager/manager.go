@@ -1458,7 +1458,6 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			if partitionID == "" {
 				panic("wtf")
 			}
-			pm.MarkForReindex(partitionID)
 
 			lastUpdate, err := diskStore.readPartitionTimestamp(partitionID, lastUpdateTimestampFile)
 			if err != nil {
@@ -1481,10 +1480,11 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 				continue
 			}
 
-			needsReindex := lastReindex.IsZero() || lastUpdate.After(lastReindex)
+			needsReindex := lastReindex.IsZero() || lastUpdate.After(lastReindex) || lastSync.After(lastReindex)
 			needsResync := lastSync.IsZero() || lastUpdate.After(lastSync)
 
 			if needsReindex || needsResync {
+				pm.logf("Marked partition %s for reindex", partitionID)
 				pm.MarkForReindex(partitionID)
 			}
 		} else {
@@ -1550,4 +1550,103 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 		Total_files:           totalFiles,
 		Partition_count_limit: types.DefaultPartitionCount,
 	}
+}
+
+// ListUnderReplicatedFiles returns a per-partition view of all files that are
+// currently below the replication factor.
+func (pm *PartitionManager) ListUnderReplicatedFiles(ctx context.Context) ([]types.UnderReplicatedPartition, error) {
+	allPartitions := pm.getAllPartitions()
+	if len(allPartitions) == 0 {
+		return nil, nil
+	}
+
+	rf := pm.replicationFactor()
+	var result []types.UnderReplicatedPartition
+
+	for _, info := range allPartitions {
+		missing := rf - len(info.Holders)
+		if missing <= 0 {
+			continue
+		}
+		if missing < 0 {
+			missing = 0
+		}
+
+		holders := append([]types.NodeID(nil), info.Holders...)
+		partition := types.UnderReplicatedPartition{
+			PartitionID:       info.ID,
+			Holders:           holders,
+			ReplicationFactor: rf,
+			MissingReplicas:   missing,
+			FileCount:         info.FileCount,
+			PartitionCRDT:     info,
+		}
+
+		if pm.deps.NoStore {
+			partition.FilesUnavailable = true
+			partition.UnavailableMessage = "node is running with no-store enabled"
+			result = append(result, partition)
+			continue
+		}
+
+		if !isIn(pm.deps.NodeID, holders) {
+			partition.FilesUnavailable = true
+			partition.UnavailableMessage = "partition is not stored locally on this node"
+			result = append(result, partition)
+			continue
+		}
+
+		if pm.deps.FileStore == nil {
+			partition.FilesUnavailable = true
+			partition.UnavailableMessage = "file store unavailable"
+			result = append(result, partition)
+			continue
+		}
+
+		var files []types.UnderReplicatedFile
+		err := pm.deps.FileStore.ScanMetadataPartition(ctx, info.ID, func(path string, metadata []byte) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			var meta types.FileMetadata
+			if err := json.Unmarshal(metadata, &meta); err != nil {
+				pm.debugf("[UNDER-REP] Failed to unmarshal metadata for %s: %v", path, err)
+				return nil
+			}
+			if meta.Deleted {
+				return nil
+			}
+
+			files = append(files, types.UnderReplicatedFile{
+				PartitionID:     info.ID,
+				Path:            path,
+				Size:            meta.Size,
+				ModifiedAt:      meta.ModifiedAt,
+				Holders:         holders,
+				MissingReplicas: missing,
+			})
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		sort.Slice(files, func(i, j int) bool {
+			return files[i].Path < files[j].Path
+		})
+
+		partition.Files = files
+		if len(files) > partition.FileCount {
+			partition.FileCount = len(files)
+		}
+
+		result = append(result, partition)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].PartitionID < result[j].PartitionID
+	})
+
+	return result, nil
 }

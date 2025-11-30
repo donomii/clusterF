@@ -68,6 +68,11 @@ func (f *Frontend) HandleAPIDocs(w http.ResponseWriter, r *http.Request) {
                     <div>Partition replication statistics.</div>
                     <div><a href="/api/partition-stats" >Open</a></div>
                 </div>
+                <div class="card">
+                    <div class="ep"><span class="verb GET">GET</span> <span class="code">/api/under-replicated</span></div>
+                    <div>Under-replicated partitions and files (local view).</div>
+                    <div><a href="/api/under-replicated" >Open</a></div>
+                </div>
             </div>
         </div>
 
