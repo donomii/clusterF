@@ -1288,29 +1288,12 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 		return "", nil
 	}
 
-	flagged := pm.SyncList.Keys()
-	if len(flagged) == 0 {
+	partitionKeys := pm.SyncList.Keys()
+	if len(partitionKeys) == 0 {
 		return "", nil
 	}
 
-	allPartitions := pm.getAllPartitions()
-	currentRF := pm.replicationFactor()
-
-	pm.debugf("[PARTITION] Checking %d flagged partitions for sync (RF=%d)", len(flagged), currentRF)
-
-	// Get available peers once check BOTH discovery AND CRDT nodes
-	availablePeerIDs := pm.deps.Discovery.GetPeerMap()
-	pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs.Keys())
-	//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
-
-	partitionKeys := make([]types.PartitionID, 0, len(flagged))
-	for _, partitionID := range flagged {
-		partitionKeys = append(partitionKeys, partitionID)
-	}
-	//Randomize the order to avoid always picking the same partition first
-	rand.Shuffle(len(partitionKeys), func(i, j int) {
-		partitionKeys[i], partitionKeys[j] = partitionKeys[j], partitionKeys[i]
-	})
+	pm.debugf("[PARTITION] Checking %d flagged partitions for sync (RF=%d)", len(partitionKeys), pm.replicationFactor())
 
 	ourNodeId := pm.deps.NodeID
 
@@ -1320,8 +1303,13 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 			return "", []types.NodeID{}
 		}
 
-		info := allPartitions[partitionID]
-		if len(info.Holders) >= currentRF {
+		// Get available peers once check BOTH discovery AND CRDT nodes
+		availablePeerIDs := pm.deps.Discovery.GetPeerMap()
+		pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs.Keys())
+		//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
+
+		info := pm.GetPartitionInfo(partitionID)
+		if len(info.Holders) >= pm.replicationFactor() {
 			hasPartition := false
 			ourHolderData, ok := info.HolderData[ourNodeId]
 
