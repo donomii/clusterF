@@ -666,7 +666,7 @@ func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs
 	} else {
 		if upToDate {
 			e.logger.Printf("[IMPORT] Skipping synchronised file %s", clusterPath)
-			return err
+			return nil
 		} else {
 			e.logger.Printf(`[IMPORT] Updating existing file "%s" in cluster: %+v, local size: %v, local time %v`, clusterPath, metadata, st.Size(), st.ModTime())
 

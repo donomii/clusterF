@@ -766,7 +766,7 @@ func (c *Cluster) Start() {
 	c.threadManager.StartThreadOnce("indexer-import", c.runIndexerImport)
 	c.threadManager.StartThread("filesync", c.runFilesync)
 	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
-	c.threadManager.StartThread("partition-check", c.partitionManager.PeriodicPartitionCheck)
+	c.threadManager.StartThread("partition-check", c.partitionManager.PeriodicSyncCheck)
 	c.threadManager.StartThread("node-pruning", c.periodicNodePruning)
 	c.threadManager.StartThread("discovery-manager", c.runDiscoveryManager)
 	c.threadManager.StartThread("peer-fullstore-sync", c.runPeerFullStoreSync)

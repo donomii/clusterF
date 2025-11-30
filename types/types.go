@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -88,11 +89,12 @@ type FileStoreLike interface {
 }
 
 type PartitionInfo struct {
-	ID         PartitionID           `json:"id"`
-	FileCount  int                   `json:"file_count"`
-	Holders    []NodeID              `json:"holders"`
-	Checksums  map[NodeID]string     `json:"checksums"`
-	HolderData map[NodeID]HolderData `json:"holder_data"`
+	ID         PartitionID                `json:"id"`
+	FileCount  int                        `json:"file_count"`
+	Holders    []NodeID                   `json:"holders"`
+	Checksums  map[NodeID]string          `json:"checksums"`
+	HolderData map[NodeID]HolderData      `json:"holder_data"`
+	Metadata   map[string]json.RawMessage `json:"metadata,omitempty"`
 }
 
 // Handles discovering peers on the network

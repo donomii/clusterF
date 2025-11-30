@@ -209,6 +209,33 @@ function renderPartitionCRDT(crdt) {
     }
     holderTable.appendChild(body);
 
+    if (crdt.metadata && Object.keys(crdt.metadata).length > 0) {
+        const metaTitle = document.createElement("div");
+        metaTitle.className = "crdt-title";
+        metaTitle.textContent = "Metadata";
+        wrapper.appendChild(metaTitle);
+
+        const metaTable = document.createElement("table");
+        metaTable.className = "holder-table";
+        const metaHead = document.createElement("thead");
+        metaHead.innerHTML = `<tr><th>Key</th><th>Value</th></tr>`;
+        metaTable.appendChild(metaHead);
+        const metaBody = document.createElement("tbody");
+        Object.keys(crdt.metadata).sort().forEach((key) => {
+            const row = document.createElement("tr");
+            let valText;
+            try {
+                valText = JSON.stringify(JSON.parse(crdt.metadata[key]), null, 0);
+            } catch (_) {
+                valText = String(crdt.metadata[key]);
+            }
+            row.innerHTML = `<td>${key}</td><td>${valText}</td>`;
+            metaBody.appendChild(row);
+        });
+        metaTable.appendChild(metaBody);
+        wrapper.appendChild(metaTable);
+    }
+
     const raw = document.createElement("pre");
     raw.className = "crdt-json";
     raw.textContent = JSON.stringify(crdt, null, 2);

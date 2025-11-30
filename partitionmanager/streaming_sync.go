@@ -192,6 +192,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	if peerAddr == "" {
 		// Remove the requested peer as a holder for this partition.  Backdate the entry by 1 hr
 		pm.removePeerHolder(partitionID, peerID, 1*time.Hour)
+		pm.logf("[PARTITION] Removed %s as holder for %s because not peer not found", peerID, partitionID)
 
 		availablePeers := make([]string, 0, len(peers))
 		for _, peer := range peers {
@@ -361,6 +362,7 @@ func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntr
 	}
 
 	pm.MarkForReindex(types.PartitionIDForPath(entry.Metadata.Path), fmt.Sprintf("synced entry %s", entry.Metadata.Path))
+	pm.MarkForSync(types.PartitionIDForPath(entry.Metadata.Path), fmt.Sprintf("synced entry %s", entry.Metadata.Path))
 
 	return nil
 }

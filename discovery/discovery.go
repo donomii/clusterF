@@ -64,7 +64,7 @@ func NewDiscoveryManager(nodeID string, httpPort int, discoveryPort int, tm *thr
 		logger:            logger,
 		peers:             syncmap.NewSyncMap[string, *types.PeerInfo](),
 		broadcastInterval: 5 * time.Second,
-		peerTimeout:       60 * time.Second, // The peer timeout must be larger than the peer rebroadcast
+		peerTimeout:       300 * time.Second, // The peer timeout must be larger than the peer rebroadcast
 		threadManager:     tm,
 		debug:             false,
 	}

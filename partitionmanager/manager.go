@@ -30,12 +30,17 @@ const (
 type PartitionManager struct {
 	deps        *types.App
 	ReindexList *syncmap.SyncMap[types.PartitionID, bool]
+	SyncList    *syncmap.SyncMap[types.PartitionID, bool]
 }
 
 type PartitionVersion int64
 
 func NewPartitionManager(deps *types.App) *PartitionManager {
-	return &PartitionManager{deps: deps, ReindexList: syncmap.NewSyncMap[types.PartitionID, bool]()}
+	return &PartitionManager{
+		deps:        deps,
+		ReindexList: syncmap.NewSyncMap[types.PartitionID, bool](),
+		SyncList:    syncmap.NewSyncMap[types.PartitionID, bool](),
+	}
 }
 
 func (pm *PartitionManager) recordEssentialDiskActivity() {
@@ -47,6 +52,12 @@ func (pm *PartitionManager) recordEssentialDiskActivity() {
 func (pm *PartitionManager) MarkForReindex(pId types.PartitionID, reason string) {
 	pm.ReindexList.Store(pId, true)
 	pm.logf("[MarkForReindex] Marked partition %v for reindex, because %s", pId, reason)
+}
+
+// MarkForSync flags a partition to be synced on the next PeriodicPartitionCheck cycle.
+func (pm *PartitionManager) MarkForSync(pId types.PartitionID, reason string) {
+	pm.SyncList.Store(pId, true)
+	pm.logf("[MarkForSync] Marked partition %v for sync, because %s", pId, reason)
 }
 
 func (pm *PartitionManager) RunReindex(ctx context.Context) {
@@ -270,6 +281,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 
 	// Update partition metadata in CRDT
 	pm.MarkForReindex(partitionID, fmt.Sprintf("stored file %s", path))
+	pm.MarkForSync(partitionID, fmt.Sprintf("stored file %s", path))
 
 	// Debug: verify what we just stored
 	if metadata_bytes, _, exists, err := pm.deps.FileStore.Get(path); err == nil && exists {
@@ -649,6 +661,7 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 
 	// Mark the partition for re-scan
 	pm.MarkForReindex(partitionID, fmt.Sprintf("deleted file %s", path))
+	pm.MarkForSync(partitionID, fmt.Sprintf("deleted file %s", path))
 
 	pm.logf("[PARTITION] Marked file %s as deleted in partition %s", path, partitionID)
 	return nil
@@ -825,9 +838,7 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 
 	// Get all holder entries for this partition
 	holderPrefix := fmt.Sprintf("%s/holders/", partitionKey)
-	//pm.debugf("Searching crdt for '%v'", holderPrefix)
 	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix(holderPrefix)
-	//pm.debugf("Found %v matches", len(dataPoints))
 
 	var holders []types.NodeID
 	var totalFiles int
@@ -846,9 +857,6 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 		// Check if the node is active in nodes/ section
 		if !pm.isNodeActive(holder) {
 			pm.debugf("[PARTITION] Holder %s for partition %s not in active nodes", holder, partitionID)
-			// Remove this holder from CRDT
-			//updates := pm.deps.Frogpond.DeleteDataPoint(string(dp.Key), 30*time.Minute)
-			//pm.sendUpdates(updates)
 			continue
 		}
 
@@ -867,11 +875,23 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 		}
 
 		checksums[holder] = holderData.Checksum
-
+		holderMap[holder] = holderData
 	}
 
 	if len(holders) == 0 {
 		return nil
+	}
+
+	// Collect partition metadata entries
+	metaPrefix := fmt.Sprintf("%s/metadata/", partitionKey)
+	metaPoints := pm.deps.Frogpond.GetAllMatchingPrefix(metaPrefix)
+	metadata := make(map[string]json.RawMessage)
+	for _, dp := range metaPoints {
+		if dp.Deleted || len(dp.Value) == 0 {
+			continue
+		}
+		key := strings.TrimPrefix(string(dp.Key), metaPrefix)
+		metadata[key] = json.RawMessage(dp.Value)
 	}
 
 	return &types.PartitionInfo{
@@ -880,6 +900,7 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 		Holders:    holders,
 		Checksums:  checksums,
 		HolderData: holderMap,
+		Metadata:   metadata,
 	}
 }
 
@@ -889,9 +910,13 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.Part
 		return map[types.PartitionID]*types.PartitionInfo{}
 	}
 
-	// Get all partition holder entries
+	// Get all partition holder/metadata entries
 	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("partitions/")
-	partitionMap := make(map[types.PartitionID]map[types.NodeID]types.HolderData) // partitionID -> nodeID -> data
+	type crdtData struct {
+		holders  map[types.NodeID]types.HolderData
+		metadata map[string]json.RawMessage
+	}
+	partitionMap := make(map[types.PartitionID]*crdtData) // partitionID -> data
 
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
@@ -900,35 +925,47 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.Part
 
 		// Parse key: partitions/p12345/holders/node-name
 		parts := strings.Split(string(dp.Key), "/")
-		if len(parts) < 4 || parts[0] != "partitions" || parts[2] != "holders" {
+		if len(parts) < 3 || parts[0] != "partitions" {
 			continue
 		}
 
 		partitionID := types.PartitionID(parts[1])
-		nodeId := types.NodeID(parts[3])
-		var data types.HolderData
-		err := json.Unmarshal(dp.Value, &data)
-		if err != nil {
-			fmt.Printf("Error: cannot unmarshal holder data: %v", err)
+		if _, ok := partitionMap[partitionID]; !ok {
+			partitionMap[partitionID] = &crdtData{
+				holders:  make(map[types.NodeID]types.HolderData),
+				metadata: make(map[string]json.RawMessage),
+			}
 		}
 
-		_, ok := partitionMap[partitionID]
-		if !ok {
-			partitionMap[partitionID] = make(map[types.NodeID]types.HolderData)
+		switch parts[2] {
+		case "holders":
+			if len(parts) < 4 {
+				continue
+			}
+			nodeId := types.NodeID(parts[3])
+			var data types.HolderData
+			err := json.Unmarshal(dp.Value, &data)
+			if err != nil {
+				fmt.Printf("Error: cannot unmarshal holder data: %v", err)
+			}
+			partitionMap[partitionID].holders[nodeId] = data
+		case "metadata":
+			if len(parts) < 4 {
+				continue
+			}
+			partitionMap[partitionID].metadata[parts[3]] = json.RawMessage(dp.Value)
 		}
-
-		partitionMap[partitionID][nodeId] = data
 	}
 
 	// Convert to PartitionInfo objects
 
 	result := make(map[types.PartitionID]*types.PartitionInfo)
-	for partitionID, nodeData := range partitionMap {
+	for partitionID, crdt := range partitionMap {
 		var holders []types.NodeID
 		var totalFiles int
 		checksums := make(map[types.NodeID]string)
 
-		for nodeID, data := range nodeData {
+		for nodeID, data := range crdt.holders {
 			holders = append(holders, types.NodeID(nodeID))
 
 			if data.File_count > totalFiles {
@@ -944,7 +981,8 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.Part
 			FileCount:  totalFiles,
 			Holders:    holders,
 			Checksums:  checksums,
-			HolderData: nodeData,
+			HolderData: crdt.holders,
+			Metadata:   crdt.metadata,
 		}
 	}
 
@@ -1174,6 +1212,7 @@ func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID typ
 		if nodeData == nil {
 			//If we can't, then remove the peer as a holder, from the crdt
 			pm.removePeerHolder(partitionID, holderID, 30*time.Minute)
+			pm.logf("[PARTITION] Removed %s as holder for %s because not found in CRDT", holderID, partitionID)
 		}
 		err := pm.syncPartitionWithPeer(ctx, partitionID, holderID)
 		if err != nil {
@@ -1183,7 +1222,7 @@ func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID typ
 }
 
 // periodicPartitionCheck continuously syncs partitions one at a time
-func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
+func (pm *PartitionManager) PeriodicSyncCheck(ctx context.Context) {
 	// Skip partition syncing if in no-store mode (client mode)
 	if pm.deps.NoStore {
 		pm.debugf("[PARTITION] No-store mode: skipping partition sync")
@@ -1217,12 +1256,13 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 				}
 			}
 			pm.debugf("starting partition sync check...\n")
-			// Find next partition that needs syncing
-			if partitionID, holders := pm.findNextPartitionToSyncWithHolders(ctx); partitionID != "" {
+			// Find next partition that needs syncing based on flagged list
+			if partitionID, holders := pm.findFlaggedPartitionToSyncWithHolders(ctx); partitionID != "" {
 
 				throttle <- struct{}{}
 				pm.debugf("Partition syncs in progress: %v", len(throttle))
 				// Throttle concurrent syncs
+				pm.SyncList.Store(partitionID, false) // clear flag before syncing
 				go pm.doPartitionSync(ctx, partitionID, throttle, holders)
 
 			} else {
@@ -1240,26 +1280,31 @@ func (pm *PartitionManager) PeriodicPartitionCheck(ctx context.Context) {
 	}
 }
 
-// findNextPartitionToSyncWithHolders finds a single partition that needs syncing and returns all available holders
-func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Context) (types.PartitionID, []types.NodeID) {
+// findFlaggedPartitionToSyncWithHolders picks a flagged partition to sync and returns its holders.
+func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Context) (types.PartitionID, []types.NodeID) {
 	// If in no-store mode, don't sync any partitions
 	if pm.deps.NoStore {
 		//FIXME panic here maybe
 		return "", nil
 	}
 
+	flagged := pm.SyncList.Keys()
+	if len(flagged) == 0 {
+		return "", nil
+	}
+
 	allPartitions := pm.getAllPartitions()
 	currentRF := pm.replicationFactor()
 
-	pm.debugf("[PARTITION] Checking %d partitions for sync (RF=%d)", len(allPartitions), currentRF)
+	pm.debugf("[PARTITION] Checking %d flagged partitions for sync (RF=%d)", len(flagged), currentRF)
 
 	// Get available peers once check BOTH discovery AND CRDT nodes
 	availablePeerIDs := pm.deps.Discovery.GetPeerMap()
 	pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs.Keys())
 	//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
-	partitionKeys := make([]types.PartitionID, 0, len(allPartitions))
-	for partitionID := range allPartitions {
+	partitionKeys := make([]types.PartitionID, 0, len(flagged))
+	for _, partitionID := range flagged {
 		partitionKeys = append(partitionKeys, partitionID)
 	}
 	//Randomize the order to avoid always picking the same partition first
@@ -1274,6 +1319,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 		if ctx.Err() != nil {
 			return "", []types.NodeID{}
 		}
+
 		info := allPartitions[partitionID]
 		if len(info.Holders) >= currentRF {
 			hasPartition := false
@@ -1301,6 +1347,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 					for _, holderID := range info.Holders {
 						_, exists := availablePeerIDs.Load(string(holderID))
 						if holderID != pm.deps.NodeID && exists {
+
 							availableHolders = append(availableHolders, holderID)
 						}
 					}
@@ -1309,6 +1356,7 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 					} else {
 						// Pick a random peer from the available peers
 						if len(availablePeerIDs.Keys()) > 0 {
+							//FIXME check for nostore here
 							peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
 							pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
 							return partitionID, []types.NodeID{types.NodeID(peerID)}
@@ -1320,28 +1368,8 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 
 			continue // Already properly replicated and in sync
 		}
-		//pm.debugf("[PARTITION] Partition %s has %d holders (need %d): %v", partitionID, len(info.Holders), currentRF, info.Holders)
 
-		/*
-				// Check if we already have this partition by scanning metadata store
-				hasPartition := false
-				prefix := fmt.Sprintf("partition:%s:", partitionID)
-				pm.deps.FileStore.ScanMetadata(prefix, func(key string, meta []byte) error {
-					if strings.HasPrefix(string(key), prefix) {
-						hasPartition = true
-						return fmt.Errorf("stop") // Break the loop
-					}
-					return nil
-				})
-
-
-			//pm.debugf("[PARTITION] Partition %s: hasPartition=%v (checked prefix %s)", partitionID, hasPartition, prefix)
-			if hasPartition {
-				continue // We already have it
-			}
-		*/
-
-		// Check if we already have this parition by looking in the CRDT
+		// Check if we already have this partition by looking in the CRDT
 
 		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 		holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
@@ -1371,6 +1399,8 @@ func (pm *PartitionManager) findNextPartitionToSyncWithHolders(ctx context.Conte
 			pm.debugf("[PARTITION] No available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
 			// Pick a random peer from the available peers
 			if len(availablePeerIDs.Keys()) > 0 {
+
+				//Check for nostore here
 				peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
 				pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
 				return partitionID, []types.NodeID{types.NodeID(peerID)}
@@ -1460,8 +1490,6 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			lastUpdate, err := diskStore.readPartitionTimestamp(partitionID, lastUpdateTimestampFile)
 			if err != nil {
 				pm.debugf("[PARTITION] Failed to read last update timestamp for %s: %v", partitionID, err)
-				pm.MarkForReindex(partitionID, "missing last update timestamp")
-				continue
 			}
 
 			lastReindex, err := diskStore.readPartitionTimestamp(partitionID, lastReindexTimestampFile)
@@ -1474,15 +1502,18 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			lastSync, err := diskStore.readPartitionTimestamp(partitionID, lastSyncTimestampFile)
 			if err != nil {
 				pm.debugf("[PARTITION] Failed to read last sync timestamp for %s: %v", partitionID, err)
-				pm.MarkForReindex(partitionID, "missing last sync timestamp")
+				pm.MarkForSync(partitionID, "missing last sync timestamp")
 				continue
 			}
 
-			needsReindex := lastReindex.IsZero() || lastUpdate.After(lastReindex) || lastSync.After(lastReindex)
-			needsResync := lastSync.IsZero() || lastUpdate.After(lastSync)
+			needsReindex := lastReindex.IsZero() || lastUpdate.After(lastReindex)
+			needsResync := lastSync.IsZero() || lastUpdate.After(lastSync) || lastReindex.After(lastSync)
 
-			if needsReindex || needsResync {
+			if needsReindex {
 				pm.MarkForReindex(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
+			}
+			if needsResync {
+				pm.MarkForSync(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
 			}
 		} else {
 			panic("partition stores not active, and no disk store")
