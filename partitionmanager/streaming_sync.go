@@ -231,7 +231,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 
 	if applied+skipped+sentCount == 0 {
 		pm.removePartitionHolder(partitionID)
-		pm.logf("[PARTITION] Removed %s as holder for %s", pm.deps.NodeID, partitionID)
+		pm.logf("[PARTITION] Removed %s as holder for %s because no files found during sync", pm.deps.NodeID, partitionID)
 	}
 	return nil
 }

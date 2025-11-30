@@ -46,7 +46,7 @@ func (pm *PartitionManager) recordEssentialDiskActivity() {
 
 func (pm *PartitionManager) MarkForReindex(pId types.PartitionID, reason string) {
 	pm.ReindexList.Store(pId, true)
-	pm.debugf("[MarkForReindex] Marked partition %v for reindex, because %s", pId, reason)
+	pm.logf("[MarkForReindex] Marked partition %v for reindex, because %s", pId, reason)
 }
 
 func (pm *PartitionManager) RunReindex(ctx context.Context) {
@@ -707,7 +707,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	numPartitions := len(partitionsCount)
 	if numPartitions == 0 {
 		pm.removePartitionHolder(StartPartitionID)
-		pm.logf("[PARTITION] Removed %s as holder for %s", pm.deps.NodeID, StartPartitionID)
+		pm.logf("[PARTITION] Removed %s as holder for %s because no files on disk", pm.deps.NodeID, StartPartitionID)
 		return
 	}
 
@@ -724,6 +724,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 		// If we have no files for this partition, remove ourselves as a holder
 		if count == 0 {
 			pm.removePartitionHolder(partitionID)
+			pm.logf("[PARTITION] Removed %s as holder for %s because no files on disk", pm.deps.NodeID, partitionID)
 			continue
 		}
 
