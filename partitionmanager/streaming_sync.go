@@ -220,7 +220,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	pm.notifyFileListChanged()
 
 	// Push our latest view back to the peer
-	sentCount, pushErr := pm.pushPartitionToPeer(ctx, partitionID, peerID, peerAddr, peerPort)
+	_, pushErr := pm.pushPartitionToPeer(ctx, partitionID, peerID, peerAddr, peerPort)
 	if pushErr != nil {
 		return fmt.Errorf("failed to push partition %s to %s: %w", partitionID, peerID, pushErr)
 	}
@@ -229,10 +229,6 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 
 	pm.debugf("[PARTITION] Completed bidirectional sync of %s with %s", partitionID, peerID)
 
-	if applied+skipped+sentCount == 0 {
-		pm.removePartitionHolder(partitionID)
-		pm.logf("[PARTITION] Removed %s as holder for %s because no files found during sync", pm.deps.NodeID, partitionID)
-	}
 	return nil
 }
 
