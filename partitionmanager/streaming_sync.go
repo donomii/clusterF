@@ -111,6 +111,7 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 }
 
 func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *http.Request, partitionID types.PartitionID) {
+	syncStart := time.Now()
 	if pm.deps.Cluster != nil && pm.deps.Cluster.GetPartitionSyncPaused() {
 		http.Error(w, "sync paused", http.StatusServiceUnavailable)
 		return
@@ -145,6 +146,8 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 
 	pm.notifyFileListChanged()
 
+	pm.recordPartitionTimestamp(partitionID, lastSyncTimestampFile, syncStart)
+
 	response := map[string]int{
 		"applied": applied,
 		"skipped": skipped,
@@ -160,6 +163,7 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 
 // syncPartitionWithPeer synchronizes a partition using object-by-object streaming in both directions
 func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID) error {
+	syncStart := time.Now()
 	// No-store nodes should never sync partitions
 	if pm.deps.Cluster.NoStore() {
 		pm.debugf("[PARTITION] No-store mode: refusing to sync partition %s", partitionID)
@@ -170,7 +174,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 		return fmt.Errorf("frogpond node is not configured")
 	}
 
-	syncStart := time.Now()
+	
 
 	// Find peer address
 	var peerAddr string
