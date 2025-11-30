@@ -257,6 +257,8 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 	}()
 
 	if resp.StatusCode != http.StatusOK {
+		pm.RemoveNodeFromPartitionWithTimestamp(peerID, string(partitionID), time.Now().Add(-30*time.Minute))
+		pm.logf("[PARTITION] Removed %s as holder for %s because sync failed with %d", peerID, partitionID, resp.StatusCode)
 		return 0, 0, fmt.Errorf("peer returned error %d '%s'", resp.StatusCode, resp.Status)
 	}
 
