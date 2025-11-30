@@ -202,7 +202,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 
 	pm.debugf("[PARTITION] Starting bidirectional streaming sync of %s with %s, %v:%v", partitionID, peerID, peerAddr, peerPort)
 
-	applied, skipped, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peerAddr, peerPort)
+	applied, _, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peerAddr, peerPort)
 	if err != nil {
 		return err
 	}
