@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>🐸 Under-Replicated Report</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐸</text></svg>">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: rgba(255, 255, 255, 0.04);
+            --muted: #94a3b8;
+            --accent: #22d3ee;
+            --accent-2: #6366f1;
+            --danger: #f97316;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: "Helvetica Neue", Arial, sans-serif;
+            background: radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.08), transparent 30%), radial-gradient(circle at 80% 0%, rgba(34, 211, 238, 0.1), transparent 25%), var(--bg);
+            color: white;
+            margin: 0;
+            padding: 24px;
+        }
+        a { color: var(--accent); }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            gap: 12px;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 28px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .pill {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--muted);
+            padding: 6px 10px;
+            border-radius: 30px;
+            font-size: 13px;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .summary-card {
+            background: var(--panel);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 16px;
+        }
+        .summary-card .label { color: var(--muted); font-size: 13px; }
+        .summary-card .value { font-size: 26px; font-weight: 700; margin-top: 6px; }
+        .summary-card .value.small { font-size: 20px; }
+        .content {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 16px;
+        }
+        .partition-card {
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 12px;
+            background: var(--panel);
+        }
+        .partition-header {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .partition-title { font-size: 18px; font-weight: 700; }
+        .holder-list { color: var(--muted); font-size: 13px; }
+        .file-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+        }
+        .file-table th, .file-table td {
+            text-align: left;
+            padding: 8px 6px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            font-size: 14px;
+        }
+        .file-table th { color: var(--muted); font-weight: 600; }
+        .file-table td.path { word-break: break-all; }
+        .btn {
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .btn.small { padding: 6px 10px; font-size: 13px; }
+        .btn:hover { opacity: 0.92; }
+        .btn.secondary {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .status {
+            color: var(--muted);
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            background: rgba(34, 211, 238, 0.12);
+            color: var(--accent);
+            border-radius: 8px;
+            font-size: 12px;
+        }
+        .badge.danger { background: rgba(249, 115, 22, 0.16); color: var(--danger); }
+        .empty {
+            padding: 24px;
+            text-align: center;
+            color: var(--muted);
+        }
+        .crdt-block {
+            margin: 10px 0 6px;
+            padding: 10px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        .crdt-title {
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+        .crdt-meta {
+            color: var(--muted);
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .crdt-json {
+            background: rgba(0,0,0,0.35);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 8px;
+            padding: 8px;
+            overflow: auto;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+        .holder-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 8px;
+        }
+        .holder-table th, .holder-table td {
+            text-align: left;
+            padding: 6px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            font-size: 13px;
+        }
+        .holder-table th { color: var(--muted); }
+        .metadata-drawer {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            width: min(420px, 90vw);
+            max-height: 70vh;
+            background: #0b1224;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+            padding: 12px;
+            overflow: hidden;
+            display: none;
+        }
+        .metadata-drawer.open { display: block; }
+        .metadata-drawer header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .metadata-body {
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 8px;
+            padding: 10px;
+            max-height: 55vh;
+            overflow: auto;
+            font-family: monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+        }
+        @media (max-width: 640px) {
+            header { flex-direction: column; align-items: flex-start; }
+            .partition-header { flex-direction: column; align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <div class="pill">Replication health</div>
+                <h1>🐸 Under-Replicated Report</h1>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <a href="/">← Back home</a>
+                <button class="btn secondary small" onclick="loadReport()">Refresh</button>
+            </div>
+        </header>
+
+        <div class="status" id="statusText">Loading...</div>
+
+        <div class="summary-grid">
+            <div class="summary-card">
+                <div class="label">Replication Factor</div>
+                <div class="value" id="rfValue">-</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">Under-replicated partitions</div>
+                <div class="value" id="partitionCount">-</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">Files listed</div>
+                <div class="value" id="fileCount">-</div>
+            </div>
+            <div class="summary-card">
+                <div class="label">Missing replicas (per partition)</div>
+                <div class="value small" id="missingTotals">-</div>
+            </div>
+        </div>
+
+        <div class="content">
+            <div id="partitionList"></div>
+        </div>
+    </div>
+
+    <div class="metadata-drawer" id="metadataDrawer">
+        <header>
+            <div style="display:flex; flex-direction:column;">
+                <strong id="metadataTitle">Metadata</strong>
+                <span style="color: var(--muted); font-size: 12px;" id="metadataPath"></span>
+            </div>
+            <button class="btn secondary small" onclick="closeMetadata()">Close</button>
+        </header>
+        <div class="metadata-body" id="metadataBody"></div>
+    </div>
+
+    <script src="/under-replicated.js"></script>
+</body>
+</html>
