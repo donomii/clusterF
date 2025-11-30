@@ -40,8 +40,6 @@ type Indexer struct {
 	partitionActive map[int][]int // partition number -> docIDs (as int)
 
 	docIDCounter atomic.Uint64
-	pathIndex    *reversePathIndex
-	pathToDoc    map[string]uint64
 
 	deps *types.App
 }
@@ -52,6 +50,7 @@ type searchBackend interface {
 	PrefixSearch(prefix string) []indexedSearchEntry
 	FilesForPartition(partitionID types.PartitionID) []string
 	TrackedPartitions() []types.PartitionID
+	PathToDocID(path string) (uint64, bool)
 }
 
 type trieBackend struct {
@@ -142,6 +141,18 @@ func (b *trieBackend) TrackedPartitions() []types.PartitionID {
 	return partitions
 }
 
+func (b *trieBackend) PathToDocID(path string) (uint64, bool) {
+	if b.trie == nil {
+		return 0, false
+	}
+	item := b.trie.Get(patricia.Prefix(path))
+	if item == nil {
+		return 0, false
+	}
+	docID, ok := item.(uint64)
+	return docID, ok
+}
+
 func buildSearchResult(path string, meta types.FileMetadata) types.SearchResult {
 	return types.SearchResult{
 		Name:        meta.Name,
@@ -166,8 +177,6 @@ func NewIndexerWithType(logger *log.Logger, indexType IndexType, deps *types.App
 		indexType:       indexType,
 		logger:          logger,
 		partitionActive: make(map[int][]int),
-		pathIndex:       newReversePathIndex(),
-		pathToDoc:       make(map[string]uint64),
 		deps:            deps,
 	}
 
@@ -189,8 +198,6 @@ func (idx *Indexer) logf(format string, args ...interface{}) {
 		idx.logger.Printf(format, args...)
 	}
 }
-
-
 
 func (idx *Indexer) lock() {
 	idx.mu.Lock()
@@ -226,12 +233,13 @@ func (idx *Indexer) nextDocID() uint64 {
 }
 
 func (idx *Indexer) docIDForPath(path string) uint64 {
-	if id, ok := idx.pathToDoc[path]; ok {
-		return id
+	if docID, ok := idx.backend.PathToDocID(path); ok {
+		return docID
 	}
-	id := idx.nextDocID()
-	idx.pathToDoc[path] = id
-	return id
+	docID := idx.nextDocID()
+	partitionID := types.PartitionIDForPath(path)
+	idx.backend.Add(partitionID, path, docID)
+	return docID
 }
 
 func (idx *Indexer) addDocToPartitionLocked(partitionNumber int, docID uint64) {
@@ -281,7 +289,6 @@ func (idx *Indexer) loadMetadata(path string) (types.FileMetadata, bool) {
 
 func (idx *Indexer) upsertDocLocked(partitionID types.PartitionID, path string) {
 	docID := idx.docIDForPath(path)
-	idx.pathIndex.insert(docID, path)
 
 	if idx.backend != nil {
 		idx.backend.Add(partitionID, path, docID)
@@ -290,10 +297,7 @@ func (idx *Indexer) upsertDocLocked(partitionID types.PartitionID, path string) 
 }
 
 func (idx *Indexer) deleteDocLocked(partitionID types.PartitionID, path string) {
-	docID, ok := idx.pathToDoc[path]
-	if ok {
-		delete(idx.pathToDoc, path)
-		idx.pathIndex.remove(docID)
+	if docID, ok := idx.backend.PathToDocID(path); ok {
 		idx.removeDocFromPartitionLocked(idx.partitionNumber(partitionID), docID)
 	}
 	if idx.backend != nil {
@@ -465,63 +469,4 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 // GetIndexType returns the current index type
 func (idx *Indexer) GetIndexType() IndexType {
 	return idx.indexType
-}
-
-// reversePathIndex stores docID -> path using a reverse trie so paths with common tails share nodes.
-type reversePathIndex struct {
-	root     *reversePathNode
-	docNodes map[uint64]*reversePathNode
-}
-
-type reversePathNode struct {
-	parent   *reversePathNode
-	ch       rune
-	children map[rune]*reversePathNode
-	docIDs   map[uint64]struct{}
-}
-
-func newReversePathIndex() *reversePathIndex {
-	return &reversePathIndex{
-		root:     &reversePathNode{children: make(map[rune]*reversePathNode)},
-		docNodes: make(map[uint64]*reversePathNode),
-	}
-}
-
-func (pi *reversePathIndex) insert(docID uint64, path string) {
-	pi.remove(docID) // prevent duplicates
-	node := pi.root
-	runes := []rune(path)
-	for i := len(runes) - 1; i >= 0; i-- {
-		r := runes[i]
-		if node.children == nil {
-			node.children = make(map[rune]*reversePathNode)
-		}
-		child, ok := node.children[r]
-		if !ok {
-			child = &reversePathNode{parent: node, ch: r, children: make(map[rune]*reversePathNode)}
-			node.children[r] = child
-		}
-		node = child
-	}
-	if node.docIDs == nil {
-		node.docIDs = make(map[uint64]struct{})
-	}
-	node.docIDs[docID] = struct{}{}
-	pi.docNodes[docID] = node
-}
-
-func (pi *reversePathIndex) remove(docID uint64) {
-	node, ok := pi.docNodes[docID]
-	if !ok {
-		return
-	}
-	delete(node.docIDs, docID)
-	delete(pi.docNodes, docID)
-
-	// cleanup empty nodes up the chain
-	for node != nil && node.parent != nil && len(node.docIDs) == 0 && len(node.children) == 0 {
-		parent := node.parent
-		delete(parent.children, node.ch)
-		node = parent
-	}
 }
