@@ -425,7 +425,9 @@ func CheckSuccessWithTimeout(f func() bool, checkIntervalMs int, timeoutMs int) 
 
 // CheckSuccessWithErr polls a condition function until it returns nil or times out.
 // Returns nil if the condition succeeded, error if it timed out.
-func CheckSuccessWithError(f func() error, checkIntervalMs int, timeoutMs int) error {
+func CheckSuccessWithError(activity string, f func() error, checkIntervalMs int, timeoutMs int) error {
+	start := time.Now()
+	attempts := 0
 	timeout := time.After(time.Duration(timeoutMs) * time.Millisecond)
 	ticker := time.NewTicker(time.Duration(checkIntervalMs) * time.Millisecond)
 	defer ticker.Stop()
@@ -434,8 +436,13 @@ func CheckSuccessWithError(f func() error, checkIntervalMs int, timeoutMs int) e
 	for {
 		select {
 		case <-timeout:
-			return fmt.Errorf("Timed out, last error was: %v", lastError)
+			elapsedMs := time.Since(start).Milliseconds()
+			if lastError != nil {
+				return fmt.Errorf("Timed out after %dms while %s (attempts=%d, interval=%dms); last error: %v", elapsedMs, activity, attempts, checkIntervalMs, lastError)
+			}
+			return fmt.Errorf("Timed out after %dms while %s (attempts=%d, interval=%dms); no errors were returned", elapsedMs, activity, attempts, checkIntervalMs)
 		case <-ticker.C:
+			attempts++
 			err := f()
 			if err == nil {
 				return nil

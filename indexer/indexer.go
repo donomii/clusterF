@@ -1,4 +1,4 @@
-// indexer.go - In-memory file index for fast searching with multiple implementations
+// indexer.go - In-memory file index for fast searching with unique document IDs
 package indexer
 
 import (
@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/tchap/go-patricia/patricia"
 )
@@ -23,25 +23,33 @@ type IndexType string
 
 const (
 	IndexTypeTrie IndexType = "trie" // Trie-based index (default, faster for prefix searches)
-	IndexTypeFlat IndexType = "flat" // Flat map-based index (fallback)
 )
 
-// Indexer maintains an in-memory index of files for fast searching
-type Indexer struct {
-	mu        sync.RWMutex
-	indexType IndexType
-	logger    *log.Logger
-	backend   searchBackend
+type indexedSearchEntry struct {
+	path string
+	id   uint64
+}
 
-	partitionActive *syncmap.SyncMap[types.PartitionID, *syncmap.SyncMap[string, struct{}]] // partition -> active (non-deleted) paths
+// Indexer maintains an in-memory index of files for fast searching
+// Each document is assigned a unique ID (atomic counter) at runtime.
+type Indexer struct {
+	mu              sync.RWMutex
+	indexType       IndexType
+	logger          *log.Logger
+	backend         searchBackend
+	partitionActive map[int][]int // partition number -> docIDs (as int)
+
+	docIDCounter atomic.Uint64
+	pathIndex    *reversePathIndex
+	pathToDoc    map[string]uint64
 
 	deps *types.App
 }
 
 type searchBackend interface {
-	Add(partitionID types.PartitionID, path string, metadata types.FileMetadata)
+	Add(partitionID types.PartitionID, path string, docID uint64)
 	Delete(partitionID types.PartitionID, path string)
-	PrefixSearch(prefix string) []types.SearchResult
+	PrefixSearch(prefix string) []indexedSearchEntry
 	FilesForPartition(partitionID types.PartitionID) []string
 	TrackedPartitions() []types.PartitionID
 }
@@ -72,11 +80,11 @@ func (b *trieBackend) trackPartitionPath(partitionID types.PartitionID, path str
 	trie.Set(patricia.Prefix(path), struct{}{})
 }
 
-func (b *trieBackend) Add(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
+func (b *trieBackend) Add(partitionID types.PartitionID, path string, docID uint64) {
 	if b.trie == nil {
 		b.trie = patricia.NewTrie()
 	}
-	b.trie.Set(patricia.Prefix(path), metadata)
+	b.trie.Set(patricia.Prefix(path), docID)
 	b.trackPartitionPath(partitionID, path)
 }
 
@@ -85,80 +93,26 @@ func (b *trieBackend) Delete(partitionID types.PartitionID, path string) {
 		return
 	}
 	b.trie.Delete(patricia.Prefix(path))
-	b.trackPartitionPath(partitionID, path)
+	b.trackPartitionPath(partitionID, path) // keep tombstone path in partition listing
 }
 
-func (b *trieBackend) PrefixSearch(prefix string) []types.SearchResult {
+func (b *trieBackend) PrefixSearch(prefix string) []indexedSearchEntry {
 	if b.trie == nil {
 		return nil
 	}
 
-	resultMap := make(map[string]types.SearchResult)
+	resultMap := make(map[string]indexedSearchEntry)
 	b.trie.VisitSubtree(patricia.Prefix(prefix), func(path patricia.Prefix, item patricia.Item) error {
-		metadata, ok := item.(types.FileMetadata)
-		if !ok || metadata.Deleted {
+		docID, ok := item.(uint64)
+		if !ok {
 			return nil
 		}
-		types.AddResultToMap(buildSearchResult(string(path), metadata), resultMap, prefix)
+		key := string(path)
+		resultMap[key] = indexedSearchEntry{path: key, id: docID}
 		return nil
 	})
 
-	results := make([]types.SearchResult, 0, len(resultMap))
-	for _, res := range resultMap {
-		results = append(results, res)
-	}
-	return results
-}
-
-type flatBackend struct {
-	files          map[string]types.FileMetadata
-	partitionPaths map[types.PartitionID]map[string]struct{}
-}
-
-func newFlatBackend() *flatBackend {
-	return &flatBackend{
-		files:          make(map[string]types.FileMetadata),
-		partitionPaths: make(map[types.PartitionID]map[string]struct{}),
-	}
-}
-
-func (b *flatBackend) trackPartitionPath(partitionID types.PartitionID, path string) {
-	paths, ok := b.partitionPaths[partitionID]
-	if !ok {
-		paths = make(map[string]struct{})
-		b.partitionPaths[partitionID] = paths
-	}
-	paths[path] = struct{}{}
-}
-
-func (b *flatBackend) Add(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
-	if b.files == nil {
-		b.files = make(map[string]types.FileMetadata)
-	}
-	b.files[path] = metadata
-	b.trackPartitionPath(partitionID, path)
-}
-
-func (b *flatBackend) Delete(partitionID types.PartitionID, path string) {
-	if b.files == nil {
-		return
-	}
-	delete(b.files, path)
-	b.trackPartitionPath(partitionID, path)
-}
-
-func (b *flatBackend) PrefixSearch(prefix string) []types.SearchResult {
-	if len(b.files) == 0 {
-		return nil
-	}
-	resultMap := make(map[string]types.SearchResult)
-	for path, metadata := range b.files {
-		if !strings.HasPrefix(path, prefix) || metadata.Deleted {
-			continue
-		}
-		types.AddResultToMap(buildSearchResult(path, metadata), resultMap, prefix)
-	}
-	results := make([]types.SearchResult, 0, len(resultMap))
+	results := make([]indexedSearchEntry, 0, len(resultMap))
 	for _, res := range resultMap {
 		results = append(results, res)
 	}
@@ -188,37 +142,16 @@ func (b *trieBackend) TrackedPartitions() []types.PartitionID {
 	return partitions
 }
 
-func (b *flatBackend) FilesForPartition(partitionID types.PartitionID) []string {
-	pathsMap := b.partitionPaths[partitionID]
-	if len(pathsMap) == 0 {
-		return []string{}
-	}
-	paths := make([]string, 0, len(pathsMap))
-	for path := range pathsMap {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	return paths
-}
-
-func (b *flatBackend) TrackedPartitions() []types.PartitionID {
-	partitions := make([]types.PartitionID, 0, len(b.partitionPaths))
-	for pid := range b.partitionPaths {
-		partitions = append(partitions, pid)
-	}
-	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
-	return partitions
-}
-
-func buildSearchResult(path string, metadata types.FileMetadata) types.SearchResult {
+func buildSearchResult(path string, meta types.FileMetadata) types.SearchResult {
 	return types.SearchResult{
-		Name:        metadata.Name,
+		Name:        meta.Name,
 		Path:        path,
-		Size:        metadata.Size,
-		ContentType: metadata.ContentType,
-		ModifiedAt:  metadata.ModifiedAt,
-		CreatedAt:   metadata.CreatedAt,
-		Checksum:    metadata.Checksum,
+		Size:        meta.Size,
+		ContentType: meta.ContentType,
+		ModifiedAt:  meta.ModifiedAt,
+		CreatedAt:   meta.CreatedAt,
+		Checksum:    meta.Checksum,
+		Holders:     meta.Holders,
 	}
 }
 
@@ -232,7 +165,9 @@ func NewIndexerWithType(logger *log.Logger, indexType IndexType, deps *types.App
 	idx := &Indexer{
 		indexType:       indexType,
 		logger:          logger,
-		partitionActive: syncmap.NewSyncMap[types.PartitionID, *syncmap.SyncMap[string, struct{}]](),
+		partitionActive: make(map[int][]int),
+		pathIndex:       newReversePathIndex(),
+		pathToDoc:       make(map[string]uint64),
 		deps:            deps,
 	}
 
@@ -240,9 +175,6 @@ func NewIndexerWithType(logger *log.Logger, indexType IndexType, deps *types.App
 	case IndexTypeTrie:
 		idx.backend = newTrieBackend()
 		idx.logf("[INDEXER] Using trie-based index")
-	case IndexTypeFlat:
-		idx.backend = newFlatBackend()
-		idx.logf("[INDEXER] Using flat map-based index")
 	default:
 		idx.backend = newTrieBackend()
 		idx.indexType = IndexTypeTrie
@@ -258,77 +190,114 @@ func (idx *Indexer) logf(format string, args ...interface{}) {
 	}
 }
 
-func (idx *Indexer) callerName() string {
-	if pc, _, _, ok := runtime.Caller(2); ok {
-		if fn := runtime.FuncForPC(pc); fn != nil {
-			return fn.Name()
-		}
-	}
-	return "unknown"
-}
+
 
 func (idx *Indexer) lock() {
-	//idx.logf("[INDEXER] idx.mu locked (write) by %s", idx.callerName())
 	idx.mu.Lock()
 }
 
 func (idx *Indexer) unlock() {
 	idx.mu.Unlock()
-	//idx.logf("[INDEXER] idx.mu unlocked (write) by %s", idx.callerName())
 }
 
 func (idx *Indexer) rlock() {
-	//idx.logf("[INDEXER] idx.mu locked (read) by %s", idx.callerName())
 	idx.mu.RLock()
 }
 
 func (idx *Indexer) runlock() {
 	idx.mu.RUnlock()
-	//idx.logf("[INDEXER] idx.mu unlocked (read) by %s", idx.callerName())
 }
 
 func (idx *Indexer) partitionForPath(path string) types.PartitionID {
 	return types.PartitionIDForPath(path)
 }
 
-func (idx *Indexer) ensureActivePartitionEntryLocked(partitionID types.PartitionID) *syncmap.SyncMap[string, struct{}] {
-	if paths, ok := idx.partitionActive.Load(partitionID); ok {
-		return paths
+func (idx *Indexer) partitionNumber(partitionID types.PartitionID) int {
+	trimmed := strings.TrimPrefix(string(partitionID), "p")
+	num, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 0
 	}
-	paths := syncmap.NewSyncMap[string, struct{}]()
-	idx.partitionActive.Store(partitionID, paths)
-	return paths
+	return num
 }
 
-func (idx *Indexer) addActivePathLocked(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
-	active := idx.ensureActivePartitionEntryLocked(partitionID)
-	active.Store(path, struct{}{})
-
-	metaCopy := metadata
-	if metaCopy.ModifiedAt.IsZero() {
-		metaCopy.ModifiedAt = time.Now()
-	}
+func (idx *Indexer) nextDocID() uint64 {
+	return idx.docIDCounter.Add(1)
 }
 
-func (idx *Indexer) removeActivePathLocked(partitionID types.PartitionID, path string) {
-	if active, ok := idx.partitionActive.Load(partitionID); ok {
-		active.Delete(path)
-		if active.Len() == 0 {
-			idx.partitionActive.Delete(partitionID)
+func (idx *Indexer) docIDForPath(path string) uint64 {
+	if id, ok := idx.pathToDoc[path]; ok {
+		return id
+	}
+	id := idx.nextDocID()
+	idx.pathToDoc[path] = id
+	return id
+}
+
+func (idx *Indexer) addDocToPartitionLocked(partitionNumber int, docID uint64) {
+	list := idx.partitionActive[partitionNumber]
+	idAsInt := int(docID)
+	for _, existing := range list {
+		if existing == idAsInt {
+			idx.partitionActive[partitionNumber] = list
+			return
 		}
 	}
-
+	idx.partitionActive[partitionNumber] = append(list, idAsInt)
 }
 
-func (idx *Indexer) removeFromSearchLocked(partitionID types.PartitionID, path string) {
+func (idx *Indexer) removeDocFromPartitionLocked(partitionNumber int, docID uint64) {
+	list := idx.partitionActive[partitionNumber]
+	if len(list) == 0 {
+		return
+	}
+	idAsInt := int(docID)
+	dst := list[:0]
+	for _, existing := range list {
+		if existing != idAsInt {
+			dst = append(dst, existing)
+		}
+	}
+	if len(dst) == 0 {
+		delete(idx.partitionActive, partitionNumber)
+		return
+	}
+	idx.partitionActive[partitionNumber] = dst
+}
+func (idx *Indexer) loadMetadata(path string) (types.FileMetadata, bool) {
+	var meta types.FileMetadata
+	if idx.deps == nil || idx.deps.FileStore == nil {
+		return meta, false
+	}
+	data, err := idx.deps.FileStore.GetMetadata(path)
+	if err != nil || len(data) == 0 {
+		return meta, false
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return meta, false
+	}
+	return meta, true
+}
+
+func (idx *Indexer) upsertDocLocked(partitionID types.PartitionID, path string) {
+	docID := idx.docIDForPath(path)
+	idx.pathIndex.insert(docID, path)
+
+	if idx.backend != nil {
+		idx.backend.Add(partitionID, path, docID)
+	}
+	idx.addDocToPartitionLocked(idx.partitionNumber(partitionID), docID)
+}
+
+func (idx *Indexer) deleteDocLocked(partitionID types.PartitionID, path string) {
+	docID, ok := idx.pathToDoc[path]
+	if ok {
+		delete(idx.pathToDoc, path)
+		idx.pathIndex.remove(docID)
+		idx.removeDocFromPartitionLocked(idx.partitionNumber(partitionID), docID)
+	}
 	if idx.backend != nil {
 		idx.backend.Delete(partitionID, path)
-	}
-}
-
-func (idx *Indexer) upsertSearchLocked(partitionID types.PartitionID, path string, metadata types.FileMetadata) {
-	if idx.backend != nil {
-		idx.backend.Add(partitionID, path, metadata)
 	}
 }
 
@@ -340,7 +309,25 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 	if idx.backend == nil {
 		return nil
 	}
-	return idx.backend.PrefixSearch(prefix)
+	raw := idx.backend.PrefixSearch(prefix)
+	if len(raw) == 0 {
+		return nil
+	}
+
+	resultMap := make(map[string]types.SearchResult)
+	for _, entry := range raw {
+		meta, ok := idx.loadMetadata(entry.path)
+		if !ok || meta.Deleted {
+			continue
+		}
+		types.AddResultToMap(buildSearchResult(entry.path, meta), resultMap, prefix)
+	}
+
+	results := make([]types.SearchResult, 0, len(resultMap))
+	for _, res := range resultMap {
+		results = append(results, res)
+	}
+	return results
 }
 
 // AddFile adds or updates a file in the index
@@ -349,26 +336,18 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 	defer idx.unlock()
 
 	effectivePath := path
-	if metadata.Path != "" {
-		effectivePath = metadata.Path
-	} else {
-		metadata.Path = effectivePath
-	}
-
 	partitionID := idx.partitionForPath(effectivePath)
 
 	if metadata.Deleted {
-		idx.removeActivePathLocked(partitionID, effectivePath)
-		idx.removeFromSearchLocked(partitionID, effectivePath)
-		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
+		idx.deleteDocLocked(partitionID, effectivePath)
+		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil && idx.logger != nil {
 			idx.logger.Printf("[INDEXER] Failed to update membership for %s: %v", partitionID, err)
 		}
 		return
 	}
 
-	idx.addActivePathLocked(partitionID, effectivePath, metadata)
-	idx.upsertSearchLocked(partitionID, effectivePath, metadata)
-	if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
+	idx.upsertDocLocked(partitionID, effectivePath)
+	if err := idx.updatePartitionMembershipLocked(partitionID); err != nil && idx.logger != nil {
 		idx.logger.Printf("[INDEXER] Failed to update membership for %s: %v", partitionID, err)
 	}
 }
@@ -379,9 +358,8 @@ func (idx *Indexer) DeleteFile(path string) {
 	defer idx.unlock()
 
 	partitionID := idx.partitionForPath(path)
-	idx.removeActivePathLocked(partitionID, path)
-	idx.removeFromSearchLocked(partitionID, path)
-	if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
+	idx.deleteDocLocked(partitionID, path)
+	if err := idx.updatePartitionMembershipLocked(partitionID); err != nil && idx.logger != nil {
 		idx.logger.Printf("[INDEXER] Failed to update membership for %s: %v", partitionID, err)
 	}
 }
@@ -399,13 +377,9 @@ func (idx *Indexer) FilesForPartition(partitionID types.PartitionID) []string {
 
 // updatePartitionMembershipLocked pushes our holder state for the partition into the CRDT.
 func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionID) error {
-
 	holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionID, idx.deps.Cluster.ID())
-	paths, ok := idx.partitionActive.Load(partitionID)
-	pathCount := 0
-	if ok {
-		pathCount = paths.Len()
-	}
+	partitionNumber := idx.partitionNumber(partitionID)
+	pathCount := len(idx.partitionActive[partitionNumber])
 
 	if pathCount == 0 {
 		updates := idx.deps.Frogpond.DeleteDataPoint(holderKey, 30*time.Minute)
@@ -438,10 +412,9 @@ func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionI
 
 // publishAllPartitionMembershipLocked reapplies holder claims for every tracked partition.
 func (idx *Indexer) publishAllPartitionMembershipLocked() error {
-
 	var errs []error
 	if idx.backend == nil {
-		panic("wtf")
+		panic("index backend missing")
 	}
 	for _, partitionID := range idx.backend.TrackedPartitions() {
 		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
@@ -492,4 +465,63 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 // GetIndexType returns the current index type
 func (idx *Indexer) GetIndexType() IndexType {
 	return idx.indexType
+}
+
+// reversePathIndex stores docID -> path using a reverse trie so paths with common tails share nodes.
+type reversePathIndex struct {
+	root     *reversePathNode
+	docNodes map[uint64]*reversePathNode
+}
+
+type reversePathNode struct {
+	parent   *reversePathNode
+	ch       rune
+	children map[rune]*reversePathNode
+	docIDs   map[uint64]struct{}
+}
+
+func newReversePathIndex() *reversePathIndex {
+	return &reversePathIndex{
+		root:     &reversePathNode{children: make(map[rune]*reversePathNode)},
+		docNodes: make(map[uint64]*reversePathNode),
+	}
+}
+
+func (pi *reversePathIndex) insert(docID uint64, path string) {
+	pi.remove(docID) // prevent duplicates
+	node := pi.root
+	runes := []rune(path)
+	for i := len(runes) - 1; i >= 0; i-- {
+		r := runes[i]
+		if node.children == nil {
+			node.children = make(map[rune]*reversePathNode)
+		}
+		child, ok := node.children[r]
+		if !ok {
+			child = &reversePathNode{parent: node, ch: r, children: make(map[rune]*reversePathNode)}
+			node.children[r] = child
+		}
+		node = child
+	}
+	if node.docIDs == nil {
+		node.docIDs = make(map[uint64]struct{})
+	}
+	node.docIDs[docID] = struct{}{}
+	pi.docNodes[docID] = node
+}
+
+func (pi *reversePathIndex) remove(docID uint64) {
+	node, ok := pi.docNodes[docID]
+	if !ok {
+		return
+	}
+	delete(node.docIDs, docID)
+	delete(pi.docNodes, docID)
+
+	// cleanup empty nodes up the chain
+	for node != nil && node.parent != nil && len(node.docIDs) == 0 && len(node.children) == 0 {
+		parent := node.parent
+		delete(parent.children, node.ch)
+		node = parent
+	}
 }

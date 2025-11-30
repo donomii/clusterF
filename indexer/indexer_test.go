@@ -3,6 +3,7 @@ package indexer
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -40,15 +41,30 @@ func (c *testCluster) RecordDiskActivity(types.DiskActivityLevel)    {}
 func (c *testCluster) CanRunNonEssentialDiskOp() bool                { return true }
 func (c *testCluster) LoadPeer(types.NodeID) (*types.PeerInfo, bool) { return nil, false }
 
-type testFileStore struct{}
+type testFileStore struct {
+	meta map[string][]byte
+}
 
-func (f *testFileStore) Close()                                                {}
-func (f *testFileStore) SetEncryptionKey([]byte)                               {}
-func (f *testFileStore) Get(string) ([]byte, []byte, bool, error)              { return nil, nil, false, nil }
-func (f *testFileStore) GetMetadata(string) ([]byte, error)                    { return nil, nil }
-func (f *testFileStore) GetContent(string) ([]byte, error)                     { return nil, nil }
-func (f *testFileStore) Put(string, []byte, []byte) error                      { return nil }
-func (f *testFileStore) PutMetadata(string, []byte) error                      { return nil }
+func (f *testFileStore) Close()                                   {}
+func (f *testFileStore) SetEncryptionKey([]byte)                  {}
+func (f *testFileStore) Get(string) ([]byte, []byte, bool, error) { return nil, nil, false, nil }
+func (f *testFileStore) GetMetadata(path string) ([]byte, error)  { return f.meta[path], nil }
+func (f *testFileStore) GetContent(string) ([]byte, error)        { return nil, nil }
+func (f *testFileStore) Put(string, []byte, []byte) error         { return nil }
+func (f *testFileStore) PutMetadata(path string, data []byte) error {
+	if f.meta == nil {
+		f.meta = make(map[string][]byte)
+	}
+	f.meta[path] = data
+	return nil
+}
+func (f *testFileStore) putMeta(meta types.FileMetadata) {
+	if f.meta == nil {
+		f.meta = make(map[string][]byte)
+	}
+	encoded, _ := json.Marshal(meta)
+	f.meta[meta.Path] = encoded
+}
 func (f *testFileStore) Delete(string) error                                   { return nil }
 func (f *testFileStore) Scan(string, func(string, []byte, []byte) error) error { return nil }
 func (f *testFileStore) ScanMetadata(string, func(string, []byte) error) error { return nil }
@@ -65,7 +81,7 @@ func newTestApp(logger *log.Logger) *types.App {
 		NodeID:             "test-node",
 		NoStore:            true,
 		Logger:             logger,
-		FileStore:          &testFileStore{},
+		FileStore:          &testFileStore{meta: make(map[string][]byte)},
 		Frogpond:           frogpond.NewNode(),
 		SendUpdatesToPeers: func([]frogpond.DataPoint) {},
 	}
@@ -90,17 +106,10 @@ func containsPath(paths []string, target string) bool {
 	return false
 }
 
-func TestIndexerBasics_Trie(t *testing.T) {
-	testIndexerBasics(t, IndexTypeTrie)
-}
-
-func TestIndexerBasics_Flat(t *testing.T) {
-	testIndexerBasics(t, IndexTypeFlat)
-}
-
-func testIndexerBasics(t *testing.T, indexType IndexType) {
+func TestIndexerBasics(t *testing.T) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-	idx := newTestIndexer(logger, indexType)
+	idx := newTestIndexer(logger, IndexTypeTrie)
+	fs := idx.deps.FileStore.(*testFileStore)
 
 	// Test adding files
 	metadata1 := types.FileMetadata{
@@ -111,6 +120,7 @@ func testIndexerBasics(t *testing.T, indexType IndexType) {
 		ModifiedAt:  time.Now(),
 		Checksum:    "abc123",
 	}
+	fs.putMeta(metadata1)
 	idx.AddFile("/docs/test1.txt", metadata1)
 
 	metadata2 := types.FileMetadata{
@@ -121,6 +131,7 @@ func testIndexerBasics(t *testing.T, indexType IndexType) {
 		ModifiedAt:  time.Now(),
 		Checksum:    "def456",
 	}
+	fs.putMeta(metadata2)
 	idx.AddFile("/docs/test2.txt", metadata2)
 
 	metadata3 := types.FileMetadata{
@@ -131,56 +142,50 @@ func testIndexerBasics(t *testing.T, indexType IndexType) {
 		ModifiedAt:  time.Now(),
 		Checksum:    "ghi789",
 	}
+	fs.putMeta(metadata3)
 	idx.AddFile("/other/other.txt", metadata3)
 
 	for _, path := range []string{"/docs/test1.txt", "/docs/test2.txt", "/other/other.txt"} {
 		partitionID := types.PartitionIDForPath(path)
 		partitionPaths := idx.FilesForPartition(partitionID)
 		if !containsPath(partitionPaths, path) {
-			t.Errorf("[%s] Expected partition %s to contain %s", indexType, partitionID, path)
+			t.Errorf("Expected partition %s to contain %s", partitionID, path)
 		}
 	}
 
 	// Test prefix search
 	results := idx.PrefixSearch("/docs/")
 	if len(results) != 2 {
-		t.Errorf("[%s] Expected 2 results for /docs/ prefix, got %d", indexType, len(results))
+		t.Errorf("Expected 2 results for /docs/ prefix, got %d", len(results))
 	}
 
 	results = idx.PrefixSearch("/other/")
 	if len(results) != 1 {
-		t.Errorf("[%s] Expected 1 result for /other/ prefix, got %d", indexType, len(results))
+		t.Errorf("Expected 1 result for /other/ prefix, got %d", len(results))
 	}
 
 	results = idx.PrefixSearch("/")
 	if len(results) != 2 {
-		t.Errorf("[%s] Expected 2 results for / prefix, got %d", indexType, len(results))
+		t.Errorf("Expected 2 results for / prefix, got %d", len(results))
 	}
 
 	// Test delete
 	idx.DeleteFile("/docs/test1.txt")
 	results = idx.PrefixSearch("/docs/")
 	if len(results) != 1 {
-		t.Errorf("[%s] Expected 1 result after delete, got %d", indexType, len(results))
+		t.Errorf("Expected 1 result after delete, got %d", len(results))
 	}
 
 	deletedPartition := types.PartitionIDForPath("/docs/test1.txt")
 	if !containsPath(idx.FilesForPartition(deletedPartition), "/docs/test1.txt") {
-		t.Errorf("[%s] Expected partition %s to retain tombstone for /docs/test1.txt", indexType, deletedPartition)
+		t.Errorf("Expected partition %s to retain tombstone for /docs/test1.txt", deletedPartition)
 	}
 }
 
-func TestIndexerUpdate_Trie(t *testing.T) {
-	testIndexerUpdate(t, IndexTypeTrie)
-}
-
-func TestIndexerUpdate_Flat(t *testing.T) {
-	testIndexerUpdate(t, IndexTypeFlat)
-}
-
-func testIndexerUpdate(t *testing.T, indexType IndexType) {
+func TestIndexerUpdate(t *testing.T) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-	idx := newTestIndexer(logger, indexType)
+	idx := newTestIndexer(logger, IndexTypeTrie)
+	fs := idx.deps.FileStore.(*testFileStore)
 
 	// Add a file
 	metadata := types.FileMetadata{
@@ -191,6 +196,7 @@ func testIndexerUpdate(t *testing.T, indexType IndexType) {
 		ModifiedAt:  time.Now(),
 		Checksum:    "abc123",
 	}
+	fs.putMeta(metadata)
 	idx.AddFile("/test.txt", metadata)
 
 	// Update the same file
@@ -202,31 +208,25 @@ func testIndexerUpdate(t *testing.T, indexType IndexType) {
 		ModifiedAt:  time.Now().Add(time.Hour),
 		Checksum:    "xyz789",
 	}
+	fs.putMeta(updatedMetadata)
 	idx.AddFile("/test.txt", updatedMetadata)
 
 	// Should still have only one result
 	results := idx.PrefixSearch("/")
 	if len(results) != 1 {
-		t.Errorf("[%s] Expected 1 result after update, got %d", indexType, len(results))
+		t.Errorf("Expected 1 result after update, got %d", len(results))
 	}
 
 	// Check that size was updated
 	if results[0].Size != 200 {
-		t.Errorf("[%s] Expected size 200 after update, got %d", indexType, results[0].Size)
+		t.Errorf("Expected size 200 after update, got %d", results[0].Size)
 	}
 }
 
-func TestIndexerDeletedFiles_Trie(t *testing.T) {
-	testIndexerDeletedFiles(t, IndexTypeTrie)
-}
-
-func TestIndexerDeletedFiles_Flat(t *testing.T) {
-	testIndexerDeletedFiles(t, IndexTypeFlat)
-}
-
-func testIndexerDeletedFiles(t *testing.T, indexType IndexType) {
+func TestIndexerDeletedFiles(t *testing.T) {
 	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-	idx := newTestIndexer(logger, indexType)
+	idx := newTestIndexer(logger, IndexTypeTrie)
+	fs := idx.deps.FileStore.(*testFileStore)
 
 	// Add a file
 	metadata := types.FileMetadata{
@@ -238,6 +238,7 @@ func testIndexerDeletedFiles(t *testing.T, indexType IndexType) {
 		Checksum:    "abc123",
 		Deleted:     false,
 	}
+	fs.putMeta(metadata)
 	idx.AddFile("/test.txt", metadata)
 
 	// Add a deleted file (should be filtered out in search)
@@ -251,52 +252,27 @@ func testIndexerDeletedFiles(t *testing.T, indexType IndexType) {
 		Deleted:     true,
 		DeletedAt:   time.Now(),
 	}
+	fs.putMeta(deletedMetadata)
 	idx.AddFile("/deleted.txt", deletedMetadata)
 
 	deletedPartition := types.PartitionIDForPath("/deleted.txt")
 	if !containsPath(idx.FilesForPartition(deletedPartition), "/deleted.txt") {
-		t.Errorf("[%s] Expected partition %s to include /deleted.txt tombstone", indexType, deletedPartition)
+		t.Errorf("Expected partition %s to include /deleted.txt tombstone", deletedPartition)
 	}
 
 	// Search should not return deleted files
 	results := idx.PrefixSearch("/")
 	if len(results) != 1 {
-		t.Errorf("[%s] Expected 1 result (deleted files filtered), got %d", indexType, len(results))
+		t.Errorf("Expected 1 result (deleted files filtered), got %d", len(results))
 	}
 
 	if results[0].Path != "/test.txt" {
-		t.Errorf("[%s] Expected /test.txt, got %s", indexType, results[0].Path)
-	}
-}
-
-func TestIndexType(t *testing.T) {
-	logger := log.New(os.Stdout, "[TEST] ", log.LstdFlags)
-
-	// Test default (should be trie)
-	idx := NewIndexer(logger, newTestApp(logger))
-	if idx.GetIndexType() != IndexTypeTrie {
-		t.Errorf("Expected default index type to be trie, got %s", idx.GetIndexType())
-	}
-
-	// Test explicit trie
-	idxTrie := newTestIndexer(logger, IndexTypeTrie)
-	if idxTrie.GetIndexType() != IndexTypeTrie {
-		t.Errorf("Expected trie index type, got %s", idxTrie.GetIndexType())
-	}
-
-	// Test explicit flat
-	idxFlat := newTestIndexer(logger, IndexTypeFlat)
-	if idxFlat.GetIndexType() != IndexTypeFlat {
-		t.Errorf("Expected flat index type, got %s", idxFlat.GetIndexType())
+		t.Errorf("Expected /test.txt, got %s", results[0].Path)
 	}
 }
 
 func BenchmarkPrefixSearch_Trie(b *testing.B) {
 	benchmarkPrefixSearch(b, IndexTypeTrie)
-}
-
-func BenchmarkPrefixSearch_Flat(b *testing.B) {
-	benchmarkPrefixSearch(b, IndexTypeFlat)
 }
 
 func benchmarkPrefixSearch(b *testing.B, indexType IndexType) {

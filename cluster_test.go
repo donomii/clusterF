@@ -941,7 +941,7 @@ func TestCluster_BasicOperations(t *testing.T) {
 	var body []byte
 
 	// Test GET operation
-	err = CheckSuccessWithError(func() error {
+	err = CheckSuccessWithError("GET /api/files/test-file.txt", func() error {
 		url = baseURL + "/api/files/test-file.txt"
 		resp, err = client.Get(url)
 		if err != nil {
@@ -1412,7 +1412,7 @@ func TestCluster_MixedEncryption(t *testing.T) {
 			t.Fatalf("Node %d: Expected 201, got %d", i, resp.StatusCode)
 		}
 
-		err = CheckSuccessWithError(func() error {
+		err = CheckSuccessWithError(fmt.Sprintf("encrypted GET on node %d for %s", i, filePath), func() error {
 			// Retrieve file
 			resp, err = client.Get(baseURL + "/api/files" + filePath)
 			if err != nil {
