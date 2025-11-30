@@ -763,7 +763,7 @@ func (c *Cluster) Start() {
 
 	c.threadManager.StartThreadOnce("update-partition-metadata", func(ctx context.Context) { c.initialPartitionMetadataUpdate(c.AppContext()) })
 	// Start all threads using ThreadManager
-	c.threadManager.StartThreadOnce("indexer-import", c.runIndexerImport)
+	//c.threadManager.StartThreadOnce("indexer-import", c.runIndexerImport)
 	c.threadManager.StartThread("filesync", c.runFilesync)
 	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
 	c.threadManager.StartThread("partition-check", c.partitionManager.PeriodicPartitionCheck)
