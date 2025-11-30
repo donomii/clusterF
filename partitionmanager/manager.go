@@ -270,7 +270,6 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 
 	// Update partition metadata in CRDT
 	pm.MarkForReindex(partitionID, fmt.Sprintf("stored file %s", path))
-	//pm.logf("[PARTITION] Marked %v for reindex", partitionID)
 
 	// Debug: verify what we just stored
 	if metadata_bytes, _, exists, err := pm.deps.FileStore.Get(path); err == nil && exists {
@@ -1484,7 +1483,6 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			needsResync := lastSync.IsZero() || lastUpdate.After(lastSync)
 
 			if needsReindex || needsResync {
-				pm.logf("Marked partition %s for reindex", partitionID)
 				pm.MarkForReindex(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
 			}
 		} else {
