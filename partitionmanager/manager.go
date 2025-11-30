@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -140,9 +141,11 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) string {
 	if pm.deps.Logger != nil {
 		// Get caller info
 		_, file, line, ok := runtime.Caller(1)
+		// Get the last component of the path, the file name
+		fileName := filepath.Base(file)
 		loc := ""
 		if ok {
-			loc = fmt.Sprintf("%s:%d: ", file, line)
+			loc = fmt.Sprintf("%s:%d: ", fileName, line)
 		}
 		message := fmt.Sprintf(loc+format, args...)
 		pm.deps.Logger.Printf("%v", message)
