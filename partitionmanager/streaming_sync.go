@@ -174,8 +174,6 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 		return fmt.Errorf("frogpond node is not configured")
 	}
 
-	
-
 	// Find peer address
 	var peerAddr string
 	var peerPort int
@@ -210,7 +208,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	}
 
 	if applied > 0 {
-		pm.MarkForReindex(partitionID)
+		pm.MarkForReindex(partitionID, fmt.Sprintf("applied %d entries from peer %s", applied, peerID))
 	}
 
 	pm.debugf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, applied)
@@ -364,7 +362,7 @@ func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntr
 		pm.deps.Indexer.AddFile(entry.Metadata.Path, entry.Metadata)
 	}
 
-	pm.MarkForReindex(types.PartitionIDForPath(entry.Metadata.Path))
+	pm.MarkForReindex(types.PartitionIDForPath(entry.Metadata.Path), fmt.Sprintf("synced entry %s", entry.Metadata.Path))
 
 	return nil
 }

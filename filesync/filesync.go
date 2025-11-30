@@ -573,7 +573,8 @@ func (e *Syncer) performImport(ctx context.Context) error {
 // importFromDir walks importDir and uploads files to cluster
 func (e *Syncer) importFromDir(ctx context.Context) error {
 	var throttle = make(chan struct{}, 50) // limit concurrency
-	return filepath.WalkDir(e.importDir, func(p string, d fs.DirEntry, err error) error {
+	var errors []error
+	filepath.WalkDir(e.importDir, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -608,10 +609,20 @@ func (e *Syncer) importFromDir(ctx context.Context) error {
 
 		throttle <- struct{}{}
 
-		go uploadSyncfile(ctx, e, p, clusterPath, st, throttle)
+		go func() {
+			err := uploadSyncfile(ctx, e, p, clusterPath, st, throttle)
+			if err != nil {
+				errors = append(errors, err)
+			}
 
+		}()
 		return nil
 	})
+	if len(errors) > 0 {
+		// Combine all errors into a single error
+		return fmt.Errorf("failed to upload %d files: %v", len(errors), errors)
+	}
+	return nil
 }
 
 func (e *Syncer) insertWithRetry(ctx context.Context, clusterPath string, data []byte, contentType string, modTime time.Time) ([]types.NodeID, error) {
@@ -624,9 +635,10 @@ func (e *Syncer) insertWithRetry(ctx context.Context, clusterPath string, data [
 
 		time.Sleep(backoff)
 
-		if backoff = backoff * 2; backoff > 30*time.Second {
+		if backoff = backoff * 2; backoff > 32*time.Second {
 			backoff = 30 * time.Second
 			e.logger.Printf("[IMPORT] Slow upload for %s: %v", clusterPath, err)
+			return nil, fmt.Errorf("slow upload for %s: %v", clusterPath, err)
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -634,7 +646,7 @@ func (e *Syncer) insertWithRetry(ctx context.Context, clusterPath string, data [
 	}
 }
 
-func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs.FileInfo, throttle chan struct{}) {
+func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs.FileInfo, throttle chan struct{}) error {
 	defer func() {
 		if e.setCurrentFile != nil {
 			e.setCurrentFile("")
@@ -654,7 +666,7 @@ func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs
 	} else {
 		if upToDate {
 			e.logger.Printf("[IMPORT] Skipping synchronised file %s", clusterPath)
-			return
+			return err
 		} else {
 			e.logger.Printf(`[IMPORT] Updating existing file "%s" in cluster: %+v, local size: %v, local time %v`, clusterPath, metadata, st.Size(), st.ModTime())
 
@@ -664,16 +676,18 @@ func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs
 	// Read and upload file
 	data, err := os.ReadFile(p)
 	if err != nil {
-		return
+		return err
 	}
 
 	ct := contentTypeFromExt(p)
 	targetNodes, err := e.insertWithRetry(ctx, clusterPath, data, ct, st.ModTime())
 	if err != nil {
 		e.logger.Printf("[IMPORT] Synchronisation failed for %v: %v", clusterPath, err)
+		return err
 	} else {
 		e.logger.Printf("[IMPORT] Synchronised %s via %s", clusterPath, targetNodes)
 	}
+	return nil
 }
 
 // importPathToClusterPath converts a local file path to cluster path, returns (clusterPath, true) for files or ("", false) for directories

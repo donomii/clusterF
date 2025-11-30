@@ -44,9 +44,9 @@ func (pm *PartitionManager) recordEssentialDiskActivity() {
 	}
 }
 
-func (pm *PartitionManager) MarkForReindex(pId types.PartitionID) {
+func (pm *PartitionManager) MarkForReindex(pId types.PartitionID, reason string) {
 	pm.ReindexList.Store(pId, true)
-	//pm.debugf("[MarkForReindex] Marked partition %v for reindex.  List is now %v", pId, pm.ReindexList.Keys())
+	pm.debugf("[MarkForReindex] Marked partition %v for reindex, because %s", pId, reason)
 }
 
 func (pm *PartitionManager) RunReindex(ctx context.Context) {
@@ -269,7 +269,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	}
 
 	// Update partition metadata in CRDT
-	pm.MarkForReindex(partitionID)
+	pm.MarkForReindex(partitionID, fmt.Sprintf("stored file %s", path))
 	//pm.logf("[PARTITION] Marked %v for reindex", partitionID)
 
 	// Debug: verify what we just stored
@@ -651,7 +651,7 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 	}
 
 	// Mark the partition for re-scan
-	pm.MarkForReindex(partitionID)
+	pm.MarkForReindex(partitionID, fmt.Sprintf("deleted file %s", path))
 
 	pm.logf("[PARTITION] Marked file %s as deleted in partition %s", path, partitionID)
 	return nil
@@ -1448,7 +1448,7 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			// Generate all possible partition IDs for this store (p12000 to p12999)
 			for i := 0; i < 1000; i++ {
 				partitionID := types.PartitionID(fmt.Sprintf("%s%03d", partitionStore, i))
-				pm.MarkForReindex(partitionID)
+				pm.MarkForReindex(partitionID, fmt.Sprintf("detected partition store %s", partitionStore))
 			}
 			continue
 		}
@@ -1462,21 +1462,21 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			lastUpdate, err := diskStore.readPartitionTimestamp(partitionID, lastUpdateTimestampFile)
 			if err != nil {
 				pm.debugf("[PARTITION] Failed to read last update timestamp for %s: %v", partitionID, err)
-				pm.MarkForReindex(partitionID)
+				pm.MarkForReindex(partitionID, "missing last update timestamp")
 				continue
 			}
 
 			lastReindex, err := diskStore.readPartitionTimestamp(partitionID, lastReindexTimestampFile)
 			if err != nil {
 				pm.debugf("[PARTITION] Failed to read last reindex timestamp for %s: %v", partitionID, err)
-				pm.MarkForReindex(partitionID)
+				pm.MarkForReindex(partitionID, "missing last reindex timestamp")
 				continue
 			}
 
 			lastSync, err := diskStore.readPartitionTimestamp(partitionID, lastSyncTimestampFile)
 			if err != nil {
 				pm.debugf("[PARTITION] Failed to read last sync timestamp for %s: %v", partitionID, err)
-				pm.MarkForReindex(partitionID)
+				pm.MarkForReindex(partitionID, "missing last sync timestamp")
 				continue
 			}
 
@@ -1485,7 +1485,7 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 
 			if needsReindex || needsResync {
 				pm.logf("Marked partition %s for reindex", partitionID)
-				pm.MarkForReindex(partitionID)
+				pm.MarkForReindex(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
 			}
 		} else {
 			panic("partition stores not active, and no disk store")

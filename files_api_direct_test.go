@@ -69,7 +69,7 @@ func TestFileAPI_Direct(t *testing.T) {
 		partitionID := cluster.PartitionManager().CalculatePartitionName(testPath)
 		t.Logf("Rescanning partition %s for file %s", partitionID, testPath)
 		// Use the correct method name - updatePartitionMetadata is private, so trigger reindex instead
-		cluster.PartitionManager().MarkForReindex(types.PartitionID(partitionID))
+		cluster.PartitionManager().MarkForReindex(types.PartitionID(partitionID), fmt.Sprintf("test reindex after PUT %s", testPath))
 		cluster.PartitionManager().RunReindex(context.Background())
 		t.Logf("Partition rescan completed")
 	})
@@ -211,7 +211,7 @@ func TestFileAPI_Direct(t *testing.T) {
 
 		// Trigger reindex to update CRDT with deletion
 		partitionID := cluster.PartitionManager().CalculatePartitionName(testPath)
-		cluster.PartitionManager().MarkForReindex(types.PartitionID(partitionID))
+		cluster.PartitionManager().MarkForReindex(types.PartitionID(partitionID), fmt.Sprintf("test reindex after DELETE %s", testPath))
 		cluster.PartitionManager().RunReindex(context.Background())
 	})
 
@@ -454,7 +454,7 @@ func TestFileAPI_DirectMultipleFiles(t *testing.T) {
 			partitionID := cluster.PartitionManager().CalculatePartitionName(path)
 			t.Logf("Rescanning partition %s for file %s", partitionID, path)
 			// Use the correct method name - updatePartitionMetadata is private, so trigger reindex instead
-			cluster.PartitionManager().MarkForReindex(types.PartitionID(partitionID))
+			cluster.PartitionManager().MarkForReindex(types.PartitionID(partitionID), fmt.Sprintf("test reindex after PUT %s", path))
 			cluster.PartitionManager().RunReindex(context.Background())
 			t.Logf("Partition rescan completed for %s", path)
 		})
@@ -570,7 +570,7 @@ func TestFileAPI_DirectErrorCases(t *testing.T) {
 
 		// Trigger reindex
 		partitionID := cluster.PartitionManager().CalculatePartitionName(filePath)
-		cluster.PartitionManager().MarkForReindex(types.PartitionID(partitionID))
+		cluster.PartitionManager().MarkForReindex(types.PartitionID(partitionID), fmt.Sprintf("test reindex after forwarded PUT %s", filePath))
 		cluster.PartitionManager().RunReindex(context.Background())
 
 		t.Logf("Forwarded file PUT response: %s", w.Body.String())
