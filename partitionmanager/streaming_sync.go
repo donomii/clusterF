@@ -166,7 +166,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	syncStart := time.Now()
 	// No-store nodes should never sync partitions
 	if pm.deps.Cluster.NoStore() {
-		pm.debugf("[PARTITION] No-store mode: refusing to sync partition %s", partitionID)
+		pm.debugf("[PARTITION SYNCPEER] No-store mode: refusing to sync partition %s", partitionID)
 		return fmt.Errorf("no-store mode: cannot sync partitions")
 	}
 
@@ -174,37 +174,26 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 		return fmt.Errorf("frogpond node is not configured")
 	}
 
-	// Find peer address
-	var peerAddr string
-	var peerPort int
-	peers := pm.getPeers()
-	for _, peer := range peers {
-
-		if ctx.Err() != nil {
-			return fmt.Errorf("context canceled: %v", ctx.Err())
-		}
-		if types.NodeID(peer.NodeID) == peerID {
-			peerAddr = peer.Address
-			peerPort = peer.HTTPPort
-			break
-		}
+	peer := pm.getPeer(peerID)
+	if peer == nil {
+		return fmt.Errorf("peer %s not found", peerID)
 	}
 
-	if peerAddr == "" {
+	if peer.Address == "" {
 		// Remove the requested peer as a holder for this partition.  Backdate the entry by 1 hr
 		pm.removePeerHolder(partitionID, peerID, 1*time.Hour)
-		pm.logf("[PARTITION] Removed %s as holder for %s because not peer not found", peerID, partitionID)
+		pm.logf("[PARTITION SYNCPEER] Removed %s as holder for %s because not peer not found", peerID, partitionID)
 
-		availablePeers := make([]string, 0, len(peers))
-		for _, peer := range peers {
+		availablePeers := make([]string, 0)
+		for _, peer := range pm.getPeers() {
 			availablePeers = append(availablePeers, fmt.Sprintf("%s@%s:%d", peer.NodeID, peer.Address, peer.HTTPPort))
 		}
 		return fmt.Errorf("peer '%s' not found for partition '%s'. Available peers: [%s]", peerID, partitionID, strings.Join(availablePeers, ", "))
 	}
 
-	pm.debugf("[PARTITION] Starting bidirectional streaming sync of %s with %s, %v:%v", partitionID, peerID, peerAddr, peerPort)
+	pm.debugf("[PARTITION SYNCPEER] Starting bidirectional streaming sync of %s with %s, %v:%v", partitionID, peerID, peer.Address, peer.HTTPPort)
 
-	applied, _, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peerAddr, peerPort)
+	applied, _, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peer.Address, peer.HTTPPort)
 	if err != nil {
 		return err
 	}
@@ -213,23 +202,23 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 		pm.MarkForReindex(partitionID, fmt.Sprintf("applied %d entries from peer %s", applied, peerID))
 	}
 
-	pm.debugf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, applied)
+	pm.debugf("[PARTITION SYNCPEER] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, applied)
 	if applied > 0 {
-		pm.logf("[PARTITION] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, applied)
+		pm.logf("[PARTITION SYNCPEER] Completed inbound sync of %s from %s (%d entries applied)", partitionID, peerID, applied)
 	}
 
 	// Notify frontend that file list may have changed
 	pm.notifyFileListChanged()
 
 	// Push our latest view back to the peer
-	_, pushErr := pm.pushPartitionToPeer(ctx, partitionID, peerID, peerAddr, peerPort)
+	_, pushErr := pm.pushPartitionToPeer(ctx, partitionID, peerID, peer.Address, peer.HTTPPort)
 	if pushErr != nil {
 		return fmt.Errorf("failed to push partition %s to %s: %w", partitionID, peerID, pushErr)
 	}
 
 	pm.recordPartitionTimestamp(partitionID, lastSyncTimestampFile, syncStart)
 
-	pm.debugf("[PARTITION] Completed bidirectional sync of %s with %s", partitionID, peerID)
+	pm.debugf("[PARTITION SYNCPEER] Completed bidirectional sync of %s with %s", partitionID, peerID)
 
 	return nil
 }
@@ -242,7 +231,7 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to build sync URL: %v", err)
 	}
-	pm.debugf("[PARTITION] Downloading partition %s from %s", partitionID, syncURL)
+	pm.debugf("[PARTITION DOWNLOAD] Downloading partition %s from %s", partitionID, syncURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, syncURL, nil)
 	if err != nil {
@@ -260,7 +249,7 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 
 	if resp.StatusCode != http.StatusOK {
 		pm.RemoveNodeFromPartitionWithTimestamp(peerID, string(partitionID), time.Now().Add(-30*time.Minute))
-		pm.logf("[PARTITION] Removed %s as holder for %s because sync failed with %d", peerID, partitionID, resp.StatusCode)
+		pm.logf("[PARTITION DOWNLOAD] Removed %s as holder for %s because sync failed with %d", peerID, partitionID, resp.StatusCode)
 		return 0, 0, fmt.Errorf("peer returned error %d '%s'", resp.StatusCode, resp.Status)
 	}
 

@@ -220,6 +220,16 @@ func (pm *PartitionManager) getPeers() []*types.PeerInfo {
 	return pm.deps.Discovery.GetPeers()
 }
 
+func (pm *PartitionManager) getPeer(nodeID types.NodeID) *types.PeerInfo {
+	peers := pm.getPeers()
+	for _, peer := range peers {
+		if peer.NodeID == nodeID {
+			return peer
+		}
+	}
+	return nil
+}
+
 func (pm *PartitionManager) hasFrogpond() bool {
 	return pm.deps.Frogpond != nil
 }
@@ -1206,11 +1216,11 @@ func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID typ
 	}()
 	defer func() { <-throttle }()
 	// Try all available holders for this partition
-	for _, holderID := range holders {
+	for i, holderID := range holders {
 		if ctx.Err() != nil {
 			return
 		}
-		pm.debugf("[PARTITION] Syncing %s from %s", partitionID, holderID)
+		pm.debugf("[PARTITION] Syncing %s from %s (%v of %v)", partitionID, holderID, i+1, len(holders))
 
 		// Find the peer in the nodes crdt
 		nodeData := pm.deps.Cluster.GetNodeInfo(holderID)
