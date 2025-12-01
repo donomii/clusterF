@@ -157,11 +157,12 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) string {
 func (pm *PartitionManager) recordPartitionTimestamp(partitionID types.PartitionID, filename string, ts time.Time) {
 	fs, ok := pm.deps.FileStore.(*DiskFileStore)
 	if !ok || partitionID == "" {
-		return
+		panic("no")
 	}
 	if err := fs.writePartitionTimestamp(partitionID, filename, ts); err != nil {
 		pm.debugf("[PARTITION] Failed to write %s for %s: %v", filename, partitionID, err)
 	}
+	pm.debugf("[PARTITION] Wrote %s for %s, %v", filename, partitionID, ts)
 }
 
 // errorf creates a detailed error with full stack trace and human-readable dump
