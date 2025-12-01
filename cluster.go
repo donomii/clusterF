@@ -140,6 +140,9 @@ type Cluster struct {
 
 	shuttingDown atomic.Bool
 	startTime    time.Time
+
+	internalCallThrottle chan struct{}
+	externalCallThrottle chan struct{}
 }
 
 func (c *Cluster) SetTimings(partitionSyncInterval, partitionReIndexInterval time.Duration) {
@@ -287,9 +290,11 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 		fileListSubs: map[chan struct{}]bool{},
 
-		ctx:    ctx,
-		cancel: cancel,
-		Debug:  opts.Debug,
+		ctx:                  ctx,
+		cancel:               cancel,
+		Debug:                opts.Debug,
+		internalCallThrottle: make(chan struct{}, 1),
+		externalCallThrottle: make(chan struct{}, 1),
 	}
 	c.debugf("Initialized cluster struct\n")
 	c.lastDiskMetrics.Store(diskMetricsSnapshot{})

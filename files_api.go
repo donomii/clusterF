@@ -27,6 +27,9 @@ func (c *Cluster) handleInternalFilesAPI(w http.ResponseWriter, r *http.Request)
 		path = "/" + path
 	}
 
+	c.internalCallThrottle <- struct{}{}
+	defer func() { <-c.internalCallThrottle }()
+
 	switch r.Method {
 	case http.MethodGet:
 		c.handleFileGetInternal(w, r, path)
@@ -52,6 +55,9 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+
+	c.externalCallThrottle <- struct{}{}
+	defer func() { <-c.externalCallThrottle }()
 
 	switch r.Method {
 	case http.MethodGet:

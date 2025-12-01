@@ -1312,94 +1312,42 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 		//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
 		info := pm.GetPartitionInfo(partitionID)
+		if info == nil {
+			pm.debugf("[PARTITION] No partition info found for %s, skipping until reindex", partitionID)
+			continue
+		}
 		if len(info.Holders) >= pm.replicationFactor() {
-			hasPartition := false
-			ourHolderData, ok := info.HolderData[ourNodeId]
-
-			if ok {
-				hasPartition = true
-			}
+			_, hasPartition := info.HolderData[ourNodeId]
 
 			if hasPartition {
 
-				needSync := false
+				// Find available holders to sync from
+				var availableHolders []types.NodeID
 				for _, holderID := range info.Holders {
-					if holderID != ourNodeId && (info.Checksums[holderID] != ourHolderData.Checksum) {
-						pm.debugf("[PARTITION] Checksum mismatch for %s: ours %s=%s, theirs %s=%s",
-							partitionID, ourNodeId, ourHolderData.Checksum, holderID, info.Checksums[holderID])
-						needSync = true
-						break
+					_, exists := availablePeerIDs.Load(string(holderID))
+					if holderID != pm.deps.NodeID && exists {
+
+						availableHolders = append(availableHolders, holderID)
 					}
 				}
-
-				if needSync {
-					// Find available holders to sync from
-					var availableHolders []types.NodeID
-					for _, holderID := range info.Holders {
-						_, exists := availablePeerIDs.Load(string(holderID))
-						if holderID != pm.deps.NodeID && exists {
-
-							availableHolders = append(availableHolders, holderID)
-						}
+				if len(availableHolders) > 0 {
+					return partitionID, availableHolders
+				} else {
+					// Pick a random peer from the available peers
+					if len(availablePeerIDs.Keys()) > 0 {
+						//FIXME check for nostore here
+						peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
+						pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
+						return partitionID, []types.NodeID{types.NodeID(peerID)}
 					}
-					if len(availableHolders) > 0 {
-						return partitionID, availableHolders
-					} else {
-						// Pick a random peer from the available peers
-						if len(availablePeerIDs.Keys()) > 0 {
-							//FIXME check for nostore here
-							peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
-							pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
-							return partitionID, []types.NodeID{types.NodeID(peerID)}
-						}
-						pm.debugf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
-					}
+					pm.debugf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
 				}
+
 			}
 
 			continue // Already properly replicated and in sync
 		}
 
-		// Check if we already have this partition by looking in the CRDT
-
-		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-		holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-		dps := pm.deps.Frogpond.GetAllMatchingPrefix(holderKey)
-		if len(dps) > 0 {
-			// We are already registered as a holder
-			continue
-		}
-
-		// Find all available holders to sync from (must be different nodes and currently available)
-		var availableHolders []types.NodeID
-		for _, holderID := range info.Holders {
-			_, exists := availablePeerIDs.Load(string(holderID))
-			if holderID != pm.deps.NodeID {
-				if exists {
-					availableHolders = append(availableHolders, holderID)
-				} else {
-					// Remove the holder from the crdt for this partition
-					// maybe not a good idea?
-					pm.logf("[PARTITION] Should remove node %s from partition %s because no available peers", holderID, partitionID)
-					//pm.RemoveNodeFromPartitionWithTimestamp(holderID, string(partitionID), time.Now().Add(-30*time.Minute))
-				}
-			}
-		}
-
-		if len(availableHolders) == 0 {
-			pm.debugf("[PARTITION] No available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
-			// Pick a random peer from the available peers
-			if len(availablePeerIDs.Keys()) > 0 {
-
-				//Check for nostore here
-				peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
-				pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
-				return partitionID, []types.NodeID{types.NodeID(peerID)}
-			}
-			continue // No available peers to sync from
-		}
-
-		return partitionID, availableHolders
 	}
 
 	return "", nil // Nothing to sync
