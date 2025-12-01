@@ -339,6 +339,8 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 	idx.lock()
 	defer idx.unlock()
 
+	idx.logger.Printf("[INDEXER] Adding file %s", path)
+
 	effectivePath := path
 	partitionID := idx.partitionForPath(effectivePath)
 
@@ -421,6 +423,7 @@ func (idx *Indexer) publishAllPartitionMembershipLocked() error {
 		panic("index backend missing")
 	}
 	for _, partitionID := range idx.backend.TrackedPartitions() {
+		idx.logger.Printf("[INDEXER] Updating partition membership for %s", partitionID)
 		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
 			errs = append(errs, err)
 		}
