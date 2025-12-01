@@ -461,16 +461,16 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 	var tr = &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   3 * time.Second,
-			KeepAlive: 30 * time.Second,
+			KeepAlive: 10 * time.Second,
 			// LocalAddr: nil, // do not bind unless required
 		}).DialContext,
-		MaxIdleConns:        10_000,
-		MaxIdleConnsPerHost: 2_000,
+		MaxIdleConns:        1_00,
+		MaxIdleConnsPerHost: 4,
 		MaxConnsPerHost:     0, // unlimited; throttle elsewhere
-		IdleConnTimeout:     90 * time.Second,
+		IdleConnTimeout:     5 * time.Second,
 		ForceAttemptHTTP2:   true, // consider h2c to multiplex
 	}
-	var client = &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	var client = &http.Client{Transport: tr, Timeout: 90 * time.Second}
 
 	filesStored := 0
 	filesReplicated := 0

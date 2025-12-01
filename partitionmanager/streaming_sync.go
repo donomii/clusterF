@@ -367,6 +367,18 @@ func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntr
 	return nil
 }
 
+func panicError(err error) {
+	if err == nil {
+		return
+	}
+	panic(err)
+}
+
+func panicB(err error) bool {
+	panic(err)
+	return true
+}
+
 func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []PartitionSyncEntry, peer *types.PeerInfo) (int, error) {
 	if pm.deps.Cluster.NoStore() {
 		return 0, fmt.Errorf("no store")
@@ -387,22 +399,12 @@ func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []
 
 		pm.logf("[PARTITION SYNC] Fetching %s from %s", entry.Path, peer.NodeID)
 		content, err := pm.fetchFileContentFromPeer(ctx, peer, entry.Path)
-		if err != nil {
-			panic(err)
-		}
+		panicError(err)
 
-		if entry.Metadata.Checksum == "" {
-			panic(fmt.Errorf("%s: missing checksum in metadata", entry.Path))
-		}
-		verifyErr := pm.verifyFileChecksum(content, entry.Metadata.Checksum, entry.Path, peer.NodeID)
-		if verifyErr != nil {
-			panic(verifyErr)
-		}
+		_ = entry.Metadata.Checksum == "" && panicB(fmt.Errorf("%s: missing checksum in metadata", entry.Path))
 
-		storeErr := pm.storeEntryMetadataAndContent(entry, content)
-		if storeErr != nil {
-			panic(storeErr)
-		}
+		panicError(pm.verifyFileChecksum(content, entry.Metadata.Checksum, entry.Path, peer.NodeID))
+		panicError(pm.storeEntryMetadataAndContent(entry, content))
 
 		applied++
 		if applied%100 == 0 {

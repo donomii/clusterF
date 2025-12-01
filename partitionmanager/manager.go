@@ -1233,7 +1233,7 @@ func (pm *PartitionManager) PeriodicSyncCheck(ctx context.Context) {
 		return
 	}
 
-	throttle := make(chan struct{}, 1)
+	throttle := make(chan struct{}, 2)
 	defer close(throttle)
 
 	// Loop forever, checking for partitions to sync
@@ -1450,9 +1450,11 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 
 			if needsReindex {
 				pm.MarkForReindex(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
+				time.Sleep(100 * time.Millisecond) //Give the disk time to cool down
 			}
 			if needsResync {
 				pm.MarkForSync(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
+				time.Sleep(100 * time.Millisecond) //Give the disk time to cool down
 			}
 		} else {
 			panic("partition stores not active, and no disk store")
