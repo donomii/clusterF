@@ -339,7 +339,7 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 	idx.lock()
 	defer idx.unlock()
 
-	idx.logger.Printf("[INDEXER] Adding file %s", path)
+	//idx.logger.Printf("[INDEXER] Adding file %s", path)
 
 	effectivePath := path
 	partitionID := idx.partitionForPath(effectivePath)

@@ -1319,7 +1319,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 		}
 
 		if flagged, found := pm.SyncList.Load(partitionID); !(found && flagged) {
-			pm.debugf("[PARTITION] Skipping partition %v because it is not flagged for sync", partitionID)
+			//pm.debugf("[PARTITION] Skipping partition %v because it is not flagged for sync", partitionID)
 			continue
 		}
 
