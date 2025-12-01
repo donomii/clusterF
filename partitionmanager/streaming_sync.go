@@ -179,6 +179,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	var peerPort int
 	peers := pm.getPeers()
 	for _, peer := range peers {
+		
 		if ctx.Err() != nil {
 			return fmt.Errorf("context canceled: %v", ctx.Err())
 		}
