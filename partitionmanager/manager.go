@@ -1265,7 +1265,7 @@ func (pm *PartitionManager) PeriodicSyncCheck(ctx context.Context) {
 			if partitionID, holders := pm.findFlaggedPartitionToSyncWithHolders(ctx); partitionID != "" {
 
 				throttle <- struct{}{}
-				pm.debugf("Partition syncs in progress: %v", len(throttle))
+				pm.debugf("Chose partition %v to sync, partition syncs in progress: %v", partitionID, len(throttle))
 				// Throttle concurrent syncs
 				pm.SyncList.Store(partitionID, false) // clear flag before syncing
 				go pm.doPartitionSync(ctx, partitionID, throttle, holders)
@@ -1318,7 +1318,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 			pm.debugf("[PARTITION] No partition info found for %s, skipping until reindex", partitionID)
 			continue
 		}
-		if len(info.Holders) >= pm.replicationFactor() {
+		if len(info.Holders) < pm.replicationFactor() {
 			_, hasPartition := info.HolderData[ourNodeId]
 
 			if hasPartition {
@@ -1347,7 +1347,6 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 
 			}
 
-			continue // Already properly replicated and in sync
 		}
 
 	}
