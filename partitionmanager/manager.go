@@ -1318,6 +1318,11 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 			return "", []types.NodeID{}
 		}
 
+		if flagged, found := pm.SyncList.Load(partitionID); !(found && flagged) {
+			pm.debugf("[PARTITION] Skipping partition %v because it is not flagged for sync", partitionID)
+			continue
+		}
+
 		// Get available peers once check BOTH discovery AND CRDT nodes
 		availablePeerIDs := pm.deps.Discovery.GetPeerMap()
 		//pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs.Keys())
@@ -1340,6 +1345,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 					peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
 					pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
 					// sync to a random peer
+					pm.logf("[FINDFLAGGED] Found partition %v, but not enough holders, syncing to random peer %v", partitionID, peerID)
 					return partitionID, []types.NodeID{types.NodeID(peerID)}
 				}
 				pm.debugf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
@@ -1351,13 +1357,13 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 				for _, holderID := range info.Holders {
 					_, exists := availablePeerIDs.Load(string(holderID))
 					if holderID != pm.deps.NodeID && exists {
-
 						availableHolders = append(availableHolders, holderID)
 					}
 				}
 
 				//
 				if len(availableHolders) > 0 {
+					pm.logf("[FINDFLAGGED] Found partition %v, syncing to available holders %v", partitionID, availableHolders)
 					return partitionID, availableHolders
 				} else {
 					pm.logf("[PARTITION] No online holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
@@ -1369,6 +1375,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 
 	}
 
+	pm.logf("[FINDFLAGGED] No flagged partitions found to sync")
 	return "", nil // Nothing to sync
 }
 
