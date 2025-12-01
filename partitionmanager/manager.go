@@ -1318,10 +1318,23 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 			pm.debugf("[PARTITION] No partition info found for %s, skipping until reindex", partitionID)
 			continue
 		}
-		if len(info.Holders) < pm.replicationFactor() {
-			_, hasPartition := info.HolderData[ourNodeId]
+		_, hasPartition := info.HolderData[ourNodeId]
 
-			if hasPartition {
+		if hasPartition {
+			// If we have the partition, check if we have enough holders
+			if len(info.Holders) < pm.replicationFactor() {
+				// If we don't, find available holders to sync from
+				// Pick a random peer from the available peers
+				if len(availablePeerIDs.Keys()) > 0 {
+					//FIXME check for nostore here
+					peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
+					pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
+					// sync to a random peer
+					return partitionID, []types.NodeID{types.NodeID(peerID)}
+				}
+				pm.debugf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
+			} else {
+				// If we have the partition and enough holders, sync to all holders
 
 				// Find available holders to sync from
 				var availableHolders []types.NodeID
@@ -1332,17 +1345,12 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 						availableHolders = append(availableHolders, holderID)
 					}
 				}
+
+				//
 				if len(availableHolders) > 0 {
 					return partitionID, availableHolders
 				} else {
-					// Pick a random peer from the available peers
-					if len(availablePeerIDs.Keys()) > 0 {
-						//FIXME check for nostore here
-						peerID := availablePeerIDs.Keys()[rand.Intn(len(availablePeerIDs.Keys()))]
-						pm.debugf("[PARTITION] Picked random peer %s for %s", peerID, partitionID)
-						return partitionID, []types.NodeID{types.NodeID(peerID)}
-					}
-					pm.debugf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
+					pm.logf("[PARTITION] No online holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
 				}
 
 			}

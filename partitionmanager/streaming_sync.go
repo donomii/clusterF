@@ -49,7 +49,7 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 		http.Error(w, "sync paused", http.StatusServiceUnavailable)
 		return
 	}
-	pm.debugf("[PARTITION] Starting streaming sync for partition %s", partitionID)
+	pm.debugf("[PARTITION GET] Starting streaming sync for partition %s", partitionID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Transfer-Encoding", "chunked")
@@ -179,7 +179,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	var peerPort int
 	peers := pm.getPeers()
 	for _, peer := range peers {
-		
+
 		if ctx.Err() != nil {
 			return fmt.Errorf("context canceled: %v", ctx.Err())
 		}
