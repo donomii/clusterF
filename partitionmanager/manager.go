@@ -1448,7 +1448,7 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			}
 
 			needsReindex := lastReindex.IsZero() || lastUpdate.After(lastReindex)
-			needsResync := lastSync.IsZero() || lastUpdate.After(lastSync) || lastReindex.After(lastSync)
+			needsResync := lastSync.IsZero() || lastUpdate.After(lastSync)
 
 			if needsReindex {
 				pm.MarkForReindex(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
