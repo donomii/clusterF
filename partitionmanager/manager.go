@@ -1093,7 +1093,7 @@ type partitionChecksumEntry struct {
 
 // calculatePartitionChecksum computes a checksum for all files in a partition
 func (pm *PartitionManager) CalculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) (string, error) {
-	pm.debugf("[PARTITION] Calculating checksum for partition %s", partitionID)
+	//pm.debugf("[PARTITION] Calculating checksum for partition %s", partitionID)
 	defer metrics.StartGlobalTimer("partition.calculate_checksum")()
 	metrics.IncrementGlobalCounter("partition.calculate_checksum.calls")
 
