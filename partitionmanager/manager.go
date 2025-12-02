@@ -1346,8 +1346,14 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 		}
 
 		// Compare all the checksums for this partition, if any are different, mark for sync
-		if len(partInfo.Checksums) > 0 {
-			pm.MarkForSync(partitionID, "Chceksums don't match")
+		checksums := make(map[string]bool)
+		for _, checksum := range partInfo.Checksums {
+			checksums[checksum] = true
+		}
+
+		if len(checksums) > 1 {
+			pm.MarkForSync(partitionID, "Checksums don't match")
+			pm.MarkForReindex(partitionID, "Checksums don't match")
 		}
 	}
 }
