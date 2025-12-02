@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"log"
 	"net/http"
 	"sort"
@@ -56,12 +57,13 @@ type ClusterLike interface {
 // The partition manager, everything needed to access partitions and files
 // The FileStore should not be accessed directly, except by partitionManager
 type PartitionManagerLike interface {
-	StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error // Store file in appropriate partition based on path, does not send to network
-	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)                                // Get file and metadata from partition, including from other nodes
-	DeleteFileFromPartition(ctx context.Context, path string) error                                       // Delete file from partition, does not send to network
-	DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, modTime time.Time) error       // Delete file from partition with explicit timestamp
-	GetMetadataFromPartition(path string) (FileMetadata, error)                                           // Get file metadata from partition
-	GetMetadataFromPeers(path string) (FileMetadata, error)                                               // Get file metadata from other nodes
+	StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error                  // Store file in appropriate partition based on path, does not send to network
+	StoreFileInPartitionStream(ctx context.Context, path string, metadataJSON []byte, content io.Reader, size int64) error // Streaming store helper to avoid buffering content
+	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)                                                 // Get file and metadata from partition, including from other nodes
+	DeleteFileFromPartition(ctx context.Context, path string) error                                                        // Delete file from partition, does not send to network
+	DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, modTime time.Time) error                        // Delete file from partition with explicit timestamp
+	GetMetadataFromPartition(path string) (FileMetadata, error)                                                            // Get file metadata from partition
+	GetMetadataFromPeers(path string) (FileMetadata, error)                                                                // Get file metadata from other nodes
 	GetFileFromPeers(path string) ([]byte, FileMetadata, error)
 	CalculatePartitionName(path string) string                                // Calculate partition name for a given path
 	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error // Scan all files in all partitions, calling fn for each file

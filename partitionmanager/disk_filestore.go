@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	stdFs "io/fs"
 	"os"
 	"path/filepath"
@@ -66,6 +67,26 @@ func (fs *DiskFileStore) xorEncrypt(data []byte) []byte {
 		result[i] = data[i] ^ fs.encryptionKey[i%len(fs.encryptionKey)]
 	}
 	return result
+}
+
+type xorWriter struct {
+	w   io.Writer
+	key []byte
+	pos *int64
+}
+
+func (x *xorWriter) Write(p []byte) (int, error) {
+	if len(x.key) == 0 {
+		return x.w.Write(p)
+	}
+	buf := make([]byte, len(p))
+	start := *x.pos
+	for i := range p {
+		buf[i] = p[i] ^ x.key[(int(start)+i)%len(x.key)]
+	}
+	n, err := x.w.Write(buf)
+	*x.pos += int64(n)
+	return n, err
 }
 
 func (fs *DiskFileStore) encrypt(metadata, content []byte) ([]byte, []byte) {
@@ -273,6 +294,96 @@ func (fs *DiskFileStore) Put(path string, metadata, content []byte) error {
 	metrics.IncrementGlobalCounter("disk_filestore.put.success")
 	metrics.AddGlobalCounter("disk_filestore.put.metadata_bytes", int64(len(metadata)))
 	metrics.AddGlobalCounter("disk_filestore.put.content_bytes", int64(len(content)))
+	return nil
+}
+
+// PutStream stores metadata and content streaming from a reader to avoid buffering the entire payload.
+func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Reader, size int64) error {
+	defer metrics.StartGlobalTimer("disk_filestore.put_stream")()
+	metrics.IncrementGlobalCounter("disk_filestore.put_stream.calls")
+
+	metaPath, err := fs.metadataPath(path)
+	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+	contentPath, err := fs.contentPath(path)
+	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+
+	partitionID := types.PartitionIDForPath(path)
+
+	if err := ensureParentDir(metaPath); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+	if err := ensureParentDir(contentPath); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+
+	var meta types.FileMetadata
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		meta = types.FileMetadata{}
+	}
+	modTime := meta.ModifiedAt
+
+	encMetadata := metadata
+	if len(fs.encryptionKey) > 0 {
+		encMetadata = fs.xorEncrypt(metadata)
+	}
+
+	if err := os.WriteFile(metaPath, encMetadata, 0o644); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+	if !modTime.IsZero() {
+		_ = os.Chtimes(metaPath, modTime, modTime)
+	}
+
+	file, err := os.OpenFile(contentPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+	defer file.Close()
+
+	var writer io.Writer = file
+	var offset int64
+	if len(fs.encryptionKey) > 0 {
+		writer = &xorWriter{
+			w:   file,
+			key: fs.encryptionKey,
+			pos: &offset,
+		}
+	}
+
+	written, err := io.CopyBuffer(writer, content, make([]byte, 128*1024))
+	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+	if size > 0 && written != size {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return fmt.Errorf("content size mismatch for %s: expected %d, wrote %d", path, size, written)
+	}
+	if len(fs.encryptionKey) > 0 {
+		offset += written
+	}
+
+	if !modTime.IsZero() {
+		_ = os.Chtimes(contentPath, modTime, modTime)
+	}
+	writeTime := time.Now()
+	if err := fs.writePartitionTimestamp(partitionID, lastUpdateTimestampFile, writeTime); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+	metrics.IncrementGlobalCounter("disk_filestore.put_stream.success")
+	metrics.AddGlobalCounter("disk_filestore.put_stream.metadata_bytes", int64(len(metadata)))
+	metrics.AddGlobalCounter("disk_filestore.put_stream.content_bytes", written)
 	return nil
 }
 

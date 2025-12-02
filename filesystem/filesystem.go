@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -138,6 +139,31 @@ func (fs *ClusterFileSystem) InsertFileIntoCluster(ctx context.Context, path str
 
 }
 
+// InsertFileIntoClusterFromFile stores a file using a temp file path to avoid buffering the full content in memory.
+func (fs *ClusterFileSystem) InsertFileIntoClusterFromFile(ctx context.Context, path string, contentPath string, size int64, checksum string, contentType string, modTime time.Time) ([]types.NodeID, error) {
+	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {
+		return []types.NodeID{}, fmt.Errorf("invalid path: %s", path)
+	}
+
+	metadata := types.FileMetadata{
+		Name:        filepath.Base(path),
+		Path:        path,
+		Size:        size,
+		ContentType: contentType,
+		CreatedAt:   modTime,
+		ModifiedAt:  modTime,
+		IsDirectory: false,
+		Checksum:    checksum,
+	}
+
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
+	}
+
+	metadataJSON, _ := json.Marshal(metadata)
+	return fs.forwardUploadToStorageNodeFromFile(ctx, path, metadataJSON, contentPath, size, contentType)
+}
+
 // StoreFileWithModTimeAndClusterDirect stores a file on the local node using explicit modification time and last cluster update time
 func (fs *ClusterFileSystem) StoreFileWithModTimeDirect(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) (types.NodeID, error) {
 	if fs.cluster.NoStore() {
@@ -170,6 +196,62 @@ func (fs *ClusterFileSystem) StoreFileWithModTimeDirect(ctx context.Context, pat
 	metadataJSON, _ := json.Marshal(metadata)
 
 	if err := fs.cluster.PartitionManager().StoreFileInPartition(ctx, path, metadataJSON, content); err != nil {
+		return "", logerrf("failed to store file: %v", err)
+	}
+
+	return fs.cluster.ID(), nil
+}
+
+// StoreFileWithModTimeDirectFromFile stores a file on the local node using a file path to avoid buffering the content.
+func (fs *ClusterFileSystem) StoreFileWithModTimeDirectFromFile(ctx context.Context, path string, contentPath string, size int64, checksum string, contentType string, modTime time.Time) (types.NodeID, error) {
+	if fs.cluster.NoStore() {
+		panic("fuck you")
+	}
+	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {
+		return "", fmt.Errorf("invalid path: %s", path)
+	}
+
+	if checksum == "" {
+		// Fallback when checksum was not precomputed.
+		file, err := os.Open(contentPath)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+		h := sha256.New()
+		if _, err := io.Copy(h, file); err != nil {
+			return "", err
+		}
+		checksum = hex.EncodeToString(h.Sum(nil))
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return "", err
+		}
+	}
+
+	metadata := types.FileMetadata{
+		Name:        filepath.Base(path),
+		Path:        path,
+		Size:        size,
+		ContentType: contentType,
+		CreatedAt:   modTime,
+		ModifiedAt:  modTime,
+		IsDirectory: false,
+		Checksum:    checksum,
+	}
+
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
+	}
+
+	metadataJSON, _ := json.Marshal(metadata)
+
+	file, err := os.Open(contentPath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	if err := fs.cluster.PartitionManager().StoreFileInPartitionStream(ctx, path, metadataJSON, file, size); err != nil {
 		return "", logerrf("failed to store file: %v", err)
 	}
 
@@ -386,6 +468,121 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	return successOrder, nil
 }
 
+// forwardUploadToStorageNodeFromFile forwards file uploads using a file path to avoid buffering entire content.
+func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Context, path string, metadataJSON []byte, contentPath string, size int64, contentType string) ([]types.NodeID, error) {
+	partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
+	allNodes := fs.cluster.GetAllNodes()
+	nodesForPartition := fs.cluster.GetNodesForPartition(partitionName)
+
+	desiredReplicas := fs.cluster.ReplicationFactor()
+	if desiredReplicas < 1 {
+		desiredReplicas = 1
+	}
+
+	targetNodes := make([]string, 0)
+	targetSet := make(map[string]bool)
+	if len(nodesForPartition) > 0 {
+		for _, nodeID := range nodesForPartition {
+			id := string(nodeID)
+			if id == "" || targetSet[id] {
+				continue
+			}
+			targetSet[id] = true
+			targetNodes = append(targetNodes, id)
+		}
+	} else {
+		candidates := make([]string, 0, len(allNodes))
+		for nodeID, nodeInfo := range allNodes {
+			if nodeInfo != nil && nodeInfo.IsStorage {
+				if nodeInfo.DiskSize > 0 {
+					used := nodeInfo.DiskSize - nodeInfo.DiskFree
+					if used < 0 {
+						used = 0
+					}
+					usage := float64(used) / float64(nodeInfo.DiskSize)
+					if usage >= 0.9 {
+						continue
+					}
+				}
+				candidates = append(candidates, string(nodeID))
+			}
+		}
+		if len(candidates) == 0 {
+			return nil, fmt.Errorf("no storage nodes available for upload")
+		}
+		rand.Shuffle(len(candidates), func(i, j int) {
+			candidates[i], candidates[j] = candidates[j], candidates[i]
+		})
+		count := desiredReplicas
+		if count > len(candidates) {
+			count = len(candidates)
+		}
+		targetNodes = append(targetNodes, candidates[:count]...)
+	}
+
+	peerMap := &syncmap.SyncMap[string, *types.PeerInfo]{}
+	for _, nodeID := range targetNodes {
+		peer, ok := fs.cluster.LoadPeer(types.NodeID(nodeID))
+		if ok {
+			peerMap.Store(nodeID, peer)
+		}
+	}
+
+	// Gather extra storage candidates to fill replication if existing holders are missing.
+	if len(targetNodes) < desiredReplicas {
+		for nodeID, nodeInfo := range allNodes {
+			if nodeInfo != nil && nodeInfo.IsStorage {
+				id := string(nodeID)
+				if targetSet[id] {
+					continue
+				}
+				if nodeInfo.DiskSize > 0 {
+					used := nodeInfo.DiskSize - nodeInfo.DiskFree
+					if used < 0 {
+						used = 0
+					}
+					usage := float64(used) / float64(nodeInfo.DiskSize)
+					if usage >= 0.9 {
+						continue
+					}
+				}
+				targetNodes = append(targetNodes, id)
+				targetSet[id] = true
+			}
+			if len(targetNodes) >= desiredReplicas {
+				break
+			}
+		}
+	}
+
+	requiredSuccesses := desiredReplicas
+	if requiredSuccesses < 1 {
+		requiredSuccesses = 1
+	}
+	if requiredSuccesses > len(targetNodes) {
+		requiredSuccesses = len(targetNodes)
+	}
+
+	attempted, skipped, successes, err, fullySkipped := fs.tryForwardToNodesFromFile(ctx, path, metadataJSON, contentPath, contentType, targetNodes, peerMap, time.Now(), size, nil, requiredSuccesses)
+	if err != nil {
+		return successes, err
+	}
+
+	if fullySkipped && len(successes) == 0 {
+		return successes, fmt.Errorf("all uploads skipped or failed for %s", path)
+	}
+
+	successOrder := make([]types.NodeID, 0, len(attempted))
+	for _, id := range targetNodes {
+		if attempted[id] {
+			successOrder = append(successOrder, types.NodeID(id))
+		}
+	}
+
+	fs.debugf("[FILES] forwardUploadToStorageNodeFromFile attempted %d, skipped %d, successes %d", len(attempted), skipped, len(successes))
+	return successOrder, nil
+}
+
 func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string, metadataJSON []byte, content []byte, contentType string, targets []string, peerMap *syncmap.SyncMap[string, *types.PeerInfo], modTime time.Time, size int64, metaErr error) (map[string]bool, int, []types.NodeID, error, bool) {
 	if len(targets) == 0 {
 		return map[string]bool{}, 0, nil, fmt.Errorf("no storage nodes available to forward upload"), false
@@ -503,6 +700,137 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 	}
 
 	// Only return error if all uploads failed
+	if len(errorMessages) > 0 {
+		combinedErr := errors.New(strings.Join(errorMessages, "; "))
+		return attempted, skipped, successes, combinedErr, false
+	}
+
+	return attempted, skipped, successes, nil, skipped == len(targets)
+}
+
+func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path string, metadataJSON []byte, contentPath string, contentType string, targets []string, peerMap *syncmap.SyncMap[string, *types.PeerInfo], modTime time.Time, size int64, metaErr error, requiredSuccesses int) (map[string]bool, int, []types.NodeID, error, bool) {
+	if len(targets) == 0 {
+		return map[string]bool{}, 0, nil, fmt.Errorf("no storage nodes available to forward upload"), false
+	}
+
+	type forwardResult struct {
+		node    types.NodeID
+		skipped bool
+		err     error
+	}
+
+	skipped := 0
+	attempted := make(map[string]bool, len(targets))
+	metaHeader := base64.StdEncoding.EncodeToString(metadataJSON)
+
+	results := make(chan forwardResult, len(targets))
+	var wg sync.WaitGroup
+
+	for _, nodeID := range targets {
+		attempted[nodeID] = true
+
+		wg.Add(1)
+		go func(nodeID string) {
+			defer wg.Done()
+
+			peer, ok := peerMap.Load(nodeID)
+			if !ok {
+				partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
+				backdatedTime := time.Now().Add(-24 * time.Hour)
+				fs.debugf("[FILES] Node %s not found in discovery peers, removing partition %s entries backdated to %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
+
+				if err := fs.cluster.PartitionManager().RemoveNodeFromPartitionWithTimestamp(types.NodeID(nodeID), partitionName, backdatedTime); err != nil {
+					fs.debugf("[FILES] Failed to remove node %s from partition %s: %v", nodeID, partitionName, err)
+				}
+
+				msg := fmt.Errorf("[FILES] Node %s not found in discovery peers(%v)", nodeID, peerMap.Keys())
+				fs.debugf("%v", msg)
+				results <- forwardResult{node: types.NodeID(nodeID), err: msg}
+				return
+			}
+
+			if metaErr == nil {
+				upToDate, err := fs.PeerHasUpToDateFile(peer, path, modTime, size)
+				if err == nil && upToDate {
+					fs.debugf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
+					results <- forwardResult{node: types.NodeID(nodeID), skipped: true}
+					return
+				}
+				if err != nil {
+					fs.debugf("[FILES] HEAD check failed for %s on %s: %v", path, peer.NodeID, err)
+				}
+			}
+
+			fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
+			if err != nil {
+				results <- forwardResult{node: types.NodeID(nodeID), err: err}
+				return
+			}
+
+			f, err := os.Open(contentPath)
+			if err != nil {
+				results <- forwardResult{node: types.NodeID(nodeID), err: err}
+				return
+			}
+			defer f.Close()
+
+			resp, err := httpclient.Put(ctx, fs.cluster.DataClient(), fileURL, f,
+				httpclient.WithHeader("Content-Type", contentType),
+				httpclient.WithHeader("X-Forwarded-From", string(fs.cluster.ID())),
+				httpclient.WithHeader("X-ClusterF-Metadata", metaHeader),
+				httpclient.RequestBuilder(func(req *http.Request) error {
+					req.ContentLength = size
+					return nil
+				}),
+			)
+			if err != nil {
+				results <- forwardResult{node: types.NodeID(nodeID), err: err}
+				return
+			}
+			respBody, err := resp.ReadAllAndClose()
+			status := http.StatusInternalServerError
+			if resp != nil && resp.Response != nil {
+				status = resp.StatusCode
+			}
+
+			if status >= 200 && status < 300 {
+				fs.debugf("[FILES] Forwarded upload %s to %s", path, peer.NodeID)
+				results <- forwardResult{node: types.NodeID(nodeID)}
+				return
+			}
+			results <- forwardResult{
+				node: types.NodeID(nodeID),
+				err:  fmt.Errorf("peer %s returned %d for PUT %s: %s", peer.NodeID, status, path, strings.TrimSpace(string(respBody))),
+			}
+		}(nodeID)
+	}
+
+	wg.Wait()
+	close(results)
+
+	var errorMessages []string
+	successes := make([]types.NodeID, 0, len(targets))
+
+	for res := range results {
+		if res.skipped {
+			skipped++
+			continue
+		}
+		if res.err != nil {
+			errorMessages = append(errorMessages, res.err.Error())
+			continue
+		}
+		successes = append(successes, res.node)
+	}
+
+	if len(successes) > 0 {
+		var combinedErr error
+		if len(errorMessages) > 0 {
+			combinedErr = errors.New(strings.Join(errorMessages, "; "))
+		}
+		return attempted, skipped, successes, combinedErr, skipped == len(targets)
+	}
+
 	if len(errorMessages) > 0 {
 		combinedErr := errors.New(strings.Join(errorMessages, "; "))
 		return attempted, skipped, successes, combinedErr, false

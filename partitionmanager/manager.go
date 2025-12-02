@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -937,6 +938,67 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 		HolderData: holderMap,
 		Metadata:   metadata,
 	}
+}
+
+// StoreFileInPartitionStream stores a file using a streaming reader when supported by the filestore.
+func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path string, metadataJSON []byte, content io.Reader, size int64) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if pm.deps.Cluster.NoStore() {
+		panic("wtf")
+	}
+	pm.recordEssentialDiskActivity()
+	if pm.deps.NoStore {
+		pm.deps.Logger.Panicf("[PARTITION] No-store mode: not storing file %s locally", path)
+		return nil
+	}
+
+	partitionID := HashToPartition(path)
+	pm.debugf("[PARTITION] Streaming store of file %s in partition %s (%d bytes)", path, partitionID, size)
+
+	if streamer, ok := pm.deps.FileStore.(interface {
+		PutStream(path string, metadata []byte, content io.Reader, size int64) error
+	}); ok {
+		if err := streamer.PutStream(path, metadataJSON, content, size); err != nil {
+			return fmt.Errorf("failed to store file via stream: %v", err)
+		}
+	} else {
+		buf, err := io.ReadAll(content)
+		if err != nil {
+			return fmt.Errorf("failed to read content for store: %v", err)
+		}
+		if err := pm.deps.FileStore.Put(path, metadataJSON, buf); err != nil {
+			return fmt.Errorf("failed to store file: %v", err)
+		}
+		size = int64(len(buf))
+	}
+
+	pm.logf("[PARTITION] Stored file %s in partition %s (%d bytes)", path, partitionID, size)
+
+	if pm.deps.Indexer != nil {
+		var metadata types.FileMetadata
+		if err := json.Unmarshal(metadataJSON, &metadata); err == nil {
+			if metadata.Path == "" {
+				metadata.Path = path
+			}
+			pm.deps.Indexer.AddFile(path, metadata)
+		}
+	}
+
+	pm.MarkForReindex(partitionID, fmt.Sprintf("stored file %s", path))
+	pm.MarkForSync(partitionID, fmt.Sprintf("stored file %s", path))
+
+	if metadataBytes, _, exists, err := pm.deps.FileStore.Get(path); err == nil && exists {
+		var parsedMeta types.FileMetadata
+		if json.Unmarshal(metadataBytes, &parsedMeta) == nil {
+			if parsedMeta.Checksum == "" {
+				panic("fuck ai")
+			}
+		}
+	}
+
+	return nil
 }
 
 // getAllPartitions returns all known partitions from CRDT using individual holder keys

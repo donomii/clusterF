@@ -1,12 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -44,6 +47,30 @@ func (c *Cluster) handleInternalFilesAPI(w http.ResponseWriter, r *http.Request)
 	default:
 		http.Error(w, fmt.Sprintf("Method %s not allowed for /internal/files (supported: GET, HEAD, PUT, DELETE, POST)", r.Method), http.StatusMethodNotAllowed)
 	}
+}
+
+// bufferRequestBodyToFile streams the request body to a temp file while hashing it,
+// returning the file path, size, and checksum.
+func bufferRequestBodyToFile(r io.Reader) (string, int64, string, error) {
+	tmp, err := os.CreateTemp("", "clusterf-upload-*")
+	if err != nil {
+		return "", 0, "", err
+	}
+
+	hasher := sha256.New()
+	n, copyErr := io.Copy(io.MultiWriter(tmp, hasher), r)
+	if copyErr != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", 0, "", copyErr
+	}
+
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return "", 0, "", err
+	}
+
+	return tmp.Name(), n, hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 // handleFilesAPI handles file system API operations.
@@ -236,31 +263,35 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			options = append(options, httpclient.WithQueryParam("download", download))
 		}
 
-		body, headers, status, err := httpclient.SimpleGet(r.Context(), c.HttpDataClient, fileURL, options...)
+		resp, err := httpclient.Get(r.Context(), c.HttpDataClient, fileURL, options...)
 		if err != nil {
 			c.debugf("[FILES] Failed to get file from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
 		}
+		if resp == nil || resp.Response == nil {
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: empty response", peer.NodeID))
+			continue
+		}
 
+		status := resp.StatusCode
 		if status == http.StatusOK {
 			c.debugf("[FILES] Found file %s on holder %s", path, peer.NodeID)
 
-			// Copy all headers from peer response
-			for key, values := range headers {
+			for key, values := range resp.Header {
 				for _, value := range values {
 					w.Header().Add(key, value)
 				}
 			}
 
 			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write(body); err != nil {
+			if _, err := resp.CopyToAndClose(w); err != nil {
 				c.debugf("[FILES] Failed streaming response body from %s: %v", peer.NodeID, err)
 			}
 			return
 		}
 
-		// Read error response body for more detailed error information
+		body, _ := resp.ReadAllAndClose()
 		msg := strings.TrimSpace(string(body))
 		holderErrors = append(holderErrors, strings.TrimSpace(fmt.Sprintf("%s: %d %s", peer.NodeID, status, msg)))
 		c.debugf("[FILES] Holder %s returned %d for file %s: %s", peer.NodeID, status, path, msg)
@@ -456,13 +487,14 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 
 	c.debugf("[FILES] Internal PUT request for path: %s", path)
 
-	content, err := io.ReadAll(r.Body)
+	tempPath, size, checksum, err := bufferRequestBodyToFile(r.Body)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to read request body for %s: %v", path, err), http.StatusBadRequest)
 		return
 	}
+	defer os.Remove(tempPath)
 
-	if len(content) == 0 && r.Header.Get("Content-Type") == "" {
+	if size == 0 && r.Header.Get("Content-Type") == "" {
 		c.debugf("[FILES] Ignoring empty internal upload for %s (likely directory)", path)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -499,6 +531,10 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, fmt.Sprintf("ModifiedAt timestamp is zero in forwarded metadata for %s", path), http.StatusBadRequest)
 			return
 		}
+		metadata.Size = size
+		if checksum != "" {
+			metadata.Checksum = checksum
+		}
 	}
 
 	contentType := r.Header.Get("Content-Type")
@@ -511,7 +547,7 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 			contentType = metadata.ContentType
 		}
 
-		if _, err := c.FileSystem.StoreFileWithModTimeDirect(c.AppContext(), path, content, contentType, metadata.ModifiedAt); err != nil { //FIXME
+		if _, err := c.FileSystem.StoreFileWithModTimeDirectFromFile(c.AppContext(), path, tempPath, size, checksum, contentType, metadata.ModifiedAt); err != nil { //FIXME
 			http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -527,18 +563,18 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 
-		if _, err := c.FileSystem.StoreFileWithModTimeDirect(c.AppContext(), path, content, contentType, localModTime); err != nil {
+		if _, err := c.FileSystem.StoreFileWithModTimeDirectFromFile(c.AppContext(), path, tempPath, size, checksum, contentType, localModTime); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to store internal file: %v", err), http.StatusInternalServerError)
 			return
 		}
 	}
 
-	c.debugf("[FILES] Stored internal %s (%d bytes)", path, len(content))
+	c.debugf("[FILES] Stored internal %s (%d bytes)", path, size)
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"path":    path,
-		"size":    len(content),
+		"size":    size,
 	})
 }
 
@@ -639,11 +675,12 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		panic("fuck you")
 	}
 
-	content, err := io.ReadAll(r.Body)
+	tempPath, size, checksum, err := bufferRequestBodyToFile(r.Body)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to read request body for %s: %v", path, err), http.StatusBadRequest)
 		return
 	}
+	defer os.Remove(tempPath)
 
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
@@ -661,14 +698,14 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
-	_, err = c.FileSystem.InsertFileIntoCluster(r.Context(), path, content, contentType, localModTime)
+	_, err = c.FileSystem.InsertFileIntoClusterFromFile(r.Context(), path, tempPath, size, checksum, contentType, localModTime)
 	if err != nil {
 		c.debugf("[FILES] Forwarded PUT %s", path)
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"path":    path,
-			"size":    len(content),
+			"size":    size,
 		})
 		return
 	}
