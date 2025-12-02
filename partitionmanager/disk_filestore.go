@@ -27,14 +27,9 @@ type DiskFileStore struct {
 	controlDir  string // Holds per-partition control files (timestamps, etc)
 	transferDir string // Holds temp upload files before atomic moves
 
-	encryptionKey []byte // XOR encryption key (nil = no encryption)
+	encryptionKey  []byte // XOR encryption key (nil = no encryption)
+	timestampStore *PartitionTimestampStore
 }
-
-const (
-	lastReindexTimestampFile = "last_reindex_start.txt"
-	lastSyncTimestampFile    = "last_sync_start.txt"
-	lastUpdateTimestampFile  = "last_update.txt"
-)
 
 // NewDiskFileStore creates a new disk-backed filestore rooted at baseDir.
 func NewDiskFileStore(baseDir string) *DiskFileStore {
@@ -49,11 +44,18 @@ func NewDiskFileStore(baseDir string) *DiskFileStore {
 	_ = os.MkdirAll(store.contentDir, 0o755)
 	_ = os.MkdirAll(store.controlDir, 0o755)
 	_ = os.MkdirAll(store.transferDir, 0o755)
+	timestampStore, err := NewPartitionTimestampStore(store.controlDir)
+	if err != nil {
+		panic(fmt.Sprintf("failed to initialize timestamp mmaps: %v", err))
+	}
+	store.timestampStore = timestampStore
 	return store
 }
 
 // Close implements FileStoreLike; nothing to clean up for plain disk storage.
-func (fs *DiskFileStore) Close() {}
+func (fs *DiskFileStore) Close() {
+	fs.timestampStore.Close()
+}
 
 // SetEncryptionKey configures the XOR encryption key.
 func (fs *DiskFileStore) SetEncryptionKey(key []byte) {
@@ -136,6 +138,11 @@ func (fs *DiskFileStore) partitionTimestampPath(partitionID types.PartitionID, f
 }
 
 func (fs *DiskFileStore) writePartitionTimestamp(partitionID types.PartitionID, filename string, ts time.Time) error {
+	if err := fs.timestampStore.Write(partitionID, filename, ts); err != nil {
+		return err
+	}
+
+	// Keep legacy per-partition timestamp files in sync for compatibility.
 	path, err := fs.partitionTimestampPath(partitionID, filename)
 	if err != nil {
 		return err
@@ -147,22 +154,7 @@ func (fs *DiskFileStore) writePartitionTimestamp(partitionID types.PartitionID, 
 }
 
 func (fs *DiskFileStore) readPartitionTimestamp(partitionID types.PartitionID, filename string) (time.Time, error) {
-	path, err := fs.partitionTimestampPath(partitionID, filename)
-	if err != nil {
-		return time.Time{}, err
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return time.Time{}, nil
-		}
-		return time.Time{}, err
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b)))
-	if err != nil {
-		return time.Time{}, err
-	}
-	return parsed, nil
+	return fs.timestampStore.Read(partitionID, filename)
 }
 
 func (fs *DiskFileStore) recordPartitionUpdateTimestamp(path string, ts time.Time) error {
