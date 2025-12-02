@@ -1344,6 +1344,11 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 		if numHolders < pm.replicationFactor() {
 			pm.MarkForSync(partitionID, "Under replicated")
 		}
+
+		// Compare all the checksums for this partition, if any are different, mark for sync
+		if len(partInfo.Checksums) > 0 {
+			pm.MarkForSync(partitionID, "Chceksums don't match")
+		}
 	}
 }
 
