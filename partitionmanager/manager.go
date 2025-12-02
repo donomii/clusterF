@@ -1485,7 +1485,7 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 		if ctx.Err() != nil {
 			return
 		}
-		time.Sleep(500 * time.Millisecond) //Give the disk time to cool down
+		time.Sleep(50 * time.Millisecond) //Give the disk time to cool down
 
 		//If we are using partition stores, mark all partitions that start with this partition store ID
 		//otherwise, we are getting a list of actual partitions
