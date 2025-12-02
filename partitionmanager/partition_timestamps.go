@@ -2,9 +2,7 @@ package partitionmanager
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
-	stdFs "io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -54,16 +52,11 @@ func NewPartitionTimestampStore(controlDir string) (*PartitionTimestampStore, er
 
 	for txtName, mmapName := range timestampMmapNames {
 		path := filepath.Join(controlDir, mmapName)
-		mmapFile, created, err := openTimestampMmap(path)
+		mmapFile, err := openTimestampMmap(path)
 		if err != nil {
 			return nil, err
 		}
 		store.mmaps.Store(txtName, mmapFile)
-		if created {
-			if err := store.backfillTimestampMmap(mmapFile, txtName); err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	return store, nil
@@ -122,42 +115,37 @@ func (s *PartitionTimestampStore) readTimestampFromMmap(partitionID types.Partit
 	return time.Unix(0, nanos), nil
 }
 
-func openTimestampMmap(path string) (*timestampMmap, bool, error) {
-	created := false
+func openTimestampMmap(path string) (*timestampMmap, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, false, err
-	}
-
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		created = true
+		return nil, err
 	}
 
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
-		return nil, false, err
+		return nil, err
 	}
 
 	if info.Size() != timestampFileSize {
 		if err := file.Truncate(timestampFileSize); err != nil {
 			_ = file.Close()
-			return nil, false, err
+			return nil, err
 		}
-		created = true
+
 	}
 
 	data, err := unix.Mmap(int(file.Fd()), 0, timestampFileSize, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
 	if err != nil {
 		_ = file.Close()
-		return nil, false, err
+		return nil, err
 	}
 
-	return &timestampMmap{file: file, data: data}, created, nil
+	return &timestampMmap{file: file, data: data}, nil
 }
 
 func (m *timestampMmap) close() error {
@@ -195,38 +183,6 @@ func partitionIndex(partitionID types.PartitionID) (int, error) {
 		return 0, fmt.Errorf("partition ID out of range: %s", partitionID)
 	}
 	return num, nil
-}
-
-func (s *PartitionTimestampStore) backfillTimestampMmap(m *timestampMmap, filename string) error {
-	if m == nil {
-		return fmt.Errorf("nil timestamp mmap for %s", filename)
-	}
-	return filepath.WalkDir(s.controlDir, func(path string, d stdFs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if errors.Is(walkErr, os.ErrNotExist) {
-				return nil
-			}
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if filepath.Base(path) != filename {
-			return nil
-		}
-		ts, err := readTimestampFromFile(path)
-		if err != nil {
-			return nil
-		}
-		partitionID := types.PartitionID(filepath.Base(filepath.Dir(path)))
-		if partitionID == "" {
-			return nil
-		}
-		if err := s.writeTimestampToMmap(partitionID, filename, ts); err != nil {
-			return nil
-		}
-		return nil
-	})
 }
 
 func readTimestampFromFile(path string) (time.Time, error) {
