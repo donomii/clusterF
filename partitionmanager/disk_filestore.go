@@ -142,15 +142,18 @@ func (fs *DiskFileStore) writePartitionTimestamp(partitionID types.PartitionID, 
 		return err
 	}
 
-	// Keep legacy per-partition timestamp files in sync for compatibility.
-	path, err := fs.partitionTimestampPath(partitionID, filename)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(ts.Format(time.RFC3339Nano)+"\n"), 0o644)
+	/*
+		// Keep legacy per-partition timestamp files in sync for compatibility.
+		path, err := fs.partitionTimestampPath(partitionID, filename)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(ts.Format(time.RFC3339Nano)+"\n"), 0o644)
+	*/
+	return nil
 }
 
 func (fs *DiskFileStore) readPartitionTimestamp(partitionID types.PartitionID, filename string) (time.Time, error) {
