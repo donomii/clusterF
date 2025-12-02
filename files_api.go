@@ -228,6 +228,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
 
 	// Try each holder until we find the file
+	// TODO: download all headers from all peers, make sure we return the newest file, in case sync is not complete
 	var holderErrors []string
 	for _, holderID := range partitionInfo.Holders {
 		c.debugf("[FILES] Trying holder %s for file %s", holderID, path)

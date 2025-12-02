@@ -146,7 +146,7 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 
 	pm.notifyFileListChanged()
 
-	pm.recordPartitionTimestamp(partitionID, lastSyncTimestampFile, syncStart)
+	pm.recordPartitionTimestamp(partitionID, lastSyncTimestampFile, syncStart) //TODO I'm not sure if this is safe
 
 	response := map[string]int{
 		"applied": applied,
