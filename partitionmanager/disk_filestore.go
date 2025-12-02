@@ -25,6 +25,7 @@ type DiskFileStore struct {
 	metadataDir string // Holds the partitions directories containing metadata
 	contentDir  string // Holds the partitions directories containing content
 	controlDir  string // Holds per-partition control files (timestamps, etc)
+	transferDir string // Holds temp upload files before atomic moves
 
 	encryptionKey []byte // XOR encryption key (nil = no encryption)
 }
@@ -42,10 +43,12 @@ func NewDiskFileStore(baseDir string) *DiskFileStore {
 		metadataDir: filepath.Join(baseDir, "metadata"),
 		contentDir:  filepath.Join(baseDir, "contents"),
 		controlDir:  filepath.Join(baseDir, "controlfiles"),
+		transferDir: filepath.Join(baseDir, "transfer"),
 	}
 	_ = os.MkdirAll(store.metadataDir, 0o755)
 	_ = os.MkdirAll(store.contentDir, 0o755)
 	_ = os.MkdirAll(store.controlDir, 0o755)
+	_ = os.MkdirAll(store.transferDir, 0o755)
 	return store
 }
 
@@ -330,20 +333,34 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 	}
 	modTime := meta.ModifiedAt
 
-	encMetadata := metadata
-	if len(fs.encryptionKey) > 0 {
-		encMetadata = fs.xorEncrypt(metadata)
-	}
-
-	if err := os.WriteFile(metaPath, encMetadata, 0o644); err != nil {
+	contentTmpFile, err := os.CreateTemp(fs.transferDir, "content-upload-*")
+	if err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
 		return err
 	}
-	if !modTime.IsZero() {
-		_ = os.Chtimes(metaPath, modTime, modTime)
-	}
+	tmpContent := contentTmpFile.Name()
+	contentTmpFile.Close()
 
-	file, err := os.OpenFile(contentPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	metaTmpFile, err := os.CreateTemp(fs.transferDir, "meta-upload-*")
+	if err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		_ = os.Remove(tmpContent)
+		return err
+	}
+	tmpMeta := metaTmpFile.Name()
+	metaTmpFile.Close()
+
+	cleanup := func() {
+		if tmpContent != "" {
+			_ = os.Remove(tmpContent)
+		}
+		if tmpMeta != "" {
+			_ = os.Remove(tmpMeta)
+		}
+	}
+	defer cleanup()
+
+	file, err := os.OpenFile(tmpContent, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
 		return err
@@ -373,9 +390,39 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 		offset += written
 	}
 
+	if err := file.Sync(); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+
+	// Move the completed content into place before metadata so readers never see metadata without content.
+	if err := os.Rename(tmpContent, contentPath); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+	tmpContent = ""
+
+	encMetadata := metadata
+	if len(fs.encryptionKey) > 0 {
+		encMetadata = fs.xorEncrypt(metadata)
+	}
+
+	if err := os.WriteFile(tmpMeta, encMetadata, 0o644); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+
+	if err := os.Rename(tmpMeta, metaPath); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+	tmpMeta = ""
+
 	if !modTime.IsZero() {
 		_ = os.Chtimes(contentPath, modTime, modTime)
+		_ = os.Chtimes(metaPath, modTime, modTime)
 	}
+
 	writeTime := time.Now()
 	if err := fs.writePartitionTimestamp(partitionID, lastUpdateTimestampFile, writeTime); err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
