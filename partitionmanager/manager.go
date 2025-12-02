@@ -61,6 +61,27 @@ func (pm *PartitionManager) MarkForSync(pId types.PartitionID, reason string) {
 	pm.logf("[MarkForSync] Marked partition %v for sync, because %s", pId, reason)
 }
 
+// SyncListPendingCount returns the number of partitions currently flagged for sync.
+func (pm *PartitionManager) SyncListPendingCount() int {
+	return pm.countFlagged(pm.SyncList)
+}
+
+// ReindexListPendingCount returns the number of partitions currently flagged for reindex.
+func (pm *PartitionManager) ReindexListPendingCount() int {
+	return pm.countFlagged(pm.ReindexList)
+}
+
+func (pm *PartitionManager) countFlagged(list *syncmap.SyncMap[types.PartitionID, bool]) int {
+	count := 0
+	list.Range(func(_ types.PartitionID, flagged bool) bool {
+		if flagged {
+			count++
+		}
+		return true
+	})
+	return count
+}
+
 func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	if pm.deps.Cluster.NoStore() {
 		return
@@ -1307,7 +1328,7 @@ func (pm *PartitionManager) RunUnderReplicatedMonitor(ctx context.Context) {
 }
 
 func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) {
-	for partNum := range 65536 {
+	for partNum := 0; partNum < 65536; partNum++ {
 		partitionID := types.PartitionID(fmt.Sprintf("p%05d", partNum))
 		if ctx.Err() != nil {
 			return
@@ -1392,7 +1413,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 					}
 				}
 
-				//
+				// if at least some holders are online, assume the rest are rebooting or something temporary
 				if len(availableHolders) > 0 {
 					pm.logf("[FINDFLAGGED] Found partition %v, syncing to available holders %v", partitionID, availableHolders)
 					return partitionID, availableHolders
@@ -1528,7 +1549,6 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 	totalPartitions := len(allPartitions)
 
 	underReplicated := 0
-	pendingSync := 0
 	currentRF := pm.replicationFactor()
 
 	for _, info := range allPartitions {
@@ -1542,10 +1562,6 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 
 		if len(info.Holders) < currentRF {
 			underReplicated++
-			// Check if we need to sync this partition (we don't have it but should)
-			if !localPartitions[string(info.ID)] {
-				pendingSync++
-			}
 
 		}
 	}
@@ -1555,11 +1571,16 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 		totalFiles += info.FileCount
 	}
 
+	syncPending := pm.SyncListPendingCount()
+	reindexPending := pm.ReindexListPendingCount()
+
 	return types.PartitionStatistics{
 		Local_partitions:      len(localPartitions),
 		Total_partitions:      totalPartitions,
 		Under_replicated:      underReplicated,
-		Pending_sync:          pendingSync,
+		Pending_sync:          syncPending,
+		Sync_list_pending:     syncPending,
+		Reindex_list_pending:  reindexPending,
 		Replication_factor:    currentRF,
 		Total_files:           totalFiles,
 		Partition_count_limit: types.DefaultPartitionCount,

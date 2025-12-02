@@ -76,26 +76,28 @@ func (c *Cluster) getPeerList() []types.PeerInfo {
 		}
 
 		peer := types.PeerInfo{
-			NodeID:        types.NodeID(nodeData.NodeID),
-			Address:       nodeData.Address,
-			HTTPPort:      nodeData.HTTPPort,
-			DiscoveryPort: nodeData.DiscoveryPort,
-			LastSeen:      nodeData.LastSeen,
-			Available:     nodeData.Available,
-			BytesStored:   nodeData.BytesStored,
-			DiskSize:      nodeData.DiskSize,
-			DiskFree:      nodeData.DiskFree,
-			IsStorage:     nodeData.IsStorage,
-			DataDir:       nodeData.DataDir,
-			StorageFormat: nodeData.StorageFormat,
-			StorageMinor:  nodeData.StorageMinor,
-			Program:       nodeData.Program,
-			Version:       nodeData.Version,
-			URL:           nodeData.URL,
-			ExportDir:     nodeData.ExportDir,
-			ClusterDir:    nodeData.ClusterDir,
-			ImportDir:     nodeData.ImportDir,
-			Debug:         nodeData.Debug,
+			NodeID:         types.NodeID(nodeData.NodeID),
+			Address:        nodeData.Address,
+			HTTPPort:       nodeData.HTTPPort,
+			DiscoveryPort:  nodeData.DiscoveryPort,
+			LastSeen:       nodeData.LastSeen,
+			Available:      nodeData.Available,
+			BytesStored:    nodeData.BytesStored,
+			DiskSize:       nodeData.DiskSize,
+			DiskFree:       nodeData.DiskFree,
+			SyncPending:    nodeData.SyncPending,
+			ReindexPending: nodeData.ReindexPending,
+			IsStorage:      nodeData.IsStorage,
+			DataDir:        nodeData.DataDir,
+			StorageFormat:  nodeData.StorageFormat,
+			StorageMinor:   nodeData.StorageMinor,
+			Program:        nodeData.Program,
+			Version:        nodeData.Version,
+			URL:            nodeData.URL,
+			ExportDir:      nodeData.ExportDir,
+			ClusterDir:     nodeData.ClusterDir,
+			ImportDir:      nodeData.ImportDir,
+			Debug:          nodeData.Debug,
 		}
 
 		peerList = append(peerList, peer)
@@ -370,6 +372,13 @@ func (c *Cluster) updateNodeMetadata() {
 		c.debugf("[DISK_ACTIVITY] Disk inactive; using cached disk metrics for metadata update")
 	}
 
+	syncPending := 0
+	reindexPending := 0
+	if c.partitionManager != nil {
+		syncPending = c.partitionManager.SyncListPendingCount()
+		reindexPending = c.partitionManager.ReindexListPendingCount()
+	}
+
 	// Get our external address from discovery
 	address := ""
 	peers := c.DiscoveryManager().GetPeers()
@@ -399,26 +408,28 @@ func (c *Cluster) updateNodeMetadata() {
 	absDataDir, _ := filepath.Abs(c.DataDir)
 
 	nodeData := types.NodeData{
-		NodeID:        string(c.NodeId),
-		Address:       address,
-		HTTPPort:      c.HTTPDataPort,
-		DiscoveryPort: c.DiscoveryPort,
-		LastSeen:      time.Now(),
-		Available:     true,
-		BytesStored:   0,
-		DiskSize:      diskSize,
-		DiskFree:      diskFree,
-		IsStorage:     !c.noStore,
-		DataDir:       absDataDir,
-		StorageFormat: storageFormat,
-		StorageMinor:  storageMinor,
-		Program:       program,
-		Version:       version,
-		URL:           url,
-		ExportDir:     c.ExportDir,
-		ClusterDir:    c.ClusterDir,
-		ImportDir:     c.ImportDir,
-		Debug:         c.Debug,
+		NodeID:         string(c.NodeId),
+		Address:        address,
+		HTTPPort:       c.HTTPDataPort,
+		DiscoveryPort:  c.DiscoveryPort,
+		LastSeen:       time.Now(),
+		Available:      true,
+		BytesStored:    0,
+		DiskSize:       diskSize,
+		DiskFree:       diskFree,
+		SyncPending:    syncPending,
+		ReindexPending: reindexPending,
+		IsStorage:      !c.noStore,
+		DataDir:        absDataDir,
+		StorageFormat:  storageFormat,
+		StorageMinor:   storageMinor,
+		Program:        program,
+		Version:        version,
+		URL:            url,
+		ExportDir:      c.ExportDir,
+		ClusterDir:     c.ClusterDir,
+		ImportDir:      c.ImportDir,
+		Debug:          c.Debug,
 	}
 	nodeJSON, _ := json.Marshal(nodeData)
 	updates := c.frogpond.SetDataPoint(nodeKey, nodeJSON)

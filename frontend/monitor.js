@@ -125,20 +125,17 @@ async function refreshStats() {
         document.getElementById('under_replicated').textContent = partitionStats.under_replicated || 0;
         document.getElementById('local_partitions').textContent = partitionStats.local_partitions || 0;
         document.getElementById('total_files').textContent = partitionStats.total_files || 0;
-        document.getElementById('pending_sync').textContent = partitionStats.pending_sync || 0;
         
         const nodeId = status.node_id;
         let currentNodeData = null;
-        let clusterTotalBytesStored = 0;
         let clusterTotalDiskSize = 0;
         let clusterTotalDiskFree = 0;
+        let totalSyncPending = 0;
+        let totalReindexPending = 0;
         
-        if (clusterStats.peer_list) {
+        if (clusterStats.peer_list && clusterStats.peer_list.length > 0) {
             for (const peer of clusterStats.peer_list) {
                 if (peer.is_storage !== false) {
-                    if (peer.bytes_stored !== undefined) {
-                        clusterTotalBytesStored += peer.bytes_stored;
-                    }
                     if (peer.disk_size !== undefined) {
                         clusterTotalDiskSize += peer.disk_size;
                     }
@@ -147,13 +144,20 @@ async function refreshStats() {
                     }
                 }
                 
+                totalSyncPending += peer.sync_pending || 0;
+                totalReindexPending += peer.reindex_pending || 0;
+                
                 if (peer.node_id === nodeId) {
                     currentNodeData = peer;
                 }
             }
+        } else {
+            totalSyncPending = partitionStats.sync_list_pending || partitionStats.pending_sync || 0;
+            totalReindexPending = partitionStats.reindex_list_pending || 0;
         }
         
-        document.getElementById('cluster_bytes_stored').textContent = formatBytes(clusterTotalBytesStored);
+        document.getElementById('pending_sync').textContent = totalSyncPending;
+        document.getElementById('cluster_reindex_pending').textContent = totalReindexPending;
         document.getElementById('cluster_disk_free').textContent = formatBytes(clusterTotalDiskFree);
         
         if (clusterTotalDiskSize > 0) {
@@ -211,7 +215,7 @@ async function refreshStats() {
         document.getElementById('local_partitions').textContent = 'WAIT';
         document.getElementById('total_files').textContent = 'WAIT';
         document.getElementById('pending_sync').textContent = 'WAIT';
-        document.getElementById('cluster_bytes_stored').textContent = 'WAIT';
+        document.getElementById('cluster_reindex_pending').textContent = 'WAIT';
         document.getElementById('cluster_disk_usage').textContent = 'WAIT';
         document.getElementById('cluster_disk_free').textContent = 'WAIT';
         document.getElementById('node_bytes_stored').textContent = 'WAIT';
@@ -467,6 +471,8 @@ function updateAllNodesInfo(clusterStats) {
                         <div><strong>Disk Size:</strong> ${formatBytes(node.disk_size || 0)}</div>
                         <div><strong>Disk Free:</strong> ${formatBytes(node.disk_free || 0)}</div>
                         <div><strong>Disk Usage:</strong> ${diskUsagePercent}</div>
+                        <div><strong>Sync Pending:</strong> ${node.sync_pending || 0}</div>
+                        <div><strong>Reindex Pending:</strong> ${node.reindex_pending || 0}</div>
                         <div><strong>Last Seen:</strong> ${lastSeenText}</div>
                         <div><strong>Export Dir:</strong> ${node.export_dir || 'None'}</div>
                         <div><strong>Cluster Dir:</strong> ${node.cluster_dir || 'None'}</div>

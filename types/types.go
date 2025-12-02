@@ -162,26 +162,28 @@ type FileSystemLike interface {
 
 // PeerInfo represents information about a discovered peer
 type PeerInfo struct {
-	NodeID        NodeID    `json:"node_id"`
-	HTTPPort      int       `json:"http_port"`
-	Address       string    `json:"address"`
-	LastSeen      time.Time `json:"last_seen"`
-	BytesStored   int64     `json:"bytes_stored,omitempty"`
-	DiskSize      int64     `json:"disk_size,omitempty"`
-	DiskFree      int64     `json:"disk_free,omitempty"`
-	Available     bool      `json:"available,omitempty"`
-	IsStorage     bool      `json:"is_storage,omitempty"`
-	DiscoveryPort int       `json:"discovery_port,omitempty"`
-	DataDir       string    `json:"data_dir,omitempty"`
-	StorageFormat string    `json:"storage_format,omitempty"`
-	StorageMinor  string    `json:"storage_minor,omitempty"`
-	Program       string    `json:"program,omitempty"`
-	Version       string    `json:"version,omitempty"`
-	URL           string    `json:"url,omitempty"`
-	ExportDir     string    `json:"export_dir,omitempty"`
-	ClusterDir    string    `json:"cluster_dir,omitempty"`
-	ImportDir     string    `json:"import_dir,omitempty"`
-	Debug         bool      `json:"debug,omitempty"`
+	NodeID         NodeID    `json:"node_id"`
+	HTTPPort       int       `json:"http_port"`
+	Address        string    `json:"address"`
+	LastSeen       time.Time `json:"last_seen"`
+	BytesStored    int64     `json:"bytes_stored,omitempty"`
+	DiskSize       int64     `json:"disk_size,omitempty"`
+	DiskFree       int64     `json:"disk_free,omitempty"`
+	SyncPending    int       `json:"sync_pending,omitempty"`
+	ReindexPending int       `json:"reindex_pending,omitempty"`
+	Available      bool      `json:"available,omitempty"`
+	IsStorage      bool      `json:"is_storage,omitempty"`
+	DiscoveryPort  int       `json:"discovery_port,omitempty"`
+	DataDir        string    `json:"data_dir,omitempty"`
+	StorageFormat  string    `json:"storage_format,omitempty"`
+	StorageMinor   string    `json:"storage_minor,omitempty"`
+	Program        string    `json:"program,omitempty"`
+	Version        string    `json:"version,omitempty"`
+	URL            string    `json:"url,omitempty"`
+	ExportDir      string    `json:"export_dir,omitempty"`
+	ClusterDir     string    `json:"cluster_dir,omitempty"`
+	ImportDir      string    `json:"import_dir,omitempty"`
+	Debug          bool      `json:"debug,omitempty"`
 }
 
 type NodeInfo struct {
@@ -206,27 +208,29 @@ type FileMetadata struct {
 }
 
 type NodeData struct {
-	NodeID        string    `json:"node_id"`
-	Address       string    `json:"address"`
-	HTTPPort      int       `json:"http_port"`
-	DiscoveryPort int       `json:"discovery_port"`
-	LastSeen      time.Time `json:"last_seen"`
-	Available     bool      `json:"available"`
-	BytesStored   int64     `json:"bytes_stored"`
-	DiskSize      int64     `json:"disk_size"`
-	DiskFree      int64     `json:"disk_free"`
-	IsStorage     bool      `json:"is_storage"`
-	DataDir       string    `json:"data_dir"`
-	StorageFormat string    `json:"storage_format"`
-	StorageMinor  string    `json:"storage_minor"`
-	Program       string    `json:"program"`
-	Version       string    `json:"version"`
-	URL           string    `json:"url"`
-	ExportDir     string    `json:"export_dir"`
-	ClusterDir    string    `json:"cluster_dir"`
-	ImportDir     string    `json:"import_dir"`
-	Debug         bool      `json:"debug"`
-	StartTime     time.Time `json:"start_time"`
+	NodeID         string    `json:"node_id"`
+	Address        string    `json:"address"`
+	HTTPPort       int       `json:"http_port"`
+	DiscoveryPort  int       `json:"discovery_port"`
+	LastSeen       time.Time `json:"last_seen"`
+	Available      bool      `json:"available"`
+	BytesStored    int64     `json:"bytes_stored"`
+	DiskSize       int64     `json:"disk_size"`
+	DiskFree       int64     `json:"disk_free"`
+	SyncPending    int       `json:"sync_pending,omitempty"`
+	ReindexPending int       `json:"reindex_pending,omitempty"`
+	IsStorage      bool      `json:"is_storage"`
+	DataDir        string    `json:"data_dir"`
+	StorageFormat  string    `json:"storage_format"`
+	StorageMinor   string    `json:"storage_minor"`
+	Program        string    `json:"program"`
+	Version        string    `json:"version"`
+	URL            string    `json:"url"`
+	ExportDir      string    `json:"export_dir"`
+	ClusterDir     string    `json:"cluster_dir"`
+	ImportDir      string    `json:"import_dir"`
+	Debug          bool      `json:"debug"`
+	StartTime      time.Time `json:"start_time"`
 }
 
 type NodeID string
@@ -249,6 +253,8 @@ type PartitionStatistics struct {
 	Total_partitions      int `json:"total_partitions"`
 	Under_replicated      int `json:"under_replicated"`
 	Pending_sync          int `json:"pending_sync"`
+	Sync_list_pending     int `json:"sync_list_pending,omitempty"`
+	Reindex_list_pending  int `json:"reindex_list_pending,omitempty"`
 	Replication_factor    int `json:"replication_factor"`
 	Total_files           int `json:"total_files"`
 	Partition_count_limit int `json:"partition_count_limit"`
