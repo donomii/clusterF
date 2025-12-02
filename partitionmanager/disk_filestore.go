@@ -92,6 +92,27 @@ func (x *xorWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+type xorReader struct {
+	r   io.ReadCloser
+	key []byte
+	pos int64
+}
+
+func (x *xorReader) Read(p []byte) (int, error) {
+	n, err := x.r.Read(p)
+	if n > 0 && len(x.key) > 0 {
+		for i := 0; i < n; i++ {
+			p[i] = p[i] ^ x.key[(int(x.pos)+i)%len(x.key)]
+		}
+		x.pos += int64(n)
+	}
+	return n, err
+}
+
+func (x *xorReader) Close() error {
+	return x.r.Close()
+}
+
 func (fs *DiskFileStore) encrypt(metadata, content []byte) ([]byte, []byte) {
 	if len(fs.encryptionKey) == 0 {
 		return metadata, content
@@ -238,6 +259,24 @@ func (fs *DiskFileStore) GetContent(path string) ([]byte, error) {
 	metrics.IncrementGlobalCounter("disk_filestore.get_content.success")
 	metrics.AddGlobalCounter("disk_filestore.get_content.bytes", int64(len(content)))
 	return content, nil
+}
+
+// GetContentStream returns a streaming reader for the file content.
+func (fs *DiskFileStore) GetContentStream(path string) (io.ReadCloser, error) {
+	contentPath, err := fs.contentPath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := os.Open(contentPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(fs.encryptionKey) == 0 {
+		return file, nil
+	}
+	return &xorReader{r: file, key: fs.encryptionKey}, nil
 }
 
 // Put stores both metadata and content.

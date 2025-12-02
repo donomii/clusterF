@@ -2,6 +2,7 @@
 package partitionmanager
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -456,6 +457,54 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 	pm.debugf("[PARTITION] Found file %s locally in partition %s", path, partitionID)
 	pm.debugf("[PARTITION] Retrieved file %s: %d bytes content", path, len(contentBytes))
 	return contentBytes, metadata, nil
+}
+
+// GetFileAndMetaFromPartitionStream retrieves metadata and a streaming reader when supported by the filestore.
+func (pm *PartitionManager) GetFileAndMetaFromPartitionStream(path string) (io.ReadCloser, types.FileMetadata, error) {
+	pm.recordEssentialDiskActivity()
+	if pm.deps.NoStore {
+		return nil, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path))
+	}
+
+	type streamFS interface {
+		GetContentStream(path string) (io.ReadCloser, error)
+		GetMetadata(path string) ([]byte, error)
+	}
+
+	if store, ok := pm.deps.FileStore.(streamFS); ok {
+		metaBytes, err := store.GetMetadata(path)
+		if err != nil {
+			return nil, types.FileMetadata{}, err
+		}
+
+		var metadata types.FileMetadata
+		if err := json.Unmarshal(metaBytes, &metadata); err != nil {
+			return nil, types.FileMetadata{}, pm.errorf(metaBytes, "corrupt file metadata")
+		}
+		if metadata.Deleted {
+			return nil, types.FileMetadata{}, pm.localFileNotFound(path, HashToPartition(path), "file is marked as deleted (tombstone present)")
+		}
+		if metadata.Checksum == "" {
+			panic("no")
+		}
+		if metadata.ModifiedAt.IsZero() {
+			panic("no")
+		}
+
+		reader, err := store.GetContentStream(path)
+		if err != nil {
+			return nil, types.FileMetadata{}, err
+		}
+
+		return reader, metadata, nil
+	}
+
+	// Fallback to buffered path.
+	content, metadata, err := pm.GetFileAndMetaFromPartition(path)
+	if err != nil {
+		return nil, types.FileMetadata{}, err
+	}
+	return io.NopCloser(bytes.NewReader(content)), metadata, nil
 }
 
 func (pm *PartitionManager) localFileNotFound(path string, partitionID types.PartitionID, detail string) error {

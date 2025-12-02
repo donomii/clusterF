@@ -339,6 +339,10 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 	idx.lock()
 	defer idx.unlock()
 
+	if idx.deps.Cluster.AppContext().Err() != nil {
+		return
+	}
+
 	//idx.logger.Printf("[INDEXER] Adding file %s", path)
 
 	effectivePath := path
@@ -347,14 +351,14 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 	if metadata.Deleted {
 		idx.deleteDocLocked(partitionID, effectivePath)
 		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil && idx.logger != nil {
-			idx.logger.Printf("[INDEXER] Failed to update membership for %s: %v", partitionID, err)
+			idx.logger.Printf("[INDEXER] Failed to update membership for deleted file in %s: %v", partitionID, err)
 		}
 		return
 	}
 
 	idx.upsertDocLocked(partitionID, effectivePath)
 	if err := idx.updatePartitionMembershipLocked(partitionID); err != nil && idx.logger != nil {
-		idx.logger.Printf("[INDEXER] Failed to update membership for %s: %v", partitionID, err)
+		idx.logger.Printf("[INDEXER] Failed to update membership for upsert file %s: %v", partitionID, err)
 	}
 }
 

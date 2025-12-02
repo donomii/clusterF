@@ -131,7 +131,7 @@ func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Only check local storage, never forward to peers
-	content, metadata, err := c.FileSystem.GetFile(path)
+	reader, metadata, err := c.FileSystem.GetFileReader(path)
 	if err != nil {
 		switch {
 		case errors.Is(err, types.ErrIsDirectory):
@@ -161,8 +161,9 @@ func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
+	defer reader.Close()
 
-	c.debugf("[FILES] Retrieved file %s: %d bytes, content type: %s", path, len(content), metadata.ContentType)
+	c.debugf("[FILES] Retrieved file %s: %d bytes, content type: %s", path, metadata.Size, metadata.ContentType)
 
 	download := r.URL.Query().Get("download")
 	filename := filepath.Base(path)
@@ -186,7 +187,9 @@ func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, 
 		panic("no")
 	}
 	w.WriteHeader(http.StatusOK)
-	w.Write(content)
+	if _, err := io.Copy(w, reader); err != nil {
+		c.debugf("[FILES] Failed streaming local response body for %s: %v", path, err)
+	}
 }
 
 // handleFileGet handles external client file requests

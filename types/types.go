@@ -60,6 +60,7 @@ type PartitionManagerLike interface {
 	StoreFileInPartition(ctx context.Context, path string, metadataJSON []byte, fileContent []byte) error                  // Store file in appropriate partition based on path, does not send to network
 	StoreFileInPartitionStream(ctx context.Context, path string, metadataJSON []byte, content io.Reader, size int64) error // Streaming store helper to avoid buffering content
 	GetFileAndMetaFromPartition(path string) ([]byte, FileMetadata, error)                                                 // Get file and metadata from partition, including from other nodes
+	GetFileAndMetaFromPartitionStream(path string) (io.ReadCloser, FileMetadata, error)                                    // Streaming read for file and metadata
 	DeleteFileFromPartition(ctx context.Context, path string) error                                                        // Delete file from partition, does not send to network
 	DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, modTime time.Time) error                        // Delete file from partition with explicit timestamp
 	GetMetadataFromPartition(path string) (FileMetadata, error)                                                            // Get file metadata from partition
@@ -158,6 +159,7 @@ type FileSystemLike interface {
 	ClusterHasUpToDateFile(path string, modTime time.Time, size int64) (bool, FileMetadata, error)
 	// Additional methods for WebDAV support
 	GetFile(path string) ([]byte, FileMetadata, error)
+	GetFileReader(path string) (io.ReadCloser, FileMetadata, error)
 	ListDirectory(path string) ([]*FileMetadata, error)
 	InsertFileIntoCluster(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) ([]NodeID, error)
 }

@@ -878,6 +878,21 @@ func (fs *ClusterFileSystem) GetFile(path string) ([]byte, types.FileMetadata, e
 	return content, metadata, nil
 }
 
+// GetFileReader streams a file from the partition system when supported by the filestore.
+func (fs *ClusterFileSystem) GetFileReader(path string) (io.ReadCloser, types.FileMetadata, error) {
+	reader, metadata, err := fs.cluster.PartitionManager().GetFileAndMetaFromPartitionStream(path)
+	if err == nil {
+		return reader, metadata, nil
+	}
+
+	// Fallback to buffered read.
+	content, meta, bufErr := fs.GetFile(path)
+	if bufErr != nil {
+		return nil, types.FileMetadata{}, bufErr
+	}
+	return io.NopCloser(bytes.NewReader(content)), meta, nil
+}
+
 // ListDirectory lists the contents of a directory using search API
 func (fs *ClusterFileSystem) ListDirectory(path string) ([]*types.FileMetadata, error) {
 	return fs.cluster.ListDirectoryUsingSearch(path)
