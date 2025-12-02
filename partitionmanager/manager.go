@@ -1315,6 +1315,9 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 
 		// Get all holder data for this partition
 		partInfo := pm.GetPartitionInfo(partitionID)
+		if partInfo == nil {
+			continue
+		}
 
 		numHolders := len(partInfo.Holders)
 		if numHolders < pm.replicationFactor() {
