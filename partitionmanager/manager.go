@@ -1295,6 +1295,34 @@ func (pm *PartitionManager) PeriodicSyncCheck(ctx context.Context) {
 	}
 }
 
+func (pm *PartitionManager) RunUnderReplicatedMonitor(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Minute):
+			pm.checkUnderReplicatedPartitions(ctx)
+		}
+	}
+}
+
+func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) {
+	for partNum := range 65536 {
+		partitionID := types.PartitionID(fmt.Sprintf("p%05d", partNum))
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Get all holder data for this partition
+		partInfo := pm.GetPartitionInfo(partitionID)
+
+		numHolders := len(partInfo.Holders)
+		if numHolders < pm.replicationFactor() {
+			pm.MarkForSync(partitionID, "Under replicated")
+		}
+	}
+}
+
 // findFlaggedPartitionToSyncWithHolders picks a flagged partition to sync and returns its holders.
 func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Context) (types.PartitionID, []types.NodeID) {
 	// If in no-store mode, don't sync any partitions

@@ -778,6 +778,7 @@ func (c *Cluster) Start() {
 	c.threadManager.StartThread("http-server", c.startHTTPServer)
 	c.threadManager.StartThread("partition-reindex", c.runPartitionReindex)
 	c.threadManager.StartThread("restart-monitor", c.runRestartMonitor)
+	c.threadManager.StartThread("under-replicated-monitor", c.partitionManager.RunUnderReplicatedMonitor)
 	c.debugf("Started all threads")
 }
 

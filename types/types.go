@@ -70,6 +70,7 @@ type PartitionManagerLike interface {
 	MarkForReindex(pId PartitionID, reason string)
 	RemoveNodeFromPartitionWithTimestamp(nodeID NodeID, partitionName string, backdatedTime time.Time) error // Remove a node from a partition holder list with backdated timestamp
 	CalculatePartitionChecksum(ctx context.Context, partitionID PartitionID) (string, error)
+	RunUnderReplicatedMonitor(ctx context.Context)
 }
 
 // FileStoreLike abstracts the storage layer used by the partition manager.
