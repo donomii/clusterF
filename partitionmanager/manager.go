@@ -1438,6 +1438,10 @@ func (pm *PartitionManager) RunUnderReplicatedMonitor(ctx context.Context) {
 }
 
 func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) {
+	if pm.deps.Cluster.NoStore() {
+		//FIXME panic here maybe
+		return
+	}
 	pm.logf("[REPLICATION CHECK] Checking 65536 partitions for under-replicated files")
 
 	for partNum := 0; partNum < 65536; partNum++ {
