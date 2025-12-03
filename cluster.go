@@ -158,7 +158,7 @@ func (c *Cluster) PartitionManager() types.PartitionManagerLike {
 }
 
 func (c *Cluster) ReplicationFactor() int {
-	return c.getCurrentRF()
+	return c.GetCurrentRF()
 }
 
 type StorageSettings struct {
@@ -493,7 +493,6 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 		Frogpond:           c.frogpond,
 		SendUpdatesToPeers: c.sendUpdatesToPeers,
-		GetCurrentRF:       c.getCurrentRF,
 	}
 	// Initialize indexer first (needed by partition manager)
 	idx := indexer.NewIndexer(c.Logger(), deps)
@@ -1177,7 +1176,7 @@ func (c *Cluster) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// Get replication factor safely
 	var rf interface{} = DefaultRF
 	if c.frogpond != nil {
-		rf = c.getCurrentRF()
+		rf = c.GetCurrentRF()
 		//c.debugf("[STATUS] Got RF: %v", rf)
 	} else {
 		c.debugf("[STATUS] frogpond is nil, initialisation may have failed")
@@ -1228,7 +1227,7 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 		Discovery_port:     c.DiscoveryPort,
 		Data_dir:           absDataDir,
 		Timestamp:          time.Now(),
-		Replication_factor: c.getCurrentRF(),
+		Replication_factor: c.GetCurrentRF(),
 		Peer_list:          peerList,
 	}
 
@@ -1331,7 +1330,7 @@ func (c *Cluster) handleUnderReplicatedReport(w http.ResponseWriter, r *http.Req
 	}
 
 	response := map[string]interface{}{
-		"replication_factor": c.getCurrentRF(),
+		"replication_factor": c.GetCurrentRF(),
 		"partitions":         partitions,
 	}
 
@@ -1537,7 +1536,7 @@ func (c *Cluster) initializeClusterSettings() {
 func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		currentRF := c.getCurrentRF()
+		currentRF := c.GetCurrentRF()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"replication_factor": currentRF,

@@ -106,8 +106,8 @@ func (c *Cluster) getPeerList() []types.PeerInfo {
 	return peerList
 }
 
-// getCurrentRF gets the current replication factor from frogpond
-func (c *Cluster) getCurrentRF() int {
+// GetCurrentRF gets the current replication factor from frogpond
+func (c *Cluster) GetCurrentRF() int {
 	data := c.frogpond.GetDataPoint("cluster/replication_factor")
 	if data.Deleted || len(data.Value) == 0 {
 		return DefaultRF

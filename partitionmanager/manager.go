@@ -258,11 +258,11 @@ func (pm *PartitionManager) hasFrogpond() bool {
 }
 
 func (pm *PartitionManager) replicationFactor() int {
-	if pm.deps.GetCurrentRF != nil {
-		if rf := pm.deps.GetCurrentRF(); rf > 0 {
-			return rf
-		}
+
+	if rf := pm.deps.Cluster.GetCurrentRF(); rf > 0 {
+		return rf
 	}
+
 	return defaultReplicationFactor
 }
 

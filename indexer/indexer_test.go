@@ -40,6 +40,7 @@ func (c *testCluster) AppContext() context.Context                   { return co
 func (c *testCluster) RecordDiskActivity(types.DiskActivityLevel)    {}
 func (c *testCluster) CanRunNonEssentialDiskOp() bool                { return true }
 func (c *testCluster) LoadPeer(types.NodeID) (*types.PeerInfo, bool) { return nil, false }
+func (c *testCluster) GetCurrentRF() int                             { return 3 }
 
 type testFileStore struct {
 	meta map[string][]byte

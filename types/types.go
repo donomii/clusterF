@@ -51,6 +51,7 @@ type ClusterLike interface {
 	RecordDiskActivity(level DiskActivityLevel)                    // Track essential/non-essential disk activity
 	CanRunNonEssentialDiskOp() bool                                // Whether non-essential disk operations are allowed right now
 	LoadPeer(id NodeID) (*PeerInfo, bool)                          // Load peer info from CRDT or Discovery
+	GetCurrentRF() int                                             // Get current replication factor
 }
 
 // The partition manager, everything needed to access partitions and files
@@ -326,7 +327,6 @@ type App struct {
 	Frogpond              *frogpond.Node
 	SendUpdatesToPeers    func([]frogpond.DataPoint)
 	NotifyFileListChanged func()
-	GetCurrentRF          func() int
 	Indexer               IndexerLike
 }
 
