@@ -1552,7 +1552,16 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 			}
 
 		} else {
-			pm.debugf("[PARTITION] We do not have partition %v locally", partitionID)
+
+			var availableHolders []types.NodeID
+			for _, holderID := range info.Holders {
+				_, exists := availablePeerIDs.Load(string(holderID))
+				if holderID != pm.deps.NodeID && exists {
+					availableHolders = append(availableHolders, holderID)
+				}
+			}
+			pm.debugf("[PARTITION] We do not have partition %v locally, downloading from %v", partitionID, availableHolders)
+			return partitionID, availableHolders
 		}
 
 	}
