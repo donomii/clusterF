@@ -1532,7 +1532,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 					pm.logf("[FINDFLAGGED] Found partition %v, but not enough holders, syncing to random peer %v", partitionID, peerID)
 					return partitionID, []types.NodeID{types.NodeID(peerID)}
 				}
-				pm.debugf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
+				pm.logf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
 			} else {
 				// If we have the partition and enough holders, sync to all holders
 
