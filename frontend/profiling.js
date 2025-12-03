@@ -34,10 +34,10 @@ async function startProfiling() {
         if (response.ok) {
             updateStatus();
         } else {
-            alert('Failed to start profiling');
+            console.log('Failed to start profiling');
         }
     } catch (error) {
-        alert('Error: ' + error.message);
+        console.log('Error: ' + error.message);
     }
 }
 
@@ -52,10 +52,10 @@ async function stopProfiling() {
         if (response.ok) {
             updateStatus();
         } else {
-            alert('Failed to stop profiling');
+            console.log('Failed to stop profiling');
         }
     } catch (error) {
-        alert('Error: ' + error.message);
+        console.log('Error: ' + error.message);
     }
 }
 

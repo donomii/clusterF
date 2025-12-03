@@ -65,7 +65,7 @@ func (f *Frontend) HandleCRDTInspectorPageUI(w http.ResponseWriter, r *http.Requ
             params.set('limit', String(pageSize));
             if (loadMore && cursorAfter) params.set('after', cursorAfter);
             const res = await fetch('/api/crdt/list?' + params.toString());
-            if (!res.ok) { alert('Failed to load list'); return; }
+            if (!res.ok) { console.log('Failed to load list'); return; }
             const data = await res.json();
             renderList(data, loadMore);
         }
@@ -79,7 +79,7 @@ func (f *Frontend) HandleCRDTInspectorPageUI(w http.ResponseWriter, r *http.Requ
             params.set('limit', String(pageSize));
             if (loadMore && cursorAfter) params.set('after', cursorAfter);
             const res = await fetch('/api/crdt/search?' + params.toString());
-            if (!res.ok) { alert('Failed to search'); return; }
+            if (!res.ok) { console.log('Failed to search'); return; }
             const data = await res.json();
             renderSearch(data, loadMore);
         }
@@ -141,7 +141,7 @@ func (f *Frontend) HandleCRDTInspectorPageUI(w http.ResponseWriter, r *http.Requ
             const params = new URLSearchParams();
             params.set('key', key);
             const res = await fetch('/api/crdt/get?' + params.toString());
-            if (!res.ok) { alert('Failed to load key'); return; }
+            if (!res.ok) { console.log('Failed to load key'); return; }
             const data = await res.json();
             const v = document.getElementById('value');
             const pretty = data.value_json ? JSON.stringify(data.value_json, null, 2) : (data.value_text || '[binary]');

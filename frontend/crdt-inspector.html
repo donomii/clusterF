@@ -52,7 +52,7 @@
             params.set('limit', String(pageSize));
             if (loadMore && cursorAfter) params.set('after', cursorAfter);
             const res = await fetch('/api/crdt/list?' + params.toString());
-            if (!res.ok) { alert('Failed to load list'); return; }
+            if (!res.ok) { console.log('Failed to load list'); return; }
             const data = await res.json();
             renderList(data, loadMore);
         }
@@ -66,7 +66,7 @@
             params.set('limit', String(pageSize));
             if (loadMore && cursorAfter) params.set('after', cursorAfter);
             const res = await fetch('/api/crdt/search?' + params.toString());
-            if (!res.ok) { alert('Failed to search'); return; }
+            if (!res.ok) { console.log('Failed to search'); return; }
             const data = await res.json();
             renderList(data, loadMore);
         }
@@ -118,7 +118,7 @@
         async function openKey(key) {
             const params = new URLSearchParams(); params.set('key', key);
             const res = await fetch('/api/crdt/get?' + params.toString());
-            if (!res.ok) { alert('Failed to load key'); return; }
+            if (!res.ok) { console.log('Failed to load key'); return; }
             const data = await res.json();
             if (data.deleted) return;
             const v = document.getElementById('value');

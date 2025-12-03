@@ -238,13 +238,13 @@ async function addTestData() {
         });
         
         if (response.ok) {
-            alert('✅ Added test file: ' + fileName);
+            console.log('✅ Added test file: ' + fileName);
             refreshStats();
         } else {
-            alert('❌ Failed to add test data');
+            console.log('❌ Failed to add test data');
         }
     } catch (error) {
-        alert('Error: ' + error.message);
+        console.log('Error: ' + error.message);
     }
 }
 
@@ -254,7 +254,7 @@ async function setReplicationFactor() {
         const newRF = parseInt(rfInput.value);
         
         if (isNaN(newRF) || newRF < 1) {
-            alert('❌ Replication factor must be a number >= 1');
+            console.log('❌ Replication factor must be a number >= 1');
             return;
         }
         
@@ -266,14 +266,14 @@ async function setReplicationFactor() {
         
         if (response.ok) {
             const result = await response.json();
-            alert('✅ Replication factor set to ' + result.replication_factor);
+            console.log('✅ Replication factor set to ' + result.replication_factor);
             refreshStats();
         } else {
             const error = await response.text();
-            alert('❌ Failed to set replication factor: ' + error);
+            console.log('❌ Failed to set replication factor: ' + error);
         }
     } catch (error) {
-        alert('Error: ' + error.message);
+        console.log('Error: ' + error.message);
     }
 }
 
@@ -283,7 +283,7 @@ async function setPartitionSyncInterval() {
         const newInterval = parseInt(intervalInput.value, 10);
 
         if (isNaN(newInterval) || newInterval < 1) {
-            alert('❌ Partition sync interval must be a number >= 1 second');
+            console.log('❌ Partition sync interval must be a number >= 1 second');
             return;
         }
 
@@ -295,14 +295,14 @@ async function setPartitionSyncInterval() {
 
         if (response.ok) {
             const result = await response.json();
-            alert('✅ Partition sync interval set to ' + result.partition_sync_interval_seconds + ' seconds');
+            console.log('✅ Partition sync interval set to ' + result.partition_sync_interval_seconds + ' seconds');
             refreshStats();
         } else {
             const error = await response.text();
-            alert('❌ Failed to set partition sync interval: ' + error);
+            console.log('❌ Failed to set partition sync interval: ' + error);
         }
     } catch (error) {
-        alert('Error: ' + error.message);
+        console.log('Error: ' + error.message);
     }
 }
 
@@ -366,14 +366,14 @@ async function toggleSleepMode() {
         if (putResponse.ok) {
             updateSleepModeDisplay(newSleepMode);
             const action = newSleepMode ? 'enabled' : 'disabled';
-            alert('✅ Sleep mode ' + action);
+            console.log('✅ Sleep mode ' + action);
         } else {
             const error = await putResponse.text();
-            alert('❌ Failed to toggle sleep mode: ' + error);
+            console.log('❌ Failed to toggle sleep mode: ' + error);
             checkbox.checked = !newSleepMode;
         }
     } catch (error) {
-        alert('Error: ' + error.message);
+        console.log('Error: ' + error.message);
         const checkbox = document.getElementById('sleepModeCheckbox');
         checkbox.checked = !checkbox.checked;
     }
@@ -396,15 +396,15 @@ async function clusterRestart() {
         if (response.ok) {
             const responseData = await response.json();
             console.log('[DEBUG] Response data:', responseData);
-            alert('✅ Cluster restart initiated. All nodes will restart shortly.');
+            console.log('✅ Cluster restart initiated. All nodes will restart shortly.');
         } else {
             const error = await response.text();
             console.log('[DEBUG] Error response:', error);
-            alert('❌ Failed to initiate cluster restart: ' + error);
+            console.log('❌ Failed to initiate cluster restart: ' + error);
         }
     } catch (error) {
         console.log('[DEBUG] Exception caught:', error);
-        alert('Error: ' + error.message);
+        console.log('Error: ' + error.message);
     }
 }
 
@@ -497,7 +497,7 @@ async function togglePartitionSyncPause() {
         // Get current state
         const response = await fetch('/api/partition-sync-pause');
         if (!response.ok) {
-            alert('❌ Failed to get current pause state');
+            console.log('❌ Failed to get current pause state');
             return;
         }
         
@@ -515,13 +515,13 @@ async function togglePartitionSyncPause() {
             const result = await putResponse.json();
             updateSyncStatusDisplay(result.paused);
             const action = result.paused ? 'paused' : 'resumed';
-            alert('✅ Partition sync ' + action);
+            console.log('✅ Partition sync ' + action);
         } else {
             const error = await putResponse.text();
-            alert('❌ Failed to toggle partition sync: ' + error);
+            console.log('❌ Failed to toggle partition sync: ' + error);
         }
     } catch (error) {
-        alert('Error: ' + error.message);
+        console.log('Error: ' + error.message);
     }
 }
 
@@ -535,11 +535,11 @@ async function debugRestartTask() {
         if (response.ok) {
             const data = await response.json();
             console.log('[DEBUG] CRDT GET response data:', JSON.stringify(data, null, 2));
-            alert('tasks/restart content:\n' + JSON.stringify(data, null, 2));
+            console.log('tasks/restart content:\n' + JSON.stringify(data, null, 2));
         } else {
             const error = await response.text();
             console.log('[DEBUG] CRDT GET error:', error);
-            alert('Error getting tasks/restart: ' + error);
+            console.log('Error getting tasks/restart: ' + error);
         }
         
         // Also check what's in the tasks/ prefix
@@ -549,14 +549,14 @@ async function debugRestartTask() {
         if (listResponse.ok) {
             const listData = await listResponse.json();
             console.log('[DEBUG] CRDT LIST response data:', JSON.stringify(listData, null, 2));
-            alert('tasks/ prefix content:\n' + JSON.stringify(listData, null, 2));
+            console.log('tasks/ prefix content:\n' + JSON.stringify(listData, null, 2));
         } else {
             const listError = await listResponse.text();
             console.log('[DEBUG] CRDT LIST error:', listError);
         }
     } catch (error) {
         console.log('[DEBUG] Exception in debugRestartTask:', error);
-        alert('Error: ' + error.message);
+        console.log('Error: ' + error.message);
     }
 }
 
