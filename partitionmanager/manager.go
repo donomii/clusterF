@@ -1449,12 +1449,15 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 		// Get all holder data for this partition
 		partInfo := pm.GetPartitionInfo(partitionID)
 		if partInfo == nil {
+			pm.debugf("[PARTITION] No partition info found for %s", partitionID)
 			continue
 		}
 
 		numHolders := len(partInfo.Holders)
 		if numHolders < rf {
 			pm.MarkForSync(partitionID, fmt.Sprintf("Under replicated: have %v, need %v", numHolders, pm.replicationFactor()))
+		} else {
+			pm.debugf("[PARTITION]  Partition %v fully replicated", partitionID)
 		}
 	}
 	pm.logf("[REPLICATION CHECK] Finished checking 65536 partitions for under-replicated files")
