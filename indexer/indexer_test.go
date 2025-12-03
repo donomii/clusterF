@@ -80,7 +80,6 @@ func (f *testFileStore) GetAllPartitionStores() ([]types.PartitionStore, error) 
 func newTestApp(logger *log.Logger) *types.App {
 	app := &types.App{
 		NodeID:             "test-node",
-		NoStore:            true,
 		Logger:             logger,
 		FileStore:          &testFileStore{meta: make(map[string][]byte)},
 		Frogpond:           frogpond.NewNode(),

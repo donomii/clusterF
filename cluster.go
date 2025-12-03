@@ -83,7 +83,7 @@ type Cluster struct {
 	BroadcastIP   net.IP       // usually net.IPv4bcast
 	logger        *log.Logger  // Logger for this node
 	Debug         bool         // Enable debug logging
-	noStore       bool         // client mode: don't store partitions locally
+	app           *types.App   // App-level dependencies
 
 	// Discovery manager
 	discoveryManager types.DiscoveryManagerLike   // Peer discovery manager
@@ -151,7 +151,7 @@ func (c *Cluster) Logger() *log.Logger {
 }
 
 func (c *Cluster) NoStore() bool {
-	return c.noStore
+	return c.app.NoStore
 }
 func (c *Cluster) PartitionManager() types.PartitionManagerLike {
 	return c.partitionManager
@@ -281,7 +281,6 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		ExportDir:     opts.ExportDir,
 		ClusterDir:    opts.ClusterDir,
 		ImportDir:     opts.ImportDir,
-		noStore:       opts.NoStore,
 		peerAddrs:     syncmap.NewSyncMap[types.NodeID, *types.PeerInfo](),
 
 		ctx:                  ctx,
@@ -483,7 +482,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	// Initialize partition manager
 	deps := &types.App{
 		NodeID:         types.NodeID(c.NodeId),
-		NoStore:        c.noStore,
+		NoStore:        opts.NoStore,
 		Logger:         c.Logger(),
 		Debugf:         c.debugf,
 		FileStore:      fileStore,
@@ -494,6 +493,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		Frogpond:           c.frogpond,
 		SendUpdatesToPeers: c.sendUpdatesToPeers,
 	}
+	c.app = deps
 	// Initialize indexer first (needed by partition manager)
 	idx := indexer.NewIndexer(c.Logger(), deps)
 	c.indexer = idx

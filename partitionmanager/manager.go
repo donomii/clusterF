@@ -287,7 +287,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	}
 	pm.recordEssentialDiskActivity()
 	// If in no-store mode, don't store locally
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		//FIXME panic here
 		pm.deps.Logger.Panicf("[PARTITION] No-store mode: not storing file %s locally", path)
 		return nil
@@ -408,7 +408,7 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, types.FileMetadata, error) {
 	pm.recordEssentialDiskActivity()
 	// If in no-store mode, always try peers first
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path))
 	}
 
@@ -462,7 +462,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 // GetFileAndMetaFromPartitionStream retrieves metadata and a streaming reader when supported by the filestore.
 func (pm *PartitionManager) GetFileAndMetaFromPartitionStream(path string) (io.ReadCloser, types.FileMetadata, error) {
 	pm.recordEssentialDiskActivity()
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		return nil, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path))
 	}
 
@@ -604,7 +604,7 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 	pm.recordEssentialDiskActivity()
 	//pm.debugf("Starting GetMetadataFromPartition for path %v", path)
 	//defer pm.debugf("Leaving GetMetadataFromPartition for path %v", path)
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		pm.debugf("[PARTITION] No-store mode: getting metadata %s from peers", path)
 		return types.FileMetadata{}, fmt.Errorf("[PARTITION] No-store mode: getting metadata %s from peers", path)
 	}
@@ -705,7 +705,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, modTime time.Time) error {
 	pm.recordEssentialDiskActivity()
 	// If in no-store mode, don't delete locally (we don't have it anyway)
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		//FIXME panic here
 		pm.debugf("[PARTITION] No-store mode: not deleting file %s locally", path)
 		return nil
@@ -763,7 +763,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	start := time.Now()
 
 	// In no-store mode, don't claim to hold partitions
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		//FIXME panic here
 		pm.debugf("[PARTITION] No-store mode: not updating partition metadata for %s", StartPartitionID)
 		return
@@ -882,7 +882,7 @@ func (pm *PartitionManager) removePartitionHolder(partitionID types.PartitionID)
 		return
 	}
 
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		return // No-store nodes don't claim to hold partitions
 	}
 
@@ -997,7 +997,7 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 		panic("wtf")
 	}
 	pm.recordEssentialDiskActivity()
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		pm.deps.Logger.Panicf("[PARTITION] No-store mode: not storing file %s locally", path)
 		return nil
 	}
@@ -1135,7 +1135,7 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.Part
 
 // VerifyStoredFileIntegrity checks the integrity of all stored files by verifying their checksums
 func (pm *PartitionManager) VerifyStoredFileIntegrity() map[string]interface{} {
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		return map[string]interface{}{
 			"status": "skipped",
 			"reason": "no-store mode",
@@ -1369,7 +1369,7 @@ func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID typ
 // periodicPartitionCheck continuously syncs partitions one at a time
 func (pm *PartitionManager) PeriodicSyncCheck(ctx context.Context) {
 	// Skip partition syncing if in no-store mode (client mode)
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		pm.debugf("[PARTITION] No-store mode: skipping partition sync")
 		<-ctx.Done() // Wait until context is done i.e. shutdown
 		return
@@ -1466,7 +1466,7 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 // findFlaggedPartitionToSyncWithHolders picks a flagged partition to sync and returns its holders.
 func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Context) (types.PartitionID, []types.NodeID) {
 	// If in no-store mode, don't sync any partitions
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		//FIXME panic here maybe
 		return "", nil
 	}
@@ -1605,7 +1605,7 @@ func (pm *PartitionManager) FileStore() types.FileStoreLike {
 
 // UpdateAllLocalPartitionsMetadata scans all local partitions and updates their metadata
 func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context) {
-	if pm.deps.NoStore {
+	if pm.deps.Cluster.NoStore() {
 		pm.debugf("[PARTITION] No-store mode: skipping initial partition metadata update")
 		return
 	}
@@ -1747,7 +1747,7 @@ func (pm *PartitionManager) ListUnderReplicatedFiles(ctx context.Context) ([]typ
 			PartitionCRDT:     info,
 		}
 
-		if pm.deps.NoStore {
+		if pm.deps.Cluster.NoStore() {
 			partition.FilesUnavailable = true
 			partition.UnavailableMessage = "node is running with no-store enabled"
 			result = append(result, partition)

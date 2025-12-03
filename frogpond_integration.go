@@ -423,7 +423,7 @@ func (c *Cluster) updateNodeMetadata() {
 		DiskFree:       diskFree,
 		SyncPending:    syncPending,
 		ReindexPending: reindexPending,
-		IsStorage:      !c.noStore,
+		IsStorage:      !c.NoStore(),
 		DataDir:        absDataDir,
 		StorageFormat:  storageFormat,
 		StorageMinor:   storageMinor,
