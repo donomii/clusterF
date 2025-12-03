@@ -3,9 +3,9 @@ module github.com/donomii/clusterF
 go 1.25.1
 
 require (
-	github.com/donomii/clusterF/frontend v0.0.0-20251202131430-fae0e44fc789
+	github.com/donomii/clusterF/frontend v0.0.0-20251203152000-0c578d3a7344
 	github.com/donomii/clusterF/syncmap v0.0.0
-	github.com/donomii/frogpond v0.0.0-20251202235459-5f3d2398b47b
+	github.com/donomii/frogpond v0.0.0-20251203153250-eb57110e8ed3
 	github.com/donomii/go-webdav v0.0.0-20240304173232-8e8f80405603
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	golang.org/x/sys v0.38.0
