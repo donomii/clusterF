@@ -820,9 +820,10 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 
 	checkPeers()
 
-	ticker := time.NewTicker(time.Duration(c.GetPartitionSyncInterval()) * time.Second)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	var lastUpdate time.Time
 	for {
 		if ctx.Err() != nil {
 			return
@@ -831,10 +832,13 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			checkPeers()
-			c.logger.Printf("Synchronised frogpond\n")
-			ticker.Reset(time.Duration(c.GetPartitionSyncInterval()) * time.Second)
+			if time.Since(lastUpdate) < time.Duration(c.GetPartitionSyncInterval())*time.Second {
+				checkPeers()
+				c.logger.Printf("Synchronised frogpond\n")
+				ticker.Reset(time.Duration(c.GetPartitionSyncInterval()) * time.Second)
+			}
 		}
+		lastUpdate = time.Now()
 	}
 }
 
@@ -886,19 +890,23 @@ func (c *Cluster) runPartitionReindex(ctx context.Context) {
 	if c.partitionReIndexInterval.Seconds() == 0 {
 		c.partitionReIndexInterval = 500 * time.Second
 	}
-	ticker := time.NewTicker(c.partitionReIndexInterval)
+	ticker := time.NewTicker(time.Second)
 
+	var lastUpdate time.Time
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.logger.Printf("Started RunReindex\n")
-			pm.RunReindex(ctx)
-			c.logger.Printf("Finished RunReindex\n")
-			ticker.Reset(c.partitionReIndexInterval)
+			if time.Since(lastUpdate) < time.Duration(c.partitionReIndexInterval)*time.Second {
+				c.logger.Printf("Started RunReindex\n")
+				pm.RunReindex(ctx)
+				c.logger.Printf("Finished RunReindex\n")
+				ticker.Reset(c.partitionReIndexInterval)
+			}
 		}
+		lastUpdate = time.Now()
 	}
 }
 

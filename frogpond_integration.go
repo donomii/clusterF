@@ -316,8 +316,9 @@ func (c *Cluster) getAvailableNodes() []types.NodeID {
 func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 	c.updateNodeMetadata()
 	c.persistCRDTToFile()
-	ticker := time.NewTicker(time.Duration(c.GetPartitionSyncInterval()) * time.Second) //FIXME give this its own config setting
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var lastUpdate time.Time
 
 	for {
 		if ctx.Err() != nil {
@@ -327,7 +328,9 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-
+			if time.Since(lastUpdate) < time.Duration(c.GetPartitionSyncInterval())*time.Second {
+				continue
+			}
 			// Update our node metadata
 			c.updateNodeMetadata()
 			c.logger.Print("Updated NodeMetadata\n")
@@ -335,8 +338,9 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 			// Persist CRDT state to KV
 			c.persistCRDTToFile()
 			c.logger.Print("Wrote persistCRDTToFile to disk\n")
+			lastUpdate = time.Now()
 		}
-		ticker.Reset(time.Duration(c.GetPartitionSyncInterval()) * time.Second)
+
 	}
 }
 
@@ -499,18 +503,22 @@ func (c *Cluster) persistCRDTToFile() {
 // periodicNodePruning creates backdated tombstones for all node entries every 10 minutes
 // This forces nodes to re-apply their keys or be removed from the cluster
 func (c *Cluster) periodicNodePruning(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	var lastUpdate time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.logger.Printf("Started pruneOldNodes\n")
-			c.pruneOldNodes()
-			c.logger.Printf("Finished pruneOldNodes\n")
+			if time.Since(lastUpdate) < time.Duration(c.GetPartitionSyncInterval())*time.Second {
+				c.logger.Printf("Started pruneOldNodes\n")
+				c.pruneOldNodes()
+				c.logger.Printf("Finished pruneOldNodes\n")
+			}
 		}
+		lastUpdate = time.Now()
 	}
 }
 

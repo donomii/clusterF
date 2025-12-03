@@ -112,7 +112,7 @@ func (tm *ThreadManager) runThread(threadInfo *ThreadInfo) {
 func (tm *ThreadManager) monitorThreads() {
 	defer tm.wg.Done()
 
-	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
+	ticker := time.NewTicker(1 * time.Second) // Check every 5 seconds
 	defer ticker.Stop()
 
 	for {

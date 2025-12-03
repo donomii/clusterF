@@ -189,9 +189,10 @@ func (dm *DiscoveryManager) GetPeerCount() int {
 
 // broadcastLoop periodically broadcasts our presence
 func (dm *DiscoveryManager) broadcastLoop(ctx context.Context) {
-	ticker := time.NewTicker(dm.broadcastInterval)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	var lastUpdate time.Time
 	// Send initial broadcast immediately
 	dm.broadcast()
 
@@ -201,9 +202,11 @@ func (dm *DiscoveryManager) broadcastLoop(ctx context.Context) {
 			dm.Debugf("Broadcast loop stopping")
 			return
 		case <-ticker.C:
-			dm.broadcast()
+			if time.Since(lastUpdate) < dm.broadcastInterval {
+				dm.broadcast()
+			}
 		}
-		ticker.Reset(dm.broadcastInterval)
+		lastUpdate = time.Now()
 	}
 }
 
@@ -306,8 +309,9 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 
 // cleanupLoop removes stale peers
 func (dm *DiscoveryManager) cleanupLoop(ctx context.Context) {
-	ticker := time.NewTicker(dm.peerTimeout)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var lastUpdate time.Time
 
 	for {
 		select {
@@ -315,7 +319,10 @@ func (dm *DiscoveryManager) cleanupLoop(ctx context.Context) {
 			dm.Debugf("Cleanup loop stopping")
 			return
 		case <-ticker.C:
-			dm.cleanupStalePeers()
+			if time.Since(lastUpdate) < dm.peerTimeout {
+				dm.cleanupStalePeers()
+			}
+			lastUpdate = time.Now()
 		}
 	}
 }
