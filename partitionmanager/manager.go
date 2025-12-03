@@ -1453,7 +1453,7 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 
 		numHolders := len(partInfo.Holders)
 		if numHolders < pm.replicationFactor() {
-			pm.MarkForSync(partitionID, "Under replicated")
+			pm.MarkForSync(partitionID, fmt.Sprintf("Under replicated: have %v, need %v", numHolders, pm.replicationFactor()))
 		}
 	}
 }
