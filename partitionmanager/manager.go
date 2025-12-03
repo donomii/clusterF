@@ -1514,7 +1514,6 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 				Checksums:  map[types.NodeID]string{},
 				HolderData: map[types.NodeID]types.HolderData{ourNodeId: {File_count: 0, Checksum: ""}},
 			}
-			continue
 		} else {
 			_, hasPartition = info.HolderData[ourNodeId]
 		}
