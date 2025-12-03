@@ -832,13 +832,14 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if time.Since(lastUpdate) < time.Duration(c.GetPartitionSyncInterval())*time.Second {
+			if time.Since(lastUpdate) > time.Duration(c.GetPartitionSyncInterval())*time.Second {
 				checkPeers()
 				c.logger.Printf("Synchronised frogpond\n")
-				ticker.Reset(time.Duration(c.GetPartitionSyncInterval()) * time.Second)
+				lastUpdate = time.Now()
 			}
+
 		}
-		lastUpdate = time.Now()
+
 	}
 }
 
@@ -899,14 +900,14 @@ func (c *Cluster) runPartitionReindex(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if time.Since(lastUpdate) < time.Duration(c.partitionReIndexInterval)*time.Second {
+			if time.Since(lastUpdate) > time.Duration(c.partitionReIndexInterval)*time.Second {
 				c.logger.Printf("Started RunReindex\n")
 				pm.RunReindex(ctx)
 				c.logger.Printf("Finished RunReindex\n")
-				ticker.Reset(c.partitionReIndexInterval)
+				lastUpdate = time.Now()
 			}
 		}
-		lastUpdate = time.Now()
+
 	}
 }
 

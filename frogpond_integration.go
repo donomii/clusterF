@@ -512,13 +512,14 @@ func (c *Cluster) periodicNodePruning(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if time.Since(lastUpdate) < time.Duration(c.GetPartitionSyncInterval())*time.Second {
+			if time.Since(lastUpdate) > time.Duration(c.GetPartitionSyncInterval())*time.Second {
 				c.logger.Printf("Started pruneOldNodes\n")
 				c.pruneOldNodes()
 				c.logger.Printf("Finished pruneOldNodes\n")
+				lastUpdate = time.Now()
 			}
 		}
-		lastUpdate = time.Now()
+
 	}
 }
 

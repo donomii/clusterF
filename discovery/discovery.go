@@ -202,11 +202,12 @@ func (dm *DiscoveryManager) broadcastLoop(ctx context.Context) {
 			dm.Debugf("Broadcast loop stopping")
 			return
 		case <-ticker.C:
-			if time.Since(lastUpdate) < dm.broadcastInterval {
+			if time.Since(lastUpdate) > dm.broadcastInterval {
 				dm.broadcast()
+				lastUpdate = time.Now()
 			}
 		}
-		lastUpdate = time.Now()
+
 	}
 }
 
@@ -319,10 +320,11 @@ func (dm *DiscoveryManager) cleanupLoop(ctx context.Context) {
 			dm.Debugf("Cleanup loop stopping")
 			return
 		case <-ticker.C:
-			if time.Since(lastUpdate) < dm.peerTimeout {
+			if time.Since(lastUpdate) > dm.peerTimeout {
 				dm.cleanupStalePeers()
+				lastUpdate = time.Now()
 			}
-			lastUpdate = time.Now()
+
 		}
 	}
 }
