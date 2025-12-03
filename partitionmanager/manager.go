@@ -1438,6 +1438,7 @@ func (pm *PartitionManager) RunUnderReplicatedMonitor(ctx context.Context) {
 }
 
 func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) {
+	pm.logf("[REPLICATION CHECK] Checking 65536 partitions for under-replicated files")
 	for partNum := 0; partNum < 65536; partNum++ {
 		partitionID := types.PartitionID(fmt.Sprintf("p%05d", partNum))
 		if ctx.Err() != nil {
@@ -1454,19 +1455,6 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 		if numHolders < pm.replicationFactor() {
 			pm.MarkForSync(partitionID, "Under replicated")
 		}
-
-		/*
-			// Compare all the checksums for this partition, if any are different, mark for sync
-			checksums := make(map[string]bool)
-			for _, checksum := range partInfo.Checksums {
-				checksums[checksum] = true
-			}
-
-			if len(checksums) > 1 {
-				pm.MarkForSync(partitionID, "Checksums don't match")
-				pm.MarkForReindex(partitionID, "Checksums don't match")
-			}
-		*/
 	}
 }
 
