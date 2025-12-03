@@ -542,7 +542,8 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 		var streamErr error
 		defer func() {
 			if r := recover(); r != nil {
-				streamErr = fmt.Errorf("panic while streaming partition %s to %s: %v", partitionID, peerID, r)
+				msg := fmt.Sprintf("panic while streaming partition %s to %s: %v", partitionID, peerID, r)
+				streamErr = fmt.Errorf("%v", pm.logf(msg))
 			}
 			if streamErr != nil {
 				pw.CloseWithError(streamErr)
@@ -566,14 +567,15 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 
 			entry, entryErr := pm.buildPartitionEntry(partitionID, path)
 			if entryErr != nil {
-				pm.debugf("[PARTITION] Skipping %s in %s while pushing to %s: %v", path, partitionID, peerID, entryErr)
-				continue
+				msg := fmt.Sprintf("[PARTITION] Failed %s in %s while pushing to %s: %v", path, partitionID, peerID, entryErr)
+				pm.logf(msg)
+				panic(msg)
 			}
 
 			encodeErr := encoder.Encode(entry)
 			if encodeErr != nil {
 				streamErr = encodeErr
-				return
+				panic(pm.logf("[PARTITION] Failed to encode entry %s in %s: %v", path, partitionID, encodeErr))
 			}
 
 			sentCount++

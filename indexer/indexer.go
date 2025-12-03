@@ -80,26 +80,16 @@ func (b *trieBackend) trackPartitionPath(partitionID types.PartitionID, path str
 }
 
 func (b *trieBackend) Add(partitionID types.PartitionID, path string, docID uint64) {
-	if b.trie == nil {
-		b.trie = patricia.NewTrie()
-	}
 	b.trie.Set(patricia.Prefix(path), docID)
 	b.trackPartitionPath(partitionID, path)
 }
 
 func (b *trieBackend) Delete(partitionID types.PartitionID, path string) {
-	if b.trie == nil {
-		return
-	}
 	b.trie.Delete(patricia.Prefix(path))
 	b.trackPartitionPath(partitionID, path) // keep tombstone path in partition listing
 }
 
 func (b *trieBackend) PrefixSearch(prefix string) []indexedSearchEntry {
-	if b.trie == nil {
-		return nil
-	}
-
 	resultMap := make(map[string]indexedSearchEntry)
 	b.trie.VisitSubtree(patricia.Prefix(prefix), func(path patricia.Prefix, item patricia.Item) error {
 		docID, ok := item.(uint64)
@@ -142,9 +132,6 @@ func (b *trieBackend) TrackedPartitions() []types.PartitionID {
 }
 
 func (b *trieBackend) PathToDocID(path string) (uint64, bool) {
-	if b.trie == nil {
-		return 0, false
-	}
 	item := b.trie.Get(patricia.Prefix(path))
 	if item == nil {
 		return 0, false
@@ -274,9 +261,6 @@ func (idx *Indexer) removeDocFromPartitionLocked(partitionNumber int, docID uint
 }
 func (idx *Indexer) loadMetadata(path string) (types.FileMetadata, bool) {
 	var meta types.FileMetadata
-	if idx.deps == nil || idx.deps.FileStore == nil {
-		return meta, false
-	}
 	data, err := idx.deps.FileStore.GetMetadata(path)
 	if err != nil || len(data) == 0 {
 		return meta, false
@@ -309,10 +293,6 @@ func (idx *Indexer) deleteDocLocked(partitionID types.PartitionID, path string) 
 func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 	idx.rlock()
 	defer idx.runlock()
-
-	if idx.backend == nil {
-		return nil
-	}
 	raw := idx.backend.PrefixSearch(prefix)
 	if len(raw) == 0 {
 		return nil
