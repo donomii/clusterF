@@ -1439,6 +1439,7 @@ func (pm *PartitionManager) RunUnderReplicatedMonitor(ctx context.Context) {
 
 func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) {
 	pm.logf("[REPLICATION CHECK] Checking 65536 partitions for under-replicated files")
+	rf := pm.replicationFactor()
 	for partNum := 0; partNum < 65536; partNum++ {
 		partitionID := types.PartitionID(fmt.Sprintf("p%05d", partNum))
 		if ctx.Err() != nil {
@@ -1452,7 +1453,7 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 		}
 
 		numHolders := len(partInfo.Holders)
-		if numHolders < pm.replicationFactor() {
+		if numHolders < rf {
 			pm.MarkForSync(partitionID, fmt.Sprintf("Under replicated: have %v, need %v", numHolders, pm.replicationFactor()))
 		}
 	}
@@ -1669,24 +1670,16 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 
 	underReplicated := 0
 	currentRF := pm.replicationFactor()
+	totalFiles := 0
 
 	for _, info := range allPartitions {
 		if isIn(pm.deps.Cluster.ID(), info.Holders) {
 			localPartitions[string(info.ID)] = true
 		}
-
-	}
-
-	for _, info := range allPartitions {
-
 		if len(info.Holders) < currentRF {
 			underReplicated++
 
 		}
-	}
-
-	totalFiles := 0
-	for _, info := range allPartitions {
 		totalFiles += info.FileCount
 	}
 
