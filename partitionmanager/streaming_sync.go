@@ -677,7 +677,7 @@ func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bo
 		return true
 	}
 
-	// Same timestamp, use alphabetical path name
+	// Same timestamp, use alphabetical checksum
 	if remoteTime.Equal(localTime) {
 		return localMetadata.Checksum < remoteEntry.Metadata.Checksum
 	}
