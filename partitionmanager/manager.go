@@ -1457,6 +1457,7 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 			pm.MarkForSync(partitionID, fmt.Sprintf("Under replicated: have %v, need %v", numHolders, pm.replicationFactor()))
 		}
 	}
+	pm.logf("[REPLICATION CHECK] Finished checking 65536 partitions for under-replicated files")
 }
 
 // findFlaggedPartitionToSyncWithHolders picks a flagged partition to sync and returns its holders.
