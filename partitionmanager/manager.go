@@ -985,7 +985,6 @@ func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *typ
 		Holders:    holders,
 		Checksums:  checksums,
 		HolderData: holderMap,
-		Metadata:   metadata,
 	}
 }
 
@@ -1128,7 +1127,6 @@ func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.Part
 			Holders:    holders,
 			Checksums:  checksums,
 			HolderData: crdt.holders,
-			Metadata:   crdt.metadata,
 		}
 	}
 
@@ -1504,12 +1502,22 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 		//pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs.Keys())
 		//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
+		var hasPartition bool
 		info := pm.GetPartitionInfo(partitionID)
 		if info == nil {
-			pm.debugf("[PARTITION] No partition info found for %s, skipping until reindex", partitionID)
+			pm.debugf("[PARTITION] No partition info found for %s, so we are the only holder", partitionID)
+			hasPartition = true
+			info = &types.PartitionInfo{
+				ID:         partitionID,
+				FileCount:  0,
+				Holders:    []types.NodeID{ourNodeId},
+				Checksums:  map[types.NodeID]string{},
+				HolderData: map[types.NodeID]types.HolderData{ourNodeId: {File_count: 0, Checksum: ""}},
+			}
 			continue
+		} else {
+			_, hasPartition = info.HolderData[ourNodeId]
 		}
-		_, hasPartition := info.HolderData[ourNodeId]
 
 		if hasPartition {
 			// If we have the partition, check if we have enough holders
