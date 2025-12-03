@@ -1484,7 +1484,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 		}
 
 		if flagged, found := pm.SyncList.Load(partitionID); !(found && flagged) {
-			//pm.debugf("[PARTITION] Skipping partition %v because it is not flagged for sync", partitionID)
+			pm.debugf("[PARTITION] Skipping partition %v because it is not flagged for sync", partitionID)
 			continue
 		}
 
@@ -1495,6 +1495,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 
 		var hasPartition bool
 		info := pm.GetPartitionInfo(partitionID)
+		pm.debugf("[PARTITION] Partition %s has info: %v", partitionID, info)
 		if info == nil {
 			pm.debugf("[PARTITION] No partition info found for %s, so we are the only holder", partitionID)
 			hasPartition = true
@@ -1510,6 +1511,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 		}
 
 		if hasPartition {
+			pm.debugf("[PARTITION] Found partition %v locally", partitionID)
 			// If we have the partition, check if we have enough holders
 			if len(info.Holders) < pm.replicationFactor() {
 				// If we don't, find available holders to sync from
@@ -1521,8 +1523,9 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 					// sync to a random peer
 					pm.logf("[FINDFLAGGED] Found partition %v, but not enough holders, syncing to random peer %v", partitionID, peerID)
 					return partitionID, []types.NodeID{types.NodeID(peerID)}
+				} else {
+					pm.logf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
 				}
-				pm.logf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
 			} else {
 				// If we have the partition and enough holders, sync to all holders
 
@@ -1545,6 +1548,8 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 
 			}
 
+		} else {
+			pm.debugf("[PARTITION] We do not have partition %v locally", partitionID)
 		}
 
 	}
