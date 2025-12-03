@@ -193,7 +193,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 
 	pm.debugf("[PARTITION SYNCPEER] Starting bidirectional streaming sync of %s with %s, %v:%v", partitionID, peerID, peer.Address, peer.HTTPPort)
 
-	applied, _, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peer.Address, peer.HTTPPort)
+	applied, skippedFiles, err := pm.downloadPartitionFromPeer(ctx, partitionID, peerID, peer.Address, peer.HTTPPort)
 	if err != nil {
 		return err
 	}
@@ -211,11 +211,14 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	pm.notifyFileListChanged()
 
 	// Push our latest view back to the peer
-	_, pushErr := pm.pushPartitionToPeer(ctx, partitionID, peerID, peer.Address, peer.HTTPPort)
+	sentFiles, pushErr := pm.pushPartitionToPeer(ctx, partitionID, peerID, peer.Address, peer.HTTPPort)
 	if pushErr != nil {
 		return fmt.Errorf("failed to push partition %s to %s: %w", partitionID, peerID, pushErr)
 	}
 
+	if applied+skippedFiles+sentFiles == 0 {
+		pm.removePartitionHolder(partitionID)
+	}
 	pm.recordPartitionTimestamp(partitionID, lastSyncTimestampFile, syncStart)
 
 	pm.debugf("[PARTITION SYNCPEER] Completed bidirectional sync of %s with %s", partitionID, peerID)
@@ -223,6 +226,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	return nil
 }
 
+// Fetch files from a peer and store them locally, returns the number of files changed, files skipped, and any error
 func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) (int, int, error) {
 	if pm.deps.Cluster.NoStore() {
 		return 0, 0, fmt.Errorf("no store")
@@ -519,6 +523,7 @@ func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, p
 	}, nil
 }
 
+// Push files to a peer, returns the number of files sent and any error
 func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID types.PartitionID, peerID types.NodeID, peerAddr string, peerPort int) (int, error) {
 	if pm.deps.Cluster.NoStore() {
 		return 0, fmt.Errorf("no store")
