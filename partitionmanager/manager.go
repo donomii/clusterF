@@ -1408,6 +1408,7 @@ func (pm *PartitionManager) PeriodicSyncCheck(ctx context.Context) {
 				pm.debugf("Chose partition %v to sync, partition syncs in progress: %v", partitionID, len(throttle))
 				// Throttle concurrent syncs
 				pm.SyncList.Store(partitionID, false) // clear flag before syncing
+				pm.SyncList.Delete(partitionID)
 				go pm.doPartitionSync(ctx, partitionID, throttle, holders)
 
 			} else {

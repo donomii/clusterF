@@ -76,18 +76,18 @@ type GossipMessage struct {
 
 type Cluster struct {
 	// Identity & config
-	NodeId        types.NodeID
-	DataDir       string
-	HTTPDataPort  int    // per-node HTTP data port
-	DiscoveryPort int    // shared UDP announcement port
-	BroadcastIP   net.IP // usually net.IPv4bcast
-	logger        *log.Logger
-	Debug         bool
-	noStore       bool // client mode: don't store partitions locally
+	NodeId        types.NodeID // Node ID
+	DataDir       string       // Base data directory
+	HTTPDataPort  int          // per-node HTTP data port
+	DiscoveryPort int          // shared UDP announcement port
+	BroadcastIP   net.IP       // usually net.IPv4bcast
+	logger        *log.Logger  // Logger for this node
+	Debug         bool         // Enable debug logging
+	noStore       bool         // client mode: don't store partitions locally
 
 	// Discovery manager
-	discoveryManager types.DiscoveryManagerLike
-	threadManager    *threadmanager.ThreadManager
+	discoveryManager types.DiscoveryManagerLike   // Peer discovery manager
+	threadManager    *threadmanager.ThreadManager // Holds long running subsystems
 
 	// CRDT coordination layer
 	frogpond *frogpond.Node
@@ -96,7 +96,7 @@ type Cluster struct {
 	partitionManager *partitionmanager.PartitionManager
 
 	// File system layer
-	FileSystem *filesystem.ClusterFileSystem
+	FileSystem *filesystem.ClusterFileSystem // Presentation layer for the cluster
 
 	// File indexer for fast searching
 	indexer types.IndexerLike
@@ -104,10 +104,6 @@ type Cluster struct {
 	// HTTP clients for reuse (prevents goroutine leaks)
 	httpClient     *http.Client // short-lived control traffic
 	HttpDataClient *http.Client // long-running data transfers
-
-	// File list change notification system
-	fileListSubs map[chan struct{}]bool
-	fileListMu   sync.RWMutex
 
 	// Server shutdown
 	ctx    context.Context
@@ -287,8 +283,6 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		ImportDir:     opts.ImportDir,
 		noStore:       opts.NoStore,
 		peerAddrs:     syncmap.NewSyncMap[types.NodeID, *types.PeerInfo](),
-
-		fileListSubs: map[chan struct{}]bool{},
 
 		ctx:                  ctx,
 		cancel:               cancel,
@@ -782,6 +776,7 @@ func (c *Cluster) Start() {
 	c.debugf("Started all threads")
 }
 
+// runDiscoveryManager starts the peer discovery manager and blocks until the context is cancelled.
 func (c *Cluster) runDiscoveryManager(ctx context.Context) {
 	if c.discoveryManager == nil {
 		return
