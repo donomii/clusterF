@@ -492,3 +492,9 @@ func ExtractPartitionID(partition PartitionID, _ string) PartitionID {
 	}
 	return partition
 }
+
+func Assert(condition bool, message string) {
+	if !condition {
+		panic(message)
+	}
+}

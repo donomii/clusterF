@@ -257,6 +257,38 @@ func (c *Cluster) GetNodesForPartition(partitionName string) []types.NodeID {
 	dataPoints := c.frogpond.GetAllMatchingPrefix(holderPrefix)
 
 	var holders []types.NodeID
+	targetSet := make(map[types.NodeID]bool)
+	for _, dp := range dataPoints {
+		if dp.Deleted || len(dp.Value) == 0 {
+			continue
+		}
+
+		// Extract node ID from key
+		nodeID := types.NodeID(strings.TrimPrefix(string(dp.Key), holderPrefix))
+
+		if nodeID == "" {
+			panic("no")
+		}
+		if targetSet[nodeID] {
+			continue
+		}
+		targetSet[nodeID] = true
+
+	}
+
+	for nodeID := range targetSet {
+		holders = append(holders, nodeID)
+	}
+
+	return holders
+}
+
+// GetNodesForPartition returns nodes that hold a specific partition
+func (c *Cluster) GetNodesForPartitionMap(partitionName string) []types.NodeID {
+	holderPrefix := fmt.Sprintf("partitions/%s/holders/", partitionName)
+	dataPoints := c.frogpond.GetAllMatchingPrefix(holderPrefix)
+
+	var holders []types.NodeID
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
