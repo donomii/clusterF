@@ -431,24 +431,18 @@ func (pm *PartitionManager) processPartitionEntryStream(ctx context.Context, dec
 			return applied, skipped, nil, decodeErr
 		}
 
-		if entry.Path == "" {
-			break
-		}
-
-		if entry.Metadata.Path == "" {
-			panic("what the fuck were you thinking you stupid AI")
-		}
+		types.Assertf(entry.Path != "", "what the fuck were you thinking you stupid AI")
+		types.Assertf(entry.Metadata.Path != "", "what the fuck were you thinking you stupid AI")
+		types.Assertf(!entry.Metadata.IsDirectory, "stupid fucking AI")
 
 		if !pm.shouldUpdateEntry(entry) {
 			skipped++
 			continue
 		}
 
-		if entry.Metadata.Deleted || entry.Metadata.IsDirectory {
+		if entry.Metadata.Deleted {
 			metaErr := pm.storeEntryMetadata(entry)
-			if metaErr != nil {
-				panic(metaErr)
-			}
+			types.Assertf(metaErr != nil, "Critical error: failed to store entry %s: %v", entry.Path, metaErr)
 			applied++
 			continue
 		}

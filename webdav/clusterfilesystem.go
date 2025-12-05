@@ -4,10 +4,14 @@ package webdav
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -32,7 +36,10 @@ func (cfs *ClusterFileSystem) debugf(format string, args ...interface{}) {
 type clusterFileWriter struct {
 	cfs         *ClusterFileSystem
 	clusterPath string
-	buffer      bytes.Buffer
+	tmpFile     *os.File
+	hasher      hash.Hash
+	sniffBuffer []byte
+	size        int64
 	closed      bool
 }
 
@@ -40,7 +47,22 @@ func (w *clusterFileWriter) Write(p []byte) (int, error) {
 	if w.closed {
 		return 0, fmt.Errorf("write after close")
 	}
-	return w.buffer.Write(p)
+
+	n, err := w.tmpFile.Write(p)
+	if n > 0 {
+		w.size += int64(n)
+		if _, hashErr := w.hasher.Write(p[:n]); hashErr != nil {
+			return n, hashErr
+		}
+		if len(w.sniffBuffer) < 512 {
+			remaining := 512 - len(w.sniffBuffer)
+			if remaining > n {
+				remaining = n
+			}
+			w.sniffBuffer = append(w.sniffBuffer, p[:remaining]...)
+		}
+	}
+	return n, err
 }
 
 func (w *clusterFileWriter) Close() error {
@@ -48,10 +70,14 @@ func (w *clusterFileWriter) Close() error {
 		return nil
 	}
 
-	data := w.buffer.Bytes()
+	if err := w.tmpFile.Close(); err != nil {
+		return webdav.NewHTTPError(http.StatusInternalServerError, err)
+	}
+	defer os.Remove(w.tmpFile.Name())
+
 	contentType := ""
-	if len(data) > 0 {
-		contentType = http.DetectContentType(data)
+	if len(w.sniffBuffer) > 0 {
+		contentType = http.DetectContentType(w.sniffBuffer)
 	}
 	if contentType == "" || contentType == "application/octet-stream" {
 		if ext := path.Ext(w.clusterPath); ext != "" {
@@ -64,8 +90,10 @@ func (w *clusterFileWriter) Close() error {
 		contentType = "application/octet-stream"
 	}
 
+	checksum := hex.EncodeToString(w.hasher.Sum(nil))
+
 	// FIXME context?  Use the context from the request?
-	if _, err := w.cfs.fs.InsertFileIntoCluster(context.Background(), w.clusterPath, data, contentType, time.Now()); err != nil {
+	if _, err := w.cfs.fs.InsertFileIntoClusterFromFile(context.Background(), w.clusterPath, w.tmpFile.Name(), w.size, checksum, contentType, time.Now()); err != nil {
 		return webdav.NewHTTPError(http.StatusInternalServerError, err)
 	}
 
@@ -360,9 +388,16 @@ func (cfs *ClusterFileSystem) Create(ctx context.Context, name string) (io.Write
 		return nil, webdav.NewHTTPError(http.StatusMethodNotAllowed, fmt.Errorf("cannot overwrite directory"))
 	}
 
+	tmpFile, err := os.CreateTemp("", "clusterf-webdav-*")
+	if err != nil {
+		return nil, webdav.NewHTTPError(http.StatusInternalServerError, err)
+	}
+
 	return &clusterFileWriter{
 		cfs:         cfs,
 		clusterPath: clusterPath,
+		tmpFile:     tmpFile,
+		hasher:      sha256.New(),
 	}, nil
 }
 
@@ -411,6 +446,57 @@ func (cfs *ClusterFileSystem) Mkdir(ctx context.Context, name string) error {
 	}
 
 	return nil
+}
+
+func (cfs *ClusterFileSystem) insertFromReader(ctx context.Context, dstPath string, reader io.ReadCloser, metadata types.FileMetadata) error {
+	defer reader.Close()
+
+	tmpFile, err := os.CreateTemp("", "clusterf-webdav-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpFile.Name())
+
+	hasher := sha256.New()
+	writer := io.MultiWriter(tmpFile, hasher)
+	written, err := io.Copy(writer, reader)
+	if err != nil {
+		tmpFile.Close()
+		return err
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	checksum := metadata.Checksum
+	if checksum == "" {
+		checksum = hex.EncodeToString(hasher.Sum(nil))
+	}
+
+	size := metadata.Size
+	if size == 0 {
+		size = written
+	}
+
+	contentType := metadata.ContentType
+	if contentType == "" || contentType == "application/octet-stream" {
+		if ext := path.Ext(dstPath); ext != "" {
+			if ct := contentTypeFromExt(ext); ct != "" {
+				contentType = ct
+			}
+		}
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	if metadata.ModifiedAt.IsZero() {
+		panic("no")
+	}
+
+	_, err = cfs.fs.InsertFileIntoClusterFromFile(ctx, dstPath, tmpFile.Name(), size, checksum, contentType, metadata.ModifiedAt)
+	return err
 }
 
 // Copy copies a file or directory
@@ -469,33 +555,23 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 				if entry.IsDirectory {
 					cfs.fs.CreateDirectory(newDstPath)
 				} else {
-					// Copy file
-					data, _, err := cfs.fs.GetFile(entry.Path)
+					reader, meta, err := cfs.fs.GetFileReader(entry.Path)
 					if err != nil {
 						continue // Skip files that can't be read
 					}
-					//FUCK AI
-					_, _ = cfs.fs.InsertFileIntoCluster(ctx, newDstPath, data, entry.ContentType, entry.ModifiedAt)
+					if err := cfs.insertFromReader(ctx, newDstPath, reader, meta); err != nil {
+						continue
+					}
 				}
 			}
 		}
 	} else {
-		// Copy file
-		data, fullMeta, err := cfs.fs.GetFile(srcClusterPath)
+		reader, fullMeta, err := cfs.fs.GetFileReader(srcClusterPath)
 		if err != nil {
 			return false, webdav.NewHTTPError(http.StatusInternalServerError, err)
 		}
 
-		contentType := fullMeta.ContentType
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
-
-		if fullMeta.ModifiedAt.IsZero() {
-			panic("no")
-		}
-		//FUCK AI
-		if _, err := cfs.fs.InsertFileIntoCluster(ctx, dstClusterPath, data, contentType, fullMeta.ModifiedAt); err != nil {
+		if err := cfs.insertFromReader(ctx, dstClusterPath, reader, fullMeta); err != nil {
 			return false, webdav.NewHTTPError(http.StatusInternalServerError, err)
 		}
 	}

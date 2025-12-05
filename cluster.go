@@ -33,7 +33,6 @@ import (
 	"github.com/donomii/clusterF/indexer"
 	"github.com/donomii/clusterF/metrics"
 	"github.com/donomii/clusterF/partitionmanager"
-	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
@@ -122,9 +121,6 @@ type Cluster struct {
 
 	// Optional transcoder for media files
 	Transcoder *Transcoder
-
-	// Peer addresses
-	peerAddrs *syncmap.SyncMap[types.NodeID, *types.PeerInfo]
 
 	// Current file being processed (for monitoring)
 	currentFile atomic.Value // stores string
@@ -281,7 +277,6 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		ExportDir:     opts.ExportDir,
 		ClusterDir:    opts.ClusterDir,
 		ImportDir:     opts.ImportDir,
-		peerAddrs:     syncmap.NewSyncMap[types.NodeID, *types.PeerInfo](),
 
 		ctx:                  ctx,
 		cancel:               cancel,
@@ -695,8 +690,9 @@ func xorEncryptString(data string, key []byte) string {
 // Get data for peer
 func (c *Cluster) LoadPeer(id types.NodeID) (*types.PeerInfo, bool) {
 	// First try peerAddrs (from Discovery)
-	peer, ok := c.peerAddrs.Load(types.NodeID(id))
-	if ok && peer != nil {
+	peer, ok := c.discoveryManager.GetPeerMap().Load(string(id))
+	if ok {
+		types.Assertf(peer != nil, "peer info nil for %s", id)
 		return &types.PeerInfo{
 			NodeID:   peer.NodeID,
 			Address:  peer.Address,
@@ -705,7 +701,8 @@ func (c *Cluster) LoadPeer(id types.NodeID) (*types.PeerInfo, bool) {
 	}
 	// Fallback: try CRDT nodes/ table
 	nodeData := c.GetNodeInfo(id)
-	if nodeData != nil && nodeData.Address != "" {
+	if nodeData != nil {
+		types.Assertf(nodeData.Address != "", "peer info nil for %s", id)
 		return &types.PeerInfo{
 			NodeID:   types.NodeID(nodeData.NodeID),
 			Address:  nodeData.Address,
@@ -730,9 +727,8 @@ func verifyEncryptionKey(encryptedTestPhrase string, key []byte) error {
 
 // storeNodeIDInDataDir stores the node ID in the data directory for future reference
 func storeNodeIDInDataDir(dataDir, nodeID string) error {
-	if dataDir == "" || nodeID == "" {
-		return nil
-	}
+	types.Assert(dataDir != "", "dataDir must not be empty")
+	types.Assert(nodeID != "", "nodeID must not be empty")
 	// Ensure dir exists
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
@@ -777,9 +773,7 @@ func (c *Cluster) Start() {
 
 // runDiscoveryManager starts the peer discovery manager and blocks until the context is cancelled.
 func (c *Cluster) runDiscoveryManager(ctx context.Context) {
-	if c.discoveryManager == nil {
-		return
-	}
+	types.Assert(c.discoveryManager != nil, "discovery manager must not be nil")
 	c.Logger().Printf("Starting discovery manager")
 	if err := c.discoveryManager.Start(); err != nil {
 		c.Logger().Printf("Discovery manager failed to start: %v", err)
@@ -844,9 +838,7 @@ func (c *Cluster) FullSyncAllPeers() {
 		if c.ctx.Err() != nil {
 			return
 		}
-		if peer == nil {
-			continue
-		}
+		types.Assert(peer == nil, "peer must not be nil")
 		c.requestFullStoreFromPeer(peer)
 	}
 }

@@ -473,7 +473,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Cont
 	partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
 	nodesForPartition := fs.cluster.GetNodesForPartition(partitionName)
 	desiredReplicas := fs.cluster.ReplicationFactor()
-	types.Assert(desiredReplicas > 0, "desiredReplicas must be greater than 0")
+	types.Assertf(desiredReplicas > 0, "desiredReplicas must be greater than 0")
 
 	targetNodes := make([]types.NodeID, 0)
 	targetSet := make(map[types.NodeID]bool)
@@ -483,7 +483,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Cont
 		allNodes := fs.cluster.GetAllNodes()
 		candidates := make([]types.NodeID, 0, len(allNodes))
 		for nodeID, nodeInfo := range allNodes {
-			types.Assert(nodeInfo != nil, "nodeInfo must not be nil")
+			types.Assertf(nodeInfo != nil, "nodeInfo must not be nil")
 			if nodeInfo.IsStorage {
 				if nodeInfo.DiskSize > 0 {
 					used := nodeInfo.DiskSize - nodeInfo.DiskFree

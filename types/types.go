@@ -161,6 +161,7 @@ type FileSystemLike interface {
 	GetFileReader(path string) (io.ReadCloser, FileMetadata, error)
 	ListDirectory(path string) ([]*FileMetadata, error)
 	InsertFileIntoCluster(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) ([]NodeID, error)
+	InsertFileIntoClusterFromFile(ctx context.Context, path string, contentPath string, size int64, checksum string, contentType string, modTime time.Time) ([]NodeID, error)
 }
 
 // PeerInfo represents information about a discovered peer
@@ -491,6 +492,12 @@ func ExtractPartitionID(partition PartitionID, _ string) PartitionID {
 		log.Panicf("invalid empty partition provided to ExtractPartitionID")
 	}
 	return partition
+}
+
+func Assertf(condition bool, format string, args ...any) {
+	if !condition {
+		panic(fmt.Sprintf(format, args...))
+	}
 }
 
 func Assert(condition bool, message string) {
