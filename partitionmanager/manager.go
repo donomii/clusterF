@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/donomii/clusterF/httpclient"
@@ -24,6 +25,7 @@ import (
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 	"github.com/donomii/frogpond"
+	"github.com/tchap/go-patricia/patricia"
 )
 
 const (
@@ -31,18 +33,21 @@ const (
 )
 
 type PartitionManager struct {
-	deps        *types.App
-	ReindexList *syncmap.SyncMap[types.PartitionID, bool]
-	SyncList    *syncmap.SyncMap[types.PartitionID, bool]
+	deps         *types.App
+	ReindexList  *syncmap.SyncMap[types.PartitionID, bool]
+	SyncList     *syncmap.SyncMap[types.PartitionID, bool]
+	fileSyncMu   sync.RWMutex
+	fileSyncTrie *patricia.Trie
 }
 
 type PartitionVersion int64
 
 func NewPartitionManager(deps *types.App) *PartitionManager {
 	return &PartitionManager{
-		deps:        deps,
-		ReindexList: syncmap.NewSyncMap[types.PartitionID, bool](),
-		SyncList:    syncmap.NewSyncMap[types.PartitionID, bool](),
+		deps:         deps,
+		ReindexList:  syncmap.NewSyncMap[types.PartitionID, bool](),
+		SyncList:     syncmap.NewSyncMap[types.PartitionID, bool](),
+		fileSyncTrie: patricia.NewTrie(),
 	}
 }
 
@@ -318,6 +323,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	// Update partition metadata in CRDT
 	pm.MarkForReindex(partitionID, fmt.Sprintf("stored file %s", path))
 	pm.MarkForSync(partitionID, fmt.Sprintf("stored file %s", path))
+	pm.MarkFileForSync(path, fmt.Sprintf("stored file %s", path))
 
 	// Debug: verify what we just stored
 	if metadata_bytes, _, exists, err := pm.deps.FileStore.Get(path); err == nil && exists {
@@ -662,6 +668,7 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 	// Mark the partition for re-scan
 	pm.MarkForReindex(partitionID, fmt.Sprintf("deleted file %s", path))
 	pm.MarkForSync(partitionID, fmt.Sprintf("deleted file %s", path))
+	pm.MarkFileForSync(path, fmt.Sprintf("deleted file %s", path))
 
 	pm.logf("[PARTITION] Marked file %s as deleted in partition %s", path, partitionID)
 	return nil
@@ -939,6 +946,7 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 
 	pm.MarkForReindex(partitionID, fmt.Sprintf("stored file %s", path))
 	pm.MarkForSync(partitionID, fmt.Sprintf("stored file %s", path))
+	pm.MarkFileForSync(path, fmt.Sprintf("stored file %s", path))
 
 	if metadataBytes, _, exists, err := pm.deps.FileStore.Get(path); err == nil && exists {
 		var parsedMeta types.FileMetadata

@@ -329,6 +329,7 @@ func (pm *PartitionManager) storeEntryMetadata(entry PartitionSyncEntry) error {
 	if pm.deps.Indexer != nil {
 		pm.deps.Indexer.AddFile(entry.Metadata.Path, entry.Metadata)
 	}
+	pm.MarkFileForSync(entry.Metadata.Path, fmt.Sprintf("synced tombstone %s", entry.Metadata.Path))
 
 	return nil
 }
@@ -357,6 +358,7 @@ func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntr
 
 	pm.MarkForReindex(types.PartitionIDForPath(entry.Metadata.Path), fmt.Sprintf("synced entry %s", entry.Metadata.Path))
 	pm.MarkForSync(types.PartitionIDForPath(entry.Metadata.Path), fmt.Sprintf("synced entry %s", entry.Metadata.Path))
+	pm.MarkFileForSync(entry.Metadata.Path, fmt.Sprintf("synced entry %s", entry.Metadata.Path))
 
 	return nil
 }
