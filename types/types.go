@@ -65,9 +65,8 @@ type PartitionManagerLike interface {
 	DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, modTime time.Time) error                        // Delete file from partition with explicit timestamp
 	GetMetadataFromPartition(path string) (FileMetadata, error)                                                            // Get file metadata from partition
 	GetMetadataFromPeers(path string) (FileMetadata, error)                                                                // Get file metadata from other nodes
-	GetFileFromPeers(path string) ([]byte, FileMetadata, error)
-	CalculatePartitionName(path string) string                                // Calculate partition name for a given path
-	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error // Scan all files in all partitions, calling fn for each file
+	CalculatePartitionName(path string) string                                                                             // Calculate partition name for a given path
+	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error                                              // Scan all files in all partitions, calling fn for each file
 	GetPartitionInfo(partitionID PartitionID) *PartitionInfo
 	RunReindex(ctx context.Context)
 	MarkForReindex(pId PartitionID, reason string)
@@ -352,7 +351,7 @@ func CollapseSearchResults(raw_results []SearchResult, searchPath string) []Sear
 	for _, res := range raw_results {
 		norm_res := CollapseToDirectory(res.Path, searchPath)
 		res.Name = norm_res
-		AddResultToMap(res, results, searchPath)
+		AddResultToMap(res, results, norm_res, searchPath)
 	}
 
 	resultList := make([]SearchResult, 0, len(results))
@@ -362,8 +361,7 @@ func CollapseSearchResults(raw_results []SearchResult, searchPath string) []Sear
 	return resultList
 }
 
-func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, searchPath string) {
-	normPath := CollapseToDirectory(result.Path, searchPath)
+func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, normPath, searchPath string) {
 	var newResult SearchResult
 	if strings.HasSuffix(normPath, "/") {
 		// It's a directory
@@ -378,7 +376,7 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 		// It's a file in the current directory
 		newResult = SearchResult{
 			Name:        normPath,
-			Path:        result.Path,
+			Path:        searchPath + normPath,
 			Size:        result.Size,
 			ContentType: result.ContentType,
 			ModifiedAt:  result.ModifiedAt,
@@ -387,9 +385,7 @@ func AddResultToMap(result SearchResult, resultMap map[string]SearchResult, sear
 			Holders:     uniqueNodeIDs(result.Holders),
 		}
 	}
-	if newResult.ModifiedAt.IsZero() {
-		panic("no")
-	}
+	Assert(!newResult.ModifiedAt.IsZero(), "timestamps can never be zero")
 	if existing, ok := resultMap[normPath]; ok {
 		resultMap[normPath] = mergeSearchResults(existing, newResult)
 	} else {
@@ -503,5 +499,24 @@ func Assertf(condition bool, format string, args ...any) {
 func Assert(condition bool, message string) {
 	if !condition {
 		panic(message)
+	}
+}
+
+func ReadAll(r io.Reader) ([]byte, error) {
+	b := make([]byte, 0, 8*1024*1024)
+	for {
+		n, err := r.Read(b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return b, err
+		}
+
+		if len(b) == cap(b) {
+			// Add more capacity (let append pick how much).
+			b = append(b, 0)[:len(b)]
+		}
 	}
 }

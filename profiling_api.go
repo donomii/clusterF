@@ -3,9 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"runtime"
+
+	"github.com/donomii/clusterF/types"
 )
 
 // handleProfilingAPI handles profiling control API.
@@ -22,7 +23,7 @@ func (c *Cluster) handleProfilingAPI(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case http.MethodPost:
-		body, err := io.ReadAll(r.Body)
+		body, err := types.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Failed to read request body", http.StatusBadRequest)
 			return

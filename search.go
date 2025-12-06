@@ -4,7 +4,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -41,22 +40,6 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 
 	// Use indexer for fast prefix search
 	results := c.indexer.PrefixSearch(req.Query)
-	localNode := c.ID()
-
-	// Collapse results into map to deduplicate
-	resultMap := make(map[string]types.SearchResult)
-	for _, res := range results {
-		c.debugf("[LOCALSEARCH] Found result %v\n", res.Path)
-		res.Holders = append(res.Holders, localNode)
-		types.AddResultToMap(res, resultMap, req.Query)
-	}
-
-	// Convert map to slice
-	results = make([]types.SearchResult, 0, len(resultMap))
-	for _, res := range resultMap {
-		c.debugf("Result: %+v", res)
-		results = append(results, res)
-	}
 
 	c.debugf("[SEARCH] Found %d local results for query: %s in %v seconds", len(results), req.Query, time.Now().Sub(start).Seconds())
 
@@ -104,7 +87,7 @@ func (c *Cluster) searchAllNodes(req SearchRequest) []types.SearchResult {
 	searchMap := make(map[string]types.SearchResult)
 
 	for _, res := range allResults {
-		types.AddResultToMap(res, searchMap, req.Query)
+		types.AddResultToMap(res, searchMap, res.Name, req.Query)
 	}
 
 	allResults = make([]types.SearchResult, 0, len(searchMap))
@@ -154,7 +137,7 @@ func (c *Cluster) searchPeer(peer *types.PeerInfo, req SearchRequest) []types.Se
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := types.ReadAll(resp.Body)
 		c.debugf("Peer %s search returned %d: %s", peer.NodeID, resp.StatusCode, string(body))
 		return nil
 	}

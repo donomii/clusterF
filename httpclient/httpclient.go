@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+
+	"github.com/donomii/clusterF/types"
 )
 
 // RequestOption customizes an outgoing HTTP request.
@@ -59,7 +61,7 @@ func (r *Response) ReadAllAndClose() ([]byte, error) {
 	if r == nil || r.Response == nil || r.Body == nil {
 		return nil, nil
 	}
-	body, err := io.ReadAll(r.Body)
+	body, err := types.ReadAll(r.Body)
 	closeErr := r.Close()
 	if err == nil {
 		err = closeErr

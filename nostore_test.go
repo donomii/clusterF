@@ -3,12 +3,12 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/donomii/clusterF/testenv"
+	"github.com/donomii/clusterF/types"
 )
 
 func TestCluster_NoStoreMode(t *testing.T) {
@@ -141,7 +141,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 			return false
 		}
 
-		content, err := io.ReadAll(resp.Body)
+		content, err := types.ReadAll(resp.Body)
 		if err != nil {
 			t.Logf("Failed to read response: %v", err)
 			return false
@@ -202,7 +202,7 @@ func TestCluster_NoStoreMode(t *testing.T) {
 		if resp, err := client.Get(storageURL); err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				if content, err := io.ReadAll(resp.Body); err == nil {
+				if content, err := types.ReadAll(resp.Body); err == nil {
 					if string(content) == string(clientStoreData) {
 						fileFoundOnStorageNode = true
 						t.Logf("✅ File uploaded via no-store client found on storage node %d", i)

@@ -660,11 +660,6 @@ func (c *Cluster) handleFileHeadInternal(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	if metadata.IsDirectory {
-		c.writeHeadResponse(w, metadata)
-		return
-	}
-
 	c.writeHeadResponse(w, metadata)
 }
 
@@ -736,9 +731,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 	forwardedFrom := r.Header.Get("X-Forwarded-From")
 	isForwarded := forwardedFrom != ""
 
-	if isForwarded {
-		panic("Cannot forward to external api")
-	}
+	types.Assert(!isForwarded, "Cannot forward to external api")
 
 	partitionID := c.PartitionManager().CalculatePartitionName(path)
 	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
@@ -755,11 +748,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		return
 	}
 
-	peers := c.DiscoveryManager().GetPeers()
-	peerLookup := make(map[types.NodeID]*types.PeerInfo)
-	for _, peer := range peers {
-		peerLookup[types.NodeID(peer.NodeID)] = peer
-	}
+	peerLookup := c.DiscoveryManager().GetPeerMap()
 
 	var (
 		successful bool
@@ -776,7 +765,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 				Address:  c.DiscoveryManager().GetLocalAddress(),
 				HTTPPort: c.HTTPPort(),
 			}
-		} else if p, ok := peerLookup[holderID]; ok {
+		} else if p, ok := peerLookup.Load(string(holderID)); ok {
 			peer = p
 		} else {
 			errors = append(errors, fmt.Sprintf("%s: no peer info", holderID))
@@ -784,10 +773,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		}
 
 		deleteURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("%s: URL build failed: %v", peer.NodeID, err))
-			continue
-		}
+		types.Assertf(err != nil, "%s: URL build failed: %v", peer.NodeID, err)
 
 		body, _, status, err := httpclient.SimpleDelete(r.Context(), c.HttpDataClient, deleteURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),

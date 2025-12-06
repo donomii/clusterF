@@ -481,7 +481,7 @@ func (c *Cluster) handleFrogpondUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := types.ReadAll(r.Body)
 	if err != nil {
 		c.Logger().Printf("[DEBUG] Failed to read request body: %v", err)
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)

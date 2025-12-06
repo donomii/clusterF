@@ -431,6 +431,10 @@ func (pm *PartitionManager) processPartitionEntryStream(ctx context.Context, dec
 			return applied, skipped, nil, decodeErr
 		}
 
+		if entry.Path == "" && entry.Metadata.Path == "" && !entry.Metadata.IsDirectory && !entry.Metadata.Deleted && entry.Metadata.Checksum == "" && entry.Metadata.ModifiedAt.IsZero() && entry.Metadata.CreatedAt.IsZero() {
+			// This is the end of the stream
+			break
+		}
 		types.Assertf(entry.Path != "", "what the fuck were you thinking you stupid AI")
 		types.Assertf(entry.Metadata.Path != "", "what the fuck were you thinking you stupid AI")
 		types.Assertf(!entry.Metadata.IsDirectory, "stupid fucking AI")
@@ -606,7 +610,7 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := types.ReadAll(resp.Body)
 		streamErr := <-errCh
 		msg := strings.TrimSpace(string(body))
 		if msg == "" {

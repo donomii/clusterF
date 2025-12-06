@@ -2,13 +2,14 @@ package main
 
 import (
 	"bytes"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/donomii/clusterF/types"
 )
 
 func assertLastModifiedHeader(t *testing.T, w *httptest.ResponseRecorder, expectedTime time.Time) {
@@ -235,7 +236,7 @@ func TestHandleFileHeadModifiedAtHeader(t *testing.T) {
 		}
 	}
 
-	body, _ := io.ReadAll(w.Body)
+	body, _ := types.ReadAll(w.Body)
 	if len(body) > 0 {
 		t.Errorf("HEAD request returned body content: %d bytes", len(body))
 	}
@@ -332,7 +333,7 @@ func TestHandleFileTimezonePreservation(t *testing.T) {
 					expectedTime, expectedTime.Location())
 			}
 
-			body, _ := io.ReadAll(w.Body)
+			body, _ := types.ReadAll(w.Body)
 			if !bytes.Equal(body, content) {
 				t.Errorf("Content mismatch: got %q, want %q", body, content)
 			}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/donomii/clusterF/partitionmanager"
 	"github.com/donomii/clusterF/testenv"
+	"github.com/donomii/clusterF/types"
 )
 
 // clearResponseBody drains and closes the response body to enable connection reuse.
@@ -507,7 +508,7 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 					return false
 				}
 				if resp.StatusCode != http.StatusCreated {
-					body, _ := io.ReadAll(resp.Body)
+					body, _ := types.ReadAll(resp.Body)
 					fmt.Printf("[ERROR] PUT request for file %d failed with status %d. Response body: %s\n", i, resp.StatusCode, string(body))
 					clearResponseBody(resp)
 					return false
@@ -518,7 +519,7 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 				if err != nil {
 					errCh <- fmt.Errorf("PUT request failed: %v", err)
 				} else if resp != nil {
-					body, _ := io.ReadAll(resp.Body)
+					body, _ := types.ReadAll(resp.Body)
 					errCh <- fmt.Errorf("PUT request failed with status %d. Response body: %s", resp.StatusCode, string(body))
 				} else {
 					errCh <- fmt.Errorf("PUT request failed: no response")
@@ -539,7 +540,7 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 					return false
 				}
 				if resp.StatusCode != http.StatusOK {
-					body, _ := io.ReadAll(resp.Body)
+					body, _ := types.ReadAll(resp.Body)
 					t.Logf("GET request for file %d failed with status %d. Response body: %s", i, resp.StatusCode, string(body))
 					clearResponseBody(resp)
 					return false
@@ -550,7 +551,7 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 				if err != nil {
 					errCh <- fmt.Errorf("GET request failed: %v", err)
 				} else if resp != nil {
-					body, _ := io.ReadAll(resp.Body)
+					body, _ := types.ReadAll(resp.Body)
 					errCh <- fmt.Errorf("GET request failed with status %d. Response body: %s", resp.StatusCode, string(body))
 				} else {
 					errCh <- fmt.Errorf("GET request failed: no response")
@@ -581,13 +582,13 @@ func testBasicOperations(t *testing.T, config TestConfig) ClusterTestResult {
 			}
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := types.ReadAll(resp.Body)
 				errCh <- fmt.Errorf("GET request for file %d (%s) returned %d, expected 200. Response body: %s", i, filePath, resp.StatusCode, string(body))
 				clearResponseBody(resp)
 				return
 			}
 
-			body, err := io.ReadAll(resp.Body)
+			body, err := types.ReadAll(resp.Body)
 			if err != nil {
 				errCh <- fmt.Errorf("Failed to read response: %v", err)
 				clearResponseBody(resp)
@@ -934,7 +935,7 @@ func TestCluster_BasicOperations(t *testing.T) {
 		return resp.StatusCode == http.StatusCreated
 	}, 1000, 10000) // Retry for up to 10 seconds
 	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := types.ReadAll(resp.Body)
 		t.Fatalf("Testing file upload, expected StatusCreated (%d), got %d. File /test-file.txt, target url %v. Error response body: %s", http.StatusCreated, resp.StatusCode, url, string(body))
 	}
 
@@ -948,7 +949,7 @@ func TestCluster_BasicOperations(t *testing.T) {
 			return fmt.Errorf("GET request failed: %v", err)
 		}
 
-		body, err = io.ReadAll(resp.Body)
+		body, err = types.ReadAll(resp.Body)
 		if err != nil {
 			return fmt.Errorf("Failed to read response: %v", err)
 		}
@@ -989,7 +990,7 @@ func TestCluster_BasicOperations(t *testing.T) {
 			t.Fatalf("DELETE request failed: %v", err)
 		}
 		if resp.StatusCode != http.StatusNoContent {
-			body, _ := io.ReadAll(resp.Body)
+			body, _ := types.ReadAll(resp.Body)
 			fmt.Printf("[ERROR] DELETE request failed with status %d, expected 204. Response body: %s\n", resp.StatusCode, string(body))
 			clearResponseBody(resp)
 			t.Fatalf("Expected 204, got %d", resp.StatusCode)
@@ -1423,7 +1424,7 @@ func TestCluster_MixedEncryption(t *testing.T) {
 				return fmt.Errorf("Node %d: Expected 200, got %d", i, resp.StatusCode)
 			}
 
-			body, err := io.ReadAll(resp.Body)
+			body, err := types.ReadAll(resp.Body)
 			if err != nil {
 				return fmt.Errorf("Node %d: Failed to read response: %v", i, err)
 			}

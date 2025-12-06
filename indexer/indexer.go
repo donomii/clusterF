@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,6 +49,7 @@ type searchBackend interface {
 	Add(partitionID types.PartitionID, path string, docID uint64)
 	Delete(partitionID types.PartitionID, path string)
 	PrefixSearch(prefix string) []indexedSearchEntry
+	PrefixSearchInferDirectories(prefix string) []indexedSearchEntry
 	FilesForPartition(partitionID types.PartitionID) []string
 	TrackedPartitions() []types.PartitionID
 	PathToDocID(path string) (uint64, bool)
@@ -105,7 +107,28 @@ func (b *trieBackend) PrefixSearch(prefix string) []indexedSearchEntry {
 	for _, res := range resultMap {
 		results = append(results, res)
 	}
+
 	return results
+}
+
+func (b *trieBackend) PrefixSearchInferDirectories(prefix string) []indexedSearchEntry {
+	resultMap := make(map[string]indexedSearchEntry)
+	b.trie.VisitSubtree(patricia.Prefix(prefix), func(path patricia.Prefix, item patricia.Item) error {
+		docID, ok := item.(uint64)
+		if !ok {
+			return nil
+		}
+		key := types.CollapseToDirectory(string(path), prefix) //We don't trim the prefix here, we return the full path
+		resultMap[key] = indexedSearchEntry{path: key, id: docID}
+		return nil
+	})
+
+	results := make([]indexedSearchEntry, 0, len(resultMap))
+	for _, res := range resultMap {
+		results = append(results, res)
+	}
+
+	return results //Directories end in a slash, files never do
 }
 
 func (b *trieBackend) FilesForPartition(partitionID types.PartitionID) []string {
@@ -293,18 +316,31 @@ func (idx *Indexer) deleteDocLocked(partitionID types.PartitionID, path string) 
 func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 	idx.rlock()
 	defer idx.runlock()
-	raw := idx.backend.PrefixSearch(prefix)
+	raw := idx.backend.PrefixSearchInferDirectories(prefix)
 	if len(raw) == 0 {
 		return nil
 	}
 
 	resultMap := make(map[string]types.SearchResult)
 	for _, entry := range raw {
-		meta, ok := idx.loadMetadata(entry.path)
-		if !ok || meta.Deleted {
-			continue
+		if strings.HasSuffix(entry.path, "/") {
+			meta := types.FileMetadata{
+				Name:        filepath.Base(entry.path),
+				Path:        entry.path,
+				Size:        0,
+				ContentType: "application/directory",
+				IsDirectory: true,
+				Checksum:    "",
+			}
+			types.AddResultToMap(buildSearchResult(entry.path, meta), resultMap, entry.path, prefix)
+
+		} else {
+			meta, ok := idx.loadMetadata(entry.path)
+			if !ok || meta.Deleted {
+				continue
+			}
+			types.AddResultToMap(buildSearchResult(entry.path, meta), resultMap, entry.path, prefix)
 		}
-		types.AddResultToMap(buildSearchResult(entry.path, meta), resultMap, prefix)
 	}
 
 	results := make([]types.SearchResult, 0, len(resultMap))

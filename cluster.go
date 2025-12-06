@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -321,7 +320,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		// Settings file exists, validate that command line options match
 		if opts.StorageMajor != existingSettings.StorageMajor {
 			if opts.Logger != nil {
-				opts.Logger.Printf("[WARNING] Ignoring --storage-major=%s, using existing setting: %s", opts.StorageMajor, existingSettings.StorageMajor)
+				opts.Logger.Printf("[WARNING] Ignoring --storage-major='%s', using existing setting: '%s'", opts.StorageMajor, existingSettings.StorageMajor)
 			} else {
 				log.Printf("[WARNING] Ignoring --storage-major=%s, using existing setting: %s", opts.StorageMajor, existingSettings.StorageMajor)
 			}
@@ -437,8 +436,10 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	var fileStore types.FileStoreLike
 	switch opts.StorageMajor {
 	case "rawfile":
+		c.logger.Print("Chose direct file store")
 		fileStore = partitionmanager.NewDiskFileStore(filepath.Join(opts.DataDir, "rawfiles"))
 	default:
+		c.logger.Print("Chose direct kv file store")
 		fileStore = partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug, opts.StorageMajor, opts.StorageMinor)
 	}
 
@@ -702,7 +703,7 @@ func (c *Cluster) LoadPeer(id types.NodeID) (*types.PeerInfo, bool) {
 	// Fallback: try CRDT nodes/ table
 	nodeData := c.GetNodeInfo(id)
 	if nodeData != nil {
-		types.Assertf(nodeData.Address != "", "peer info nil for %s", id)
+		types.Assertf(nodeData.Address != "", "peer info nil for %s, given %+v", id, nodeData)
 		return &types.PeerInfo{
 			NodeID:   types.NodeID(nodeData.NodeID),
 			Address:  nodeData.Address,
@@ -750,7 +751,7 @@ func (c *Cluster) DataClient() *http.Client {
 	return c.HttpDataClient
 }
 
-// ---------- Lifecycle ----------
+//  Lifecycle
 
 func (c *Cluster) Start() {
 	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
@@ -949,7 +950,7 @@ func (c *Cluster) Stop() {
 	c.Logger().Printf("Node %s stopped", c.NodeId)
 }
 
-// ---------- Repair ----------
+//  Repair
 
 // corsMiddleware adds CORS headers to allow browser access and logs requests
 func corsMiddleware(debug bool, logger *log.Logger, cluster *Cluster, next http.HandlerFunc) http.HandlerFunc {
@@ -1274,7 +1275,7 @@ func (c *Cluster) handleMetricsAPI(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// ---------- Partition HTTP Handlers ----------
+//  Partition HTTP Handlers
 
 // handlePartitionSyncAPI serves partition data for peer synchronization
 func (c *Cluster) handlePartitionSyncAPI(w http.ResponseWriter, r *http.Request) {
@@ -1499,7 +1500,7 @@ func (c *Cluster) handleInternalMetadataAPI(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(metadata)
 }
 
-// ---------- Utilities ----------
+//  Utilities
 
 // FIXME obviously this isn't going to be seret on a cold start...
 // initializeClusterSettings sets up default cluster settings if not already present
@@ -1535,7 +1536,7 @@ func (c *Cluster) handleReplicationFactor(w http.ResponseWriter, r *http.Request
 		})
 
 	case http.MethodPut:
-		body, err := io.ReadAll(r.Body)
+		body, err := types.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Failed to read request body", http.StatusBadRequest)
 			return
@@ -1587,7 +1588,7 @@ func (c *Cluster) handlePartitionSyncInterval(w http.ResponseWriter, r *http.Req
 		})
 
 	case http.MethodPut:
-		body, err := io.ReadAll(r.Body)
+		body, err := types.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Failed to read request body", http.StatusBadRequest)
 			return
@@ -1639,7 +1640,7 @@ func (c *Cluster) handlePartitionSyncPause(w http.ResponseWriter, r *http.Reques
 		})
 
 	case http.MethodPut:
-		body, err := io.ReadAll(r.Body)
+		body, err := types.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "Failed to read request body", http.StatusBadRequest)
 			return

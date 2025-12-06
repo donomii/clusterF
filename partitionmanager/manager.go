@@ -117,9 +117,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 
 // RemoveNodeFromPartitionWithTimestamp removes a node from a partition holder list with backdated timestamp
 func (pm *PartitionManager) RemoveNodeFromPartitionWithTimestamp(nodeID types.NodeID, partitionName string, backdatedTime time.Time) error {
-	if !pm.hasFrogpond() {
-		return fmt.Errorf("no frogpond available")
-	}
+	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
 
 	partitionKey := fmt.Sprintf("partitions/%s", partitionName)
 	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, nodeID)
@@ -179,8 +177,10 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) string {
 
 func (pm *PartitionManager) recordPartitionTimestamp(partitionID types.PartitionID, filename string, ts time.Time) {
 	fs, ok := pm.deps.FileStore.(*DiskFileStore)
-	if !ok || partitionID == "" {
-		panic("no")
+	types.Assertf(ok, "for the moment, only DiskFileStore is supported, but this is: %T", pm.deps.FileStore)
+
+	if partitionID == "" {
+		panic(fmt.Sprintf("partition id cannot be nil for recordPartitionTimestamp"))
 	}
 	if err := fs.writePartitionTimestamp(partitionID, filename, ts); err != nil {
 		pm.debugf("[PARTITION] Failed to write %s for %s: %v", filename, partitionID, err)
@@ -516,90 +516,6 @@ func (pm *PartitionManager) localFileNotFound(path string, partitionID types.Par
 	return fmt.Errorf("%w: %s", types.ErrFileNotFound, message)
 }
 
-// GetFileFromPeers attempts to retrieve a file from peer nodes
-func (pm *PartitionManager) GetFileFromPeers(path string) ([]byte, types.FileMetadata, error) {
-	partitionID := HashToPartition(path)
-	partition := pm.GetPartitionInfo(partitionID)
-	if partition == nil {
-		return nil, types.FileMetadata{}, fmt.Errorf("partition %s not found for file %s", partitionID, path)
-	}
-
-	if len(partition.Holders) == 0 {
-		return nil, types.FileMetadata{}, fmt.Errorf("no holders registered for partition %s", partitionID)
-	}
-
-	peerLookup := pm.deps.Discovery.GetPeerMap()
-
-	orderedPeers := make([]*types.PeerInfo, 0, len(partition.Holders))
-	seen := make(map[types.NodeID]bool)
-	addPeer := func(nodeID types.NodeID, peer *types.PeerInfo) {
-		if peer == nil {
-			return
-		}
-		if nodeID == pm.deps.NodeID {
-			return
-		}
-		if seen[nodeID] {
-			return
-		}
-		if peer.Address == "" || peer.HTTPPort == 0 {
-			pm.debugf("[PARTITION] Ignoring peer %s for partition %s due to missing address/port", nodeID, partitionID)
-			return
-		}
-		orderedPeers = append(orderedPeers, peer)
-		seen[nodeID] = true
-	}
-
-	for _, holder := range partition.Holders {
-		if peer, ok := peerLookup.Load(string(holder)); ok {
-			addPeer(holder, peer)
-			continue
-		}
-
-		if peer, ok := pm.loadPeer(holder); ok {
-			addPeer(holder, peer)
-			continue
-		}
-
-		//pm.debugf("[PARTITION] Holder %s for partition %s has no reachable peer info", holder, partitionID)
-	}
-
-	if len(orderedPeers) == 0 {
-		if peerLookup.Len() == 0 {
-			return nil, types.FileMetadata{}, fmt.Errorf("no peers available to retrieve partition %s", partitionID)
-		}
-		return nil, types.FileMetadata{}, fmt.Errorf("no registered holders available for partition %s", partitionID)
-	}
-
-	pm.debugf("[PARTITION] Fetching %s from partition %s holders: %v", path, partitionID, partition.Holders)
-
-	for _, peer := range orderedPeers {
-		metadata, err := pm.fetchMetadataFromPeer(peer, path)
-		if err != nil {
-			pm.debugf("[PARTITION] Failed metadata lookup for %s from %s: %v", path, peer.NodeID, err)
-			continue
-		}
-
-		content, err := pm.fetchFileFromPeer(peer, path)
-		if err != nil {
-			pm.debugf("[PARTITION] Failed content fetch for %s from %s: %v", path, peer.NodeID, err)
-			continue
-		}
-
-		// Verify checksum if available
-
-		if err := pm.verifyFileChecksum(content, metadata.Checksum, path, peer.NodeID); err != nil {
-			pm.logf("[PARTITION] Checksum verification failed for %s from %s: %v", path, peer.NodeID, err)
-			continue // Try next peer
-		}
-		pm.debugf("[PARTITION] Checksum verified for %s from %s", path, peer.NodeID)
-
-		return content, metadata, nil
-	}
-
-	return nil, types.FileMetadata{}, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
-}
-
 func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMetadata, error) {
 	pm.recordEssentialDiskActivity()
 	//pm.debugf("Starting GetMetadataFromPartition for path %v", path)
@@ -755,10 +671,7 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 // updatePartitionMetadata updates partition info in the CRDT
 // Scans the database and counts the files, checksums them, and then updates the CRDT
 func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPartitionID types.PartitionID) {
-
-	if !pm.hasFrogpond() {
-		return
-	}
+	types.Assert(pm.hasFrogpond(), "[PARTITION] updatePartitionMetadata called without a frogpond")
 
 	start := time.Now()
 
@@ -878,9 +791,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 // removePartitionHolder removes this node as a holder for a partition
 func (pm *PartitionManager) removePartitionHolder(partitionID types.PartitionID) {
-	if !pm.hasFrogpond() {
-		return
-	}
+	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
 
 	if pm.deps.Cluster.NoStore() {
 		return // No-store nodes don't claim to hold partitions
@@ -898,9 +809,7 @@ func (pm *PartitionManager) removePartitionHolder(partitionID types.PartitionID)
 
 // isNodeActive checks if a node is active in the CRDT nodes/ section
 func (pm *PartitionManager) isNodeActive(nodeID types.NodeID) bool {
-	if !pm.hasFrogpond() {
-		return false
-	}
+	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
 
 	nodeKey := fmt.Sprintf("nodes/%s", nodeID)
 	dp := pm.deps.Frogpond.GetDataPoint(nodeKey)
@@ -915,9 +824,7 @@ func (pm *PartitionManager) isNodeActive(nodeID types.NodeID) bool {
 
 // GetPartitionInfo retrieves partition info from CRDT using individual holder keys
 func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *types.PartitionInfo {
-	if !pm.hasFrogpond() {
-		return nil
-	}
+	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
 
 	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
 
@@ -993,10 +900,7 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if pm.deps.Cluster.NoStore() {
-		panic("wtf")
-	}
-	pm.recordEssentialDiskActivity()
+
 	if pm.deps.Cluster.NoStore() {
 		pm.deps.Logger.Panicf("[PARTITION] No-store mode: not storing file %s locally", path)
 		return nil
@@ -1004,7 +908,7 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 
 	partitionID := HashToPartition(path)
 	pm.debugf("[PARTITION] Streaming store of file %s in partition %s (%d bytes)", path, partitionID, size)
-
+	pm.recordEssentialDiskActivity()
 	if streamer, ok := pm.deps.FileStore.(interface {
 		PutStream(path string, metadata []byte, content io.Reader, size int64) error
 	}); ok {
@@ -1012,7 +916,7 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 			return fmt.Errorf("failed to store file via stream: %v", err)
 		}
 	} else {
-		buf, err := io.ReadAll(content)
+		buf, err := types.ReadAll(content)
 		if err != nil {
 			return fmt.Errorf("failed to read content for store: %v", err)
 		}
@@ -1051,9 +955,7 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 
 // getAllPartitions returns all known partitions from CRDT using individual holder keys
 func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.PartitionInfo {
-	if !pm.hasFrogpond() {
-		return map[types.PartitionID]*types.PartitionInfo{}
-	}
+	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
 
 	// Get all partition holder/metadata entries
 	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("partitions/")
@@ -1320,9 +1222,7 @@ func (pm *PartitionManager) getPartitionSyncInterval() time.Duration {
 
 // getPartitionSyncPaused returns whether partition sync is paused from CRDT
 func (pm *PartitionManager) getPartitionSyncPaused() bool {
-	if !pm.hasFrogpond() {
-		return false
-	}
+	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
 
 	dp := pm.deps.Frogpond.GetDataPoint("cluster/partition_sync_paused")
 	if dp.Deleted || len(dp.Value) == 0 {

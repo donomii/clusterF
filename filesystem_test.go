@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -275,7 +274,7 @@ func TestFileSystem_HTTPEndpoints(t *testing.T) {
 		t.Fatalf("Expected 200 for file download, got %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := types.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("Failed to read download response: %v", err)
 	}
@@ -369,11 +368,11 @@ func TestFileSystem_MultiNode_Replication(t *testing.T) {
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := types.ReadAll(resp.Body)
 				t.Logf("Node %d: Status %d: %s", i, resp.StatusCode, string(body))
 				return false
 			}
-			b, err := io.ReadAll(resp.Body)
+			b, err := types.ReadAll(resp.Body)
 			if err != nil {
 				t.Logf("Node %d: Read error: %v", i, err)
 				return false
