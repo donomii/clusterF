@@ -117,6 +117,10 @@ func (f *Frontend) HandleAPIDocs(w http.ResponseWriter, r *http.Request) {
                     <div class="ep"><span class="verb GET">GET</span> <span class="code">/debug/pprof/heap</span>, <span class="code">/goroutine</span>, etc.</div>
                 </div>
                 <div class="card">
+                    <div class="ep"><span class="verb GET">GET</span> <span class="code">/functionprofile</span></div>
+                    <div>Top CPU-consuming functions (30s sample, plain text).</div>
+                </div>
+                <div class="card">
                     <div class="ep"><span class="verb GET">GET</span> <span class="code">/crdt</span></div>
                     <div class="ep"><span class="verb GET">GET</span> <span class="code">/api/crdt/list?prefix=...&limit=100&after=...</span></div>
                     <div class="ep"><span class="verb GET">GET</span> <span class="code">/api/crdt/search?prefix=...&q=...&limit=100&after=...</span></div>

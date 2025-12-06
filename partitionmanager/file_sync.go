@@ -1,12 +1,14 @@
 package partitionmanager
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +20,10 @@ import (
 )
 
 const fileSyncInterval = 30 * time.Second
+
+type streamFileStore interface {
+	PutStream(path string, metadata []byte, content io.Reader, size int64) error
+}
 
 // MarkFileForSync tracks a file that needs to be synchronised between holders.
 func (pm *PartitionManager) MarkFileForSync(path, reason string) {
@@ -97,7 +103,6 @@ func (pm *PartitionManager) processFileSyncQueue(ctx context.Context) {
 type fileHolderState struct {
 	holder types.NodeID
 	meta   types.FileMetadata
-	ok     bool
 	err    error
 }
 
@@ -108,7 +113,7 @@ func (pm *PartitionManager) SyncFile(ctx context.Context, path string) error {
 		return fmt.Errorf("no partition info for %s", partitionID)
 	}
 
-	holders := dedupeHolders(partInfo.Holders, pm.deps.NodeID)
+	holders := partInfo.Holders
 	if len(holders) == 0 {
 		return fmt.Errorf("no holders recorded for %s", path)
 	}
@@ -119,21 +124,28 @@ func (pm *PartitionManager) SyncFile(ctx context.Context, path string) error {
 			return ctx.Err()
 		}
 
-		meta, ok, err := pm.fetchMetadataForHolder(ctx, holder, path)
-		states = append(states, fileHolderState{
-			holder: holder,
-			meta:   meta,
-			ok:     ok,
-			err:    err,
-		})
+		peerInfo := pm.getPeer(holder)
+		if peerInfo == nil {
+			pm.debugf("[FILE SYNC] No peer info for %s", holder)
+			continue
+		}
+
+		meta, err := pm.fetchMetadataFromPeer(peerInfo, path)
+
 		if err != nil {
 			pm.debugf("[FILE SYNC] Failed to fetch metadata for %s from %s: %v", path, holder, err)
+		} else {
+			states = append(states, fileHolderState{
+				holder: holder,
+				meta:   meta,
+				err:    err,
+			})
 		}
 	}
 
 	bestIdx := -1
 	for i, state := range states {
-		if !state.ok {
+		if state.err != nil {
 			continue
 		}
 		if bestIdx == -1 || metadataIsNewer(state.meta, states[bestIdx].meta) {
@@ -142,66 +154,45 @@ func (pm *PartitionManager) SyncFile(ctx context.Context, path string) error {
 	}
 
 	if bestIdx == -1 {
-		return fmt.Errorf("no metadata available for %s", path)
+		return fmt.Errorf("no metadata available for %s, holders: %v, states: %+v", path, holders, states)
 	}
 
 	best := states[bestIdx]
-	if best.meta.Path == "" {
-		best.meta.Path = path
-	}
-	if best.meta.ModifiedAt.IsZero() {
-		return fmt.Errorf("metadata for %s missing ModifiedAt timestamp", path)
-	}
-	if !best.meta.Deleted && best.meta.Checksum == "" {
-		return fmt.Errorf("metadata for %s missing checksum", path)
-	}
-	if best.meta.IsDirectory {
-		pm.debugf("[FILE SYNC] Skipping directory %s", path)
-		return nil
-	}
+	types.Assertf(best.meta.Path != "", "best.meta.Path can never be empty")
+	types.Assertf(!best.meta.ModifiedAt.IsZero(), "metadata for %s missing ModifiedAt timestamp", path)
+	types.Assertf(!(best.meta.Deleted && best.meta.Checksum == ""), "metadata for %s missing checksum", path)
 
-	var content []byte
+	var tempPath string
+	var size int64
 	if !best.meta.Deleted {
-		data, err := pm.fetchFileContentForHolder(ctx, best.holder, path)
+		var err error
+		tempPath, size, err = pm.fetchFileToTemp(ctx, best.holder, path, best.meta.Checksum)
 		if err != nil {
 			return fmt.Errorf("failed to fetch content for %s from %s: %w", path, best.holder, err)
 		}
-		if err := pm.verifyFileChecksum(data, best.meta.Checksum, path, best.holder); err != nil {
-			return err
-		}
-		content = data
+
 	}
+	types.Assertf(tempPath != "", "no temp path for %s", path)
+	defer func() {
+
+		os.Remove(tempPath)
+
+	}()
 
 	for _, state := range states {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if sameMetadataVersion(state.meta, best.meta) && state.ok {
+		if sameMetadataVersion(state.meta, best.meta) {
 			continue
 		}
 
-		if err := pm.applyFileUpdate(ctx, state.holder, best.meta, content); err != nil {
+		if err := pm.applyFileUpdateFromTemp(ctx, state.holder, best.meta, tempPath, size); err != nil {
 			pm.debugf("[FILE SYNC] Failed to update %s on %s: %v", path, state.holder, err)
 		}
 	}
 
 	return nil
-}
-
-func dedupeHolders(holders []types.NodeID, self types.NodeID) []types.NodeID {
-	seen := make(map[types.NodeID]bool)
-	var result []types.NodeID
-	for _, h := range holders {
-		if h == "" || seen[h] {
-			continue
-		}
-		seen[h] = true
-		result = append(result, h)
-	}
-	if self != "" && !seen[self] {
-		result = append(result, self)
-	}
-	return result
 }
 
 func metadataIsNewer(candidate, current types.FileMetadata) bool {
@@ -212,7 +203,8 @@ func metadataIsNewer(candidate, current types.FileMetadata) bool {
 		return true
 	}
 	if candidate.ModifiedAt.Equal(current.ModifiedAt) {
-		if candidate.Checksum != "" && current.Checksum != "" && candidate.Checksum != current.Checksum {
+		types.Assertf(candidate.Checksum != "" && current.Checksum != "", "checksum must be set when comparing metadata versions for %s", candidate.Path)
+		if candidate.Checksum != current.Checksum {
 			return candidate.Checksum > current.Checksum
 		}
 		if candidate.Deleted && !current.Deleted {
@@ -235,67 +227,7 @@ func sameMetadataVersion(a, b types.FileMetadata) bool {
 	return a.Checksum == b.Checksum
 }
 
-func (pm *PartitionManager) fetchMetadataForHolder(ctx context.Context, holder types.NodeID, path string) (types.FileMetadata, bool, error) {
-	if holder == pm.deps.NodeID {
-		data, err := pm.deps.FileStore.GetMetadata(path)
-		if err != nil {
-			return types.FileMetadata{}, false, err
-		}
-		var meta types.FileMetadata
-		if err := json.Unmarshal(data, &meta); err != nil {
-			return types.FileMetadata{}, false, err
-		}
-		if meta.Path == "" {
-			meta.Path = path
-		}
-		return meta, true, nil
-	}
-
-	peer := pm.getPeer(holder)
-	if peer == nil {
-		return types.FileMetadata{}, false, fmt.Errorf("peer %s not found", holder)
-	}
-
-	meta, err := pm.fetchMetadataFromPeer(peer, path)
-	if err != nil {
-		return types.FileMetadata{}, false, err
-	}
-	if meta.Path == "" {
-		meta.Path = path
-	}
-	return meta, true, nil
-}
-
-func (pm *PartitionManager) fetchFileContentForHolder(ctx context.Context, holder types.NodeID, path string) ([]byte, error) {
-	if holder == pm.deps.NodeID {
-		_, content, exists, err := pm.deps.FileStore.Get(path)
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			return nil, fmt.Errorf("local file %s missing", path)
-		}
-		return content, nil
-	}
-
-	peer := pm.getPeer(holder)
-	if peer == nil {
-		return nil, fmt.Errorf("peer %s not found", holder)
-	}
-	return pm.fetchFileFromPeer(peer, path)
-}
-
-func (pm *PartitionManager) applyFileUpdate(ctx context.Context, holder types.NodeID, meta types.FileMetadata, content []byte) error {
-	if holder == pm.deps.NodeID {
-		entry := PartitionSyncEntry{
-			Path:     meta.Path,
-			Metadata: meta,
-		}
-		if meta.Deleted {
-			return pm.storeEntryMetadata(entry)
-		}
-		return pm.storeEntryMetadataAndContent(entry, content)
-	}
+func (pm *PartitionManager) applyFileUpdateFromTemp(ctx context.Context, holder types.NodeID, meta types.FileMetadata, tempPath string, size int64) error {
 
 	peer := pm.getPeer(holder)
 	if peer == nil {
@@ -305,13 +237,11 @@ func (pm *PartitionManager) applyFileUpdate(ctx context.Context, holder types.No
 	if meta.Deleted {
 		return pm.pushDeleteToPeer(ctx, peer, meta)
 	}
-	return pm.pushFileToPeer(ctx, peer, meta, content)
+	return pm.pushFileToPeerFromFile(ctx, peer, meta, tempPath, size)
 }
 
-func (pm *PartitionManager) pushFileToPeer(ctx context.Context, peer *types.PeerInfo, meta types.FileMetadata, content []byte) error {
-	if len(content) == 0 {
-		return fmt.Errorf("no content available for %s", meta.Path)
-	}
+func (pm *PartitionManager) pushFileToPeerFromFile(ctx context.Context, peer *types.PeerInfo, meta types.FileMetadata, tempPath string, size int64) error {
+	types.Assertf(tempPath != "", "no content available for %s", meta.Path)
 
 	fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, meta.Path)
 	if err != nil {
@@ -324,18 +254,20 @@ func (pm *PartitionManager) pushFileToPeer(ctx context.Context, peer *types.Peer
 	}
 
 	encodedMeta := base64.StdEncoding.EncodeToString(metaJSON)
-	contentType := meta.ContentType
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
+	types.Assertf(meta.ContentType != "", "content type must be provided for %s", meta.Path)
 
-	body := bytes.NewReader(content)
-	_, _, status, err := httpclient.SimplePut(ctx, pm.httpClient(), fileURL, body,
+	file, err := os.Open(tempPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	_, _, status, err := httpclient.SimplePut(ctx, pm.httpClient(), fileURL, file,
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		httpclient.WithHeader("X-Forwarded-From", string(pm.deps.NodeID)),
 		httpclient.WithHeader("X-ClusterF-Metadata", encodedMeta),
 		httpclient.WithHeader("X-ClusterF-Modified-At", meta.ModifiedAt.Format(time.RFC3339)),
-		httpclient.WithHeader("Content-Type", contentType),
+		httpclient.WithHeader("Content-Type", meta.ContentType),
 	)
 	if err != nil {
 		return err
@@ -343,19 +275,16 @@ func (pm *PartitionManager) pushFileToPeer(ctx context.Context, peer *types.Peer
 	if status != http.StatusOK && status != http.StatusCreated {
 		return fmt.Errorf("peer %s returned %d for PUT %s", peer.NodeID, status, meta.Path)
 	}
+
 	return nil
 }
 
 func (pm *PartitionManager) pushDeleteToPeer(ctx context.Context, peer *types.PeerInfo, meta types.FileMetadata) error {
 	fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, meta.Path)
-	if err != nil {
-		return err
-	}
+	types.Assertf(err == nil, "failed to build URL for %s: %v", meta.Path, err)
 
 	modified := meta.ModifiedAt
-	if modified.IsZero() {
-		modified = time.Now()
-	}
+	types.Assertf(!modified.IsZero(), "modified time must not be zero for %s", meta.Path)
 
 	_, _, status, err := httpclient.SimpleDelete(ctx, pm.httpClient(), fileURL,
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
@@ -369,4 +298,35 @@ func (pm *PartitionManager) pushDeleteToPeer(ctx context.Context, peer *types.Pe
 		return fmt.Errorf("peer %s returned %d for DELETE %s", peer.NodeID, status, meta.Path)
 	}
 	return nil
+}
+
+func (pm *PartitionManager) fetchFileToTemp(ctx context.Context, holder types.NodeID, path string, expectedChecksum string) (string, int64, error) {
+	tmp, err := os.CreateTemp("", "clusterf-sync-*")
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(tmp.Name())
+		}
+	}()
+
+	hasher := sha256.New()
+
+	peer := pm.getPeer(holder)
+	types.Assertf(peer != nil, "peer %v not found", holder)
+
+	reader, err := pm.fetchFileStreamFromPeer(ctx, peer, path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer reader.Close()
+
+	n64, err := io.Copy(io.MultiWriter(tmp, hasher), reader)
+	types.Assertf(err == nil, "failed to copy file %s: %v", path, err)
+
+	closeErr := tmp.Close()
+	types.Assertf(closeErr == nil, "failed to close temp file for %s: %v", path, closeErr)
+
+	return tmp.Name(), n64, nil
 }

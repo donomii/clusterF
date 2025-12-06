@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/httpclient"
-	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 )
@@ -204,29 +203,13 @@ func (fs *ClusterFileSystem) StoreFileWithModTimeDirect(ctx context.Context, pat
 
 // StoreFileWithModTimeDirectFromFile stores a file on the local node using a file path to avoid buffering the content.
 func (fs *ClusterFileSystem) StoreFileWithModTimeDirectFromFile(ctx context.Context, path string, contentPath string, size int64, checksum string, contentType string, modTime time.Time) (types.NodeID, error) {
-	if fs.cluster.NoStore() {
-		panic("fuck you")
-	}
+	types.Assertf(!fs.cluster.NoStore(), "no-store mode is not possible with StoreFileWithModTimeDirectFromFile")
 	if strings.Contains(path, "../") || strings.Contains(path, "/../") || strings.Contains(path, "/./") {
 		return "", fmt.Errorf("invalid path: %s", path)
 	}
 
-	if checksum == "" {
-		// Fallback when checksum was not precomputed.
-		file, err := os.Open(contentPath)
-		if err != nil {
-			return "", err
-		}
-		defer file.Close()
-		h := sha256.New()
-		if _, err := io.Copy(h, file); err != nil {
-			return "", err
-		}
-		checksum = hex.EncodeToString(h.Sum(nil))
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return "", err
-		}
-	}
+	types.Assertf(checksum != "", "checksum must be provided for StoreFileWithModTimeDirectFromFile")
+	types.Assertf(path != "", "path must not be empty for StoreFileWithModTimeDirectFromFile")
 
 	metadata := types.FileMetadata{
 		Name:        filepath.Base(path),
@@ -239,9 +222,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTimeDirectFromFile(ctx context.Cont
 		Checksum:    checksum,
 	}
 
-	if metadata.ModifiedAt.IsZero() {
-		panic("no")
-	}
+	types.Assertf(!metadata.ModifiedAt.IsZero(), "modified time must not be zero for StoreFileWithModTimeDirectFromFile")
 
 	metadataJSON, _ := json.Marshal(metadata)
 
@@ -275,14 +256,14 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	}
 
 	// Build the list of nodes that must receive the upload (holders first, otherwise RF candidates).
-	targetNodes := make([]string, 0)
-	targetSet := make(map[string]bool)
+	targetNodes := make([]types.NodeID, 0)
+	targetSet := make(map[types.NodeID]bool)
 	// When we already host the partition we must push the update to every current holder.
 	if len(nodesForPartition) > 0 {
 		// Existing holders already replicate this partition; include every holder so they all receive the update.
 		// Walk the holder list so we capture a deduplicated slice of nodes to push to.
 		for _, nodeID := range nodesForPartition {
-			id := string(nodeID)
+			id := nodeID
 			if id == "" {
 				continue
 			}
@@ -294,7 +275,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		}
 	} else {
 		// No holders yet, so choose fresh storage nodes that can accept the data without being over capacity.
-		candidates := make([]string, 0, len(allNodes))
+		candidates := make([]types.NodeID, 0, len(allNodes))
 		// Inspect every known storage node to assemble the list of initial replica targets.
 		for nodeID, nodeInfo := range allNodes {
 			// Ignore peers that are not active storage hosts so uploads target real capacity.
@@ -310,7 +291,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 						continue
 					}
 				}
-				candidates = append(candidates, string(nodeID))
+				candidates = append(candidates, nodeID)
 			}
 		}
 		if len(candidates) == 0 {
@@ -336,7 +317,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	}
 
 	// Get discovery peers to match nodeIDs to addresses
-	peerMap := fs.cluster.DiscoveryManager().GetPeerMap()
+	peerMap := fs.cluster.GetAvailablePeerMap()
 
 	modTime, size, metaErr := decodeForwardedMetadata(metadataJSON)
 
@@ -354,11 +335,11 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		return []types.NodeID{}, fmt.Errorf("no eligible storage nodes available for upload")
 	}
 
-	pending := append([]string(nil), targetNodes...)
-	successSet := make(map[string]bool)
+	pending := append([]types.NodeID(nil), targetNodes...)
+	successSet := make(map[types.NodeID]bool)
 	successOrder := make([]types.NodeID, 0)
-	attemptedAll := make(map[string]bool)
-	attemptCounts := make(map[string]int)
+	attemptedAll := make(map[types.NodeID]bool)
+	attemptCounts := make(map[types.NodeID]int)
 
 	maxBatch := desiredReplicas
 	if maxBatch <= 0 {
@@ -371,15 +352,15 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		if batchSize <= 0 || batchSize > len(pending) {
 			batchSize = len(pending)
 		}
-		batch := append([]string(nil), pending[:batchSize]...)
+		batch := append([]types.NodeID(nil), pending[:batchSize]...)
 		pending = pending[batchSize:]
 
 		attemptedBatch, _, successes, err, allSkipped := fs.tryForwardToNodes(context.Background(), path, metadataJSON, content, contentType, batch, peerMap, modTime, size, metaErr)
 
-		successMap := make(map[string]bool, len(successes))
+		successMap := make(map[types.NodeID]bool, len(successes))
 		// Record which peers actually accepted this batch so we do not queue them again.
 		for _, s := range successes {
-			sid := string(s)
+			sid := s
 			successMap[sid] = true
 			if !successSet[sid] {
 				successSet[sid] = true
@@ -407,7 +388,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 		// On failure, requeue the peers that might still accept the data, but stop after a few tries.
 		if err != nil {
-			retry := make([]string, 0)
+			retry := make([]types.NodeID, 0)
 			// Iterate over the batch so we only retry nodes that actually failed.
 			for id := range attemptedBatch {
 				if successMap[id] {
@@ -429,13 +410,13 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 		// If we run out of candidates before hitting the target, pull in additional storage nodes.
 		if len(pending) == 0 && len(successSet) < requiredSuccesses {
-			extra := make([]string, 0)
+			extra := make([]types.NodeID, 0)
 			// Sweep remaining storage peers so we can widen the search for replica targets.
 			for nodeID, nodeInfo := range allNodes {
 				if nodeInfo == nil || !nodeInfo.IsStorage {
 					continue
 				}
-				id := string(nodeID)
+				id := nodeID
 				if successSet[id] || attemptedAll[id] {
 					continue
 				}
@@ -476,72 +457,24 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Cont
 	types.Assertf(desiredReplicas > 0, "desiredReplicas must be greater than 0")
 
 	targetNodes := make([]types.NodeID, 0)
-	targetSet := make(map[types.NodeID]bool)
 	if len(nodesForPartition) > 0 {
 		targetNodes = nodesForPartition
 	} else {
-		allNodes := fs.cluster.GetAllNodes()
-		candidates := make([]types.NodeID, 0, len(allNodes))
-		for nodeID, nodeInfo := range allNodes {
-			types.Assertf(nodeInfo != nil, "nodeInfo must not be nil")
-			if nodeInfo.IsStorage {
-				if nodeInfo.DiskSize > 0 {
-					used := nodeInfo.DiskSize - nodeInfo.DiskFree
-					if used < 0 {
-						// Stupid AI
-						used = 0
-					}
-					usage := float64(used) / float64(nodeInfo.DiskSize)
-					if usage >= 0.9 {
-						// Node is full
-						continue
-					}
-				}
-				candidates = append(candidates, nodeID)
-			}
+		targetNodeInfo := fs.cluster.GetAvailablePeerList()
+		for _, nodeData := range targetNodeInfo {
+			targetNodes = append(targetNodes, nodeData.NodeID)
 		}
-		if len(candidates) == 0 {
-			return nil, fmt.Errorf("no storage nodes available for upload")
-		}
-		rand.Shuffle(len(candidates), func(i, j int) {
-			candidates[i], candidates[j] = candidates[j], candidates[i]
-		})
-		count := desiredReplicas
-		if count > len(candidates) {
-			count = len(candidates)
-		}
-		targetNodes = append(targetNodes, candidates[:count]...)
 	}
 
-	peerMap := &syncmap.SyncMap[types.NodeID, *types.PeerInfo]{}
-	for _, nodeID := range targetNodes {
-		peer, ok := fs.cluster.LoadPeer(types.NodeID(nodeID))
-		if ok {
-			peerMap.Store(nodeID, peer)
-		}
-	}
+	peerMap := fs.cluster.GetAvailablePeerMap()
 
 	// Gather extra storage candidates to fill replication if existing holders are missing.
 	if len(targetNodes) < desiredReplicas {
-		allNodes := fs.cluster.GetAllNodes()
-		for nodeID, nodeInfo := range allNodes {
-			if nodeInfo != nil && nodeInfo.IsStorage {
-				id := nodeID
-				if targetSet[id] {
-					continue
-				}
-				if nodeInfo.DiskSize > 0 {
-					used := nodeInfo.DiskSize - nodeInfo.DiskFree
-					if used < 0 {
-						used = 0
-					}
-					usage := float64(used) / float64(nodeInfo.DiskSize)
-					if usage >= 0.9 {
-						continue
-					}
-				}
-				targetNodes = append(targetNodes, id)
-				targetSet[id] = true
+		allNodes := fs.cluster.GetAvailablePeerList()
+		for _, nodeInfo := range allNodes {
+			if nodeInfo.IsStorage {
+
+				targetNodes = append(targetNodes, nodeInfo.NodeID)
 			}
 			if len(targetNodes) >= desiredReplicas {
 				break
@@ -577,9 +510,9 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Cont
 	return successOrder, nil
 }
 
-func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string, metadataJSON []byte, content []byte, contentType string, targets []string, peerMap *syncmap.SyncMap[string, *types.PeerInfo], modTime time.Time, size int64, metaErr error) (map[string]bool, int, []types.NodeID, error, bool) {
+func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string, metadataJSON []byte, content []byte, contentType string, targets []types.NodeID, peerMap map[types.NodeID]types.NodeData, modTime time.Time, size int64, metaErr error) (map[types.NodeID]bool, int, []types.NodeID, error, bool) {
 	if len(targets) == 0 {
-		return map[string]bool{}, 0, nil, fmt.Errorf("no storage nodes available to forward upload"), false
+		return map[types.NodeID]bool{}, 0, nil, fmt.Errorf("no storage nodes available to forward upload"), false
 	}
 
 	// Every goroutine reports its outcome via this channel-friendly struct.
@@ -590,7 +523,7 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 	}
 
 	skipped := 0
-	attempted := make(map[string]bool, len(targets))
+	attempted := make(map[types.NodeID]bool, len(targets))
 	metaHeader := base64.StdEncoding.EncodeToString(metadataJSON)
 
 	results := make(chan forwardResult, len(targets))
@@ -601,10 +534,10 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 		attempted[nodeID] = true
 
 		wg.Add(1)
-		go func(nodeID string) {
+		go func(nodeID types.NodeID) {
 			defer wg.Done()
 
-			peer, ok := peerMap.Load(nodeID)
+			peer, ok := peerMap[nodeID]
 			if !ok {
 				// Node not found in discovery - remove its partition entries
 				partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
@@ -616,7 +549,7 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 					fs.debugf("[FILES] Failed to remove node %s from partition %s: %v", nodeID, partitionName, err)
 				}
 
-				msg := fmt.Errorf("[FILES] Node %s not found in discovery peers(%v)", nodeID, peerMap.Keys())
+				msg := fmt.Errorf("[FILES] Node %s not found in discovery peers(%v)", nodeID, fs.cluster.GetAvailablePeerList())
 				fs.debugf("%v", msg)
 				results <- forwardResult{node: types.NodeID(nodeID), err: msg}
 
@@ -702,7 +635,7 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 	return attempted, skipped, successes, nil, skipped == len(targets)
 }
 
-func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path string, metadataJSON []byte, contentPath string, contentType string, targets []types.NodeID, peerMap *syncmap.SyncMap[types.NodeID, *types.PeerInfo], modTime time.Time, size int64, metaErr error, requiredSuccesses int) (map[types.NodeID]bool, int, []types.NodeID, error, bool) {
+func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path string, metadataJSON []byte, contentPath string, contentType string, targets []types.NodeID, peerMap map[types.NodeID]types.NodeData, modTime time.Time, size int64, metaErr error, requiredSuccesses int) (map[types.NodeID]bool, int, []types.NodeID, error, bool) {
 	if len(targets) == 0 {
 		return map[types.NodeID]bool{}, 0, nil, fmt.Errorf("no storage nodes available to forward upload"), false
 	}
@@ -727,17 +660,17 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 		go func(nodeID types.NodeID) {
 			defer wg.Done()
 
-			peer, ok := peerMap.Load(nodeID)
+			peer, ok := peerMap[nodeID]
 			if !ok {
 				partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
 				backdatedTime := time.Now().Add(-24 * time.Hour)
-				fs.debugf("[FILES] Node %s not found in discovery peers, removing partition %s entries backdated to %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
+				fs.debugf("[FILES] Node %s not found in available nodes, removing partition %s entries backdated to %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
 
 				if err := fs.cluster.PartitionManager().RemoveNodeFromPartitionWithTimestamp(types.NodeID(nodeID), partitionName, backdatedTime); err != nil {
 					fs.debugf("[FILES] Failed to remove node %s from partition %s: %v", nodeID, partitionName, err)
 				}
 
-				msg := fmt.Errorf("[FILES] Node %s not found in discovery peers(%v)", nodeID, peerMap.Keys())
+				msg := fmt.Errorf("[FILES] Node %s not found in discovery peers(%v)", nodeID, fs.cluster.GetAvailablePeerList())
 				fs.debugf("%v", msg)
 				results <- forwardResult{node: types.NodeID(nodeID), err: msg}
 				return
@@ -1000,7 +933,7 @@ func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime tim
 	return nil // Directories are inferred from file paths
 }
 
-func (fs *ClusterFileSystem) PeerHasUpToDateFile(peer *types.PeerInfo, path string, modTime time.Time, size int64) (bool, error) {
+func (fs *ClusterFileSystem) PeerHasUpToDateFile(peer types.NodeData, path string, modTime time.Time, size int64) (bool, error) {
 	fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
 	if err != nil {
 		return false, err

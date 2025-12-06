@@ -791,12 +791,9 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 	knownPeers := make(map[types.NodeID]bool)
 
 	checkPeers := func() {
-		for _, peer := range c.discoveryManager.GetPeers() {
+		for _, peer := range c.GetAvailablePeerList() {
 			if ctx.Err() != nil {
 				return
-			}
-			if peer == nil {
-				continue
 			}
 			peerID := types.NodeID(peer.NodeID)
 			if seen := knownPeers[peerID]; seen {
@@ -836,11 +833,10 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 // FullSyncAllPeers requests a full store sync from every currently discovered peer.
 // Primarily used by tests to force deterministic synchronization.
 func (c *Cluster) FullSyncAllPeers() {
-	for _, peer := range c.discoveryManager.GetPeers() {
+	for _, peer := range c.GetAvailablePeerList() {
 		if c.ctx.Err() != nil {
 			return
 		}
-		types.Assert(peer == nil, "peer must not be nil")
 		c.requestFullStoreFromPeer(peer)
 	}
 }
@@ -1044,6 +1040,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	mux.HandleFunc("/flamegraph", corsMiddleware(c.Debug, c.Logger(), c, c.handleFlameGraph))
 	mux.HandleFunc("/memorygraph", corsMiddleware(c.Debug, c.Logger(), c, c.handleMemoryFlameGraph))
 	mux.HandleFunc("/allocgraph", corsMiddleware(c.Debug, c.Logger(), c, c.handleAllocFlameGraph))
+	mux.HandleFunc("/functionprofile", corsMiddleware(c.Debug, c.Logger(), c, c.handleFunctionProfile))
 	mux.HandleFunc("/profiling", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleProfilingPage))
 	mux.HandleFunc("/profiling.js", corsMiddleware(c.Debug, c.Logger(), c, ui.HandleProfilingJS))
 	mux.HandleFunc("/api/profiling", corsMiddleware(c.Debug, c.Logger(), c, c.handleProfilingAPI))
@@ -1381,12 +1378,7 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get peer info for all holders
-	peers := c.DiscoveryManager().GetPeers()
-	peerLookup := make(map[types.NodeID]*types.PeerInfo)
-	for _, peer := range peers {
-		peerLookup[types.NodeID(peer.NodeID)] = peer
-	}
+	peerLookup := c.GetAvailablePeerMap()
 
 	c.debugf("[METADATA_API] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
 
@@ -1396,20 +1388,8 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 		c.debugf("[METADATA_API] Trying holder %s for file %s", holderID, path)
 
 		// Get peer info for this holder
-		var peer *types.PeerInfo
-		if holderID == c.ID() {
-
-			c.debugf("[METADATA_API] Fetching metadata from localhost via HTTP")
-			peer = &types.PeerInfo{
-				NodeID:   c.ID(),
-				Address:  c.DiscoveryManager().GetLocalAddress(),
-				HTTPPort: c.HTTPPort(),
-			}
-		} else if p, ok := peerLookup[holderID]; ok {
-			c.debugf("Fetching metadata from peer %+v", p)
-			peer = p
-
-		} else if p, ok := peerLookup[holderID]; ok {
+		var peer types.NodeData
+		if p, ok := peerLookup[holderID]; ok {
 			c.debugf("Fetching metadata from peer %+v", p)
 			peer = p
 		} else {
@@ -1696,7 +1676,7 @@ func (c *Cluster) handleClusterRestart(w http.ResponseWriter, r *http.Request) {
 
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
 // Returns true on success, false on failure
-func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
+func (c *Cluster) requestFullStoreFromPeer(peer types.NodeData) bool {
 	if c.AppContext().Err() != nil {
 		return false
 	}

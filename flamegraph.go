@@ -141,3 +141,41 @@ func (c *Cluster) handleAllocFlameGraph(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Write(svgOutput)
 }
+
+// handleFunctionProfile collects a CPU profile and returns the top functions by time.
+func (c *Cluster) handleFunctionProfile(w http.ResponseWriter, r *http.Request) {
+	var profileBuf bytes.Buffer
+	if err := pprof.StartCPUProfile(&profileBuf); err != nil {
+		http.Error(w, "Failed to start CPU profile: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	time.Sleep(30 * time.Second)
+	pprof.StopCPUProfile()
+
+	tmpFile, err := ioutil.TempFile("", "function_profile_*.pb.gz")
+	if err != nil {
+		http.Error(w, "Failed to create temp file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.Write(profileBuf.Bytes()); err != nil {
+		http.Error(w, "Failed to write profile data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpFile.Close()
+
+	cmd := exec.Command("go", "tool", "pprof", "-top", tmpFile.Name())
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	topOutput, err := cmd.Output()
+	if err != nil {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "Failed to generate function profile: %v\nstderr: %s", err, stderr.String())
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(topOutput)
+}

@@ -335,12 +335,10 @@ func (pm *PartitionManager) storeEntryMetadata(entry PartitionSyncEntry) error {
 }
 
 func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntry, content []byte) error {
-	if entry.Metadata.Path == "" {
-		panic("what the fuck were you thinking you stupid AI")
-	}
-	if pm.deps.Cluster.NoStore() {
-		return fmt.Errorf("no store")
-	}
+	types.Assertf(entry.Metadata.Path != "", "metadata path for %s must not be empty", entry.Path)
+	types.Assertf(!entry.Metadata.ModifiedAt.IsZero(), "metadata for %s missing ModifiedAt timestamp", entry.Path)
+	types.Assertf(!(entry.Metadata.Deleted && entry.Metadata.Checksum == ""), "metadata for %s missing checksum", entry.Path)
+	types.Assertf(!pm.deps.Cluster.NoStore(), "no store mode is not possible with StoreFileWithModTimeDirectFromFile")
 	pm.RecordEssentialDiskActivity()
 	metadataBytes, marshalErr := json.Marshal(entry.Metadata)
 	if marshalErr != nil {
@@ -356,8 +354,6 @@ func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntr
 		pm.deps.Indexer.AddFile(entry.Metadata.Path, entry.Metadata)
 	}
 
-	pm.MarkForReindex(types.PartitionIDForPath(entry.Metadata.Path), fmt.Sprintf("synced entry %s", entry.Metadata.Path))
-	pm.MarkForSync(types.PartitionIDForPath(entry.Metadata.Path), fmt.Sprintf("synced entry %s", entry.Metadata.Path))
 	pm.MarkFileForSync(entry.Metadata.Path, fmt.Sprintf("synced entry %s", entry.Metadata.Path))
 
 	return nil
@@ -652,7 +648,7 @@ func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peer
 
 	dps := pm.deps.Frogpond.DeleteDataPoint(holderKey, backdate)
 
-	pm.sendUpdates(dps)
+	pm.deps.SendUpdatesToPeers(dps)
 
 	pm.debugf("[PARTITION] Removed %s as holder for %s", peerID, partitionID)
 }

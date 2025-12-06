@@ -366,6 +366,7 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 		meta = types.FileMetadata{}
 	}
 	modTime := meta.ModifiedAt
+	types.Assertf(!modTime.IsZero(), "modified time must not be zero for PutStream")
 
 	contentTmpFile, err := os.CreateTemp(fs.transferDir, "content-upload-*")
 	if err != nil {
@@ -452,10 +453,8 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 	}
 	tmpMeta = ""
 
-	if !modTime.IsZero() {
-		_ = os.Chtimes(contentPath, modTime, modTime)
-		_ = os.Chtimes(metaPath, modTime, modTime)
-	}
+	_ = os.Chtimes(contentPath, modTime, modTime)
+	_ = os.Chtimes(metaPath, modTime, modTime)
 
 	writeTime := time.Now()
 	if err := fs.writePartitionTimestamp(partitionID, lastUpdateTimestampFile, writeTime); err != nil {

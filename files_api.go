@@ -219,11 +219,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 	}
 
 	// Get peer info for all holders
-	peers := c.DiscoveryManager().GetPeers()
-	peerLookup := make(map[types.NodeID]*types.PeerInfo)
-	for _, peer := range peers {
-		peerLookup[types.NodeID(peer.NodeID)] = peer
-	}
+	peerLookup := c.GetAvailablePeerMap()
 
 	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
 
@@ -234,16 +230,8 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		c.debugf("[FILES] Trying holder %s for file %s", holderID, path)
 
 		// Get peer info for this holder
-		var peer *types.PeerInfo
-		if holderID == c.ID() {
-			c.debugf("[FILES] Fetching file from localhost via HTTP")
-			// This is us, but still go through HTTP path for consistency
-			peer = &types.PeerInfo{
-				NodeID:   c.ID(),
-				Address:  c.DiscoveryManager().GetLocalAddress(),
-				HTTPPort: c.HTTPPort(),
-			}
-		} else if p, ok := peerLookup[holderID]; ok {
+		var peer types.NodeData
+		if p, ok := peerLookup[holderID]; ok {
 			c.debugf("Fetching file from peer %+v", p)
 			peer = p
 		} else {
@@ -404,11 +392,7 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 		return
 	}
 
-	peers := c.DiscoveryManager().GetPeers()
-	peerLookup := make(map[types.NodeID]*types.PeerInfo)
-	for _, peer := range peers {
-		peerLookup[types.NodeID(peer.NodeID)] = peer
-	}
+	peerLookup := c.GetAvailablePeerMap()
 
 	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
 
@@ -416,15 +400,8 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 	for _, holderID := range partitionInfo.Holders {
 		c.debugf("[FILES] Trying holder %s for HEAD on %s", holderID, path)
 
-		var peer *types.PeerInfo
-		if holderID == c.ID() {
-			c.debugf("[FILES] Fetching HEAD metadata from localhost via HTTP")
-			peer = &types.PeerInfo{
-				NodeID:   c.ID(),
-				Address:  c.DiscoveryManager().GetLocalAddress(),
-				HTTPPort: c.HTTPPort(),
-			}
-		} else if p, ok := peerLookup[holderID]; ok {
+		var peer types.NodeData
+		if p, ok := peerLookup[holderID]; ok {
 			c.debugf("Fetching HEAD metadata from peer %+v", p)
 			peer = p
 		} else {

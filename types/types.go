@@ -52,6 +52,8 @@ type ClusterLike interface {
 	CanRunNonEssentialDiskOp() bool                                // Whether non-essential disk operations are allowed right now
 	LoadPeer(id NodeID) (*PeerInfo, bool)                          // Load peer info from CRDT or Discovery
 	GetCurrentRF() int                                             // Get current replication factor
+	GetAvailablePeerList() []NodeData
+	GetAvailablePeerMap() map[NodeID]NodeData
 }
 
 // The partition manager, everything needed to access partitions and files
@@ -153,7 +155,7 @@ type FileSystemLike interface {
 	DeleteFileWithTimestamp(ctx context.Context, path string, modTime time.Time) error
 	MetadataForPath(path string) (FileMetadata, error)
 	MetadataViaAPI(ctx context.Context, path string) (FileMetadata, error)
-	PeerHasUpToDateFile(peer *PeerInfo, path string, modTime time.Time, size int64) (bool, error)
+	PeerHasUpToDateFile(NodeData, string, time.Time, int64) (bool, error)
 	ClusterHasUpToDateFile(path string, modTime time.Time, size int64) (bool, FileMetadata, error)
 	// Additional methods for WebDAV support
 	GetFile(path string) ([]byte, FileMetadata, error)
@@ -165,28 +167,10 @@ type FileSystemLike interface {
 
 // PeerInfo represents information about a discovered peer
 type PeerInfo struct {
-	NodeID         NodeID    `json:"node_id"`
-	HTTPPort       int       `json:"http_port"`
-	Address        string    `json:"address"`
-	LastSeen       time.Time `json:"last_seen"`
-	BytesStored    int64     `json:"bytes_stored,omitempty"`
-	DiskSize       int64     `json:"disk_size,omitempty"`
-	DiskFree       int64     `json:"disk_free,omitempty"`
-	SyncPending    int       `json:"sync_pending,omitempty"`
-	ReindexPending int       `json:"reindex_pending,omitempty"`
-	Available      bool      `json:"available,omitempty"`
-	IsStorage      bool      `json:"is_storage,omitempty"`
-	DiscoveryPort  int       `json:"discovery_port,omitempty"`
-	DataDir        string    `json:"data_dir,omitempty"`
-	StorageFormat  string    `json:"storage_format,omitempty"`
-	StorageMinor   string    `json:"storage_minor,omitempty"`
-	Program        string    `json:"program,omitempty"`
-	Version        string    `json:"version,omitempty"`
-	URL            string    `json:"url,omitempty"`
-	ExportDir      string    `json:"export_dir,omitempty"`
-	ClusterDir     string    `json:"cluster_dir,omitempty"`
-	ImportDir      string    `json:"import_dir,omitempty"`
-	Debug          bool      `json:"debug,omitempty"`
+	NodeID   NodeID    `json:"node_id"`
+	HTTPPort int       `json:"http_port"`
+	Address  string    `json:"address"`
+	LastSeen time.Time `json:"last_seen"`
 }
 
 type NodeInfo struct {
@@ -211,7 +195,7 @@ type FileMetadata struct {
 }
 
 type NodeData struct {
-	NodeID         string    `json:"node_id"`
+	NodeID         NodeID    `json:"node_id"`
 	Address        string    `json:"address"`
 	HTTPPort       int       `json:"http_port"`
 	DiscoveryPort  int       `json:"discovery_port"`
@@ -298,7 +282,7 @@ type NodeStatus struct {
 	Current_file       string              `json:"current_file"`
 	Discovery_port     int                 `json:"discovery_port"`
 	Timestamp          time.Time           `json:"timestamp"`
-	Peer_list          []PeerInfo          `json:"peer_list"`
+	Peer_list          []NodeData          `json:"peer_list"`
 }
 
 // Monitor transcoding

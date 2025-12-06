@@ -24,29 +24,31 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 		return
 	}
 
-	peers := c.DiscoveryManager().GetPeers()
-	for _, peer := range peers {
-		if c.AppContext().Err() != nil {
-			return
-		}
-		func(p *types.PeerInfo) {
-			endpointURL, err := urlutil.BuildHTTPURL(p.Address, p.HTTPPort, "/frogpond/update")
-			if err != nil {
-				c.debugf("[FROGPOND] Failed to build update URL for %s: %v", p.NodeID, err)
+	go func() {
+		peers := c.DiscoveryManager().GetPeers()
+		for _, peer := range peers {
+			if c.AppContext().Err() != nil {
 				return
 			}
-			updatesJSON, _ := json.Marshal(updates)
+			func(p *types.PeerInfo) {
+				endpointURL, err := urlutil.BuildHTTPURL(p.Address, p.HTTPPort, "/frogpond/update")
+				if err != nil {
+					c.debugf("[FROGPOND] Failed to build update URL for %s: %v", p.NodeID, err)
+					return
+				}
+				updatesJSON, _ := json.Marshal(updates)
 
-			resp, err := c.httpClient.Post(endpointURL, "application/json", strings.NewReader(string(updatesJSON)))
-			if err != nil {
-				return
-			}
-			defer func() {
-				io.Copy(io.Discard, resp.Body)
-				resp.Body.Close()
-			}()
-		}(peer)
-	}
+				resp, err := c.httpClient.Post(endpointURL, "application/json", strings.NewReader(string(updatesJSON)))
+				if err != nil {
+					return
+				}
+				defer func() {
+					io.Copy(io.Discard, resp.Body)
+					resp.Body.Close()
+				}()
+			}(peer)
+		}
+	}()
 }
 
 // publishMetricsDataPoint writes metrics snapshots into frogpond and propagates them
@@ -61,9 +63,9 @@ func (c *Cluster) publishMetricsDataPoint(key string, payload []byte) {
 	}
 }
 
-func (c *Cluster) getPeerList() []types.PeerInfo {
+func (c *Cluster) getPeerList() []types.NodeData {
 	nodes := c.frogpond.GetAllMatchingPrefix("nodes/")
-	var peerList []types.PeerInfo
+	var peerList []types.NodeData
 
 	for _, nodeDataPoint := range nodes {
 		if nodeDataPoint.Deleted {
@@ -75,35 +77,49 @@ func (c *Cluster) getPeerList() []types.PeerInfo {
 			continue
 		}
 
-		peer := types.PeerInfo{
-			NodeID:         types.NodeID(nodeData.NodeID),
-			Address:        nodeData.Address,
-			HTTPPort:       nodeData.HTTPPort,
-			DiscoveryPort:  nodeData.DiscoveryPort,
-			LastSeen:       nodeData.LastSeen,
-			Available:      nodeData.Available,
-			BytesStored:    nodeData.BytesStored,
-			DiskSize:       nodeData.DiskSize,
-			DiskFree:       nodeData.DiskFree,
-			SyncPending:    nodeData.SyncPending,
-			ReindexPending: nodeData.ReindexPending,
-			IsStorage:      nodeData.IsStorage,
-			DataDir:        nodeData.DataDir,
-			StorageFormat:  nodeData.StorageFormat,
-			StorageMinor:   nodeData.StorageMinor,
-			Program:        nodeData.Program,
-			Version:        nodeData.Version,
-			URL:            nodeData.URL,
-			ExportDir:      nodeData.ExportDir,
-			ClusterDir:     nodeData.ClusterDir,
-			ImportDir:      nodeData.ImportDir,
-			Debug:          nodeData.Debug,
-		}
-
-		peerList = append(peerList, peer)
+		peerList = append(peerList, nodeData)
 	}
 
 	return peerList
+}
+
+func (c *Cluster) GetAvailablePeerList() []types.NodeData {
+	nodes := c.getPeerList()
+	peers := c.DiscoveryManager().GetPeerMap()
+	var availablePeerList []types.NodeData
+
+	for _, nodeData := range nodes {
+		if nodeData.IsStorage {
+			if nodeData.DiskSize > 0 {
+				used := nodeData.DiskSize - nodeData.DiskFree
+				if used < 0 {
+					used = 0
+				}
+				usage := float64(used) / float64(nodeData.DiskSize)
+				if usage >= 0.9 {
+					continue
+				}
+			}
+
+			_, ok := peers.Load(string(nodeData.NodeID))
+			if !ok {
+				continue
+			}
+
+			availablePeerList = append(availablePeerList, nodeData)
+		}
+
+	}
+	return availablePeerList
+}
+
+func (c *Cluster) GetAvailablePeerMap() map[types.NodeID]types.NodeData {
+	out := make(map[types.NodeID]types.NodeData)
+	nodes := c.GetAvailablePeerList()
+	for _, nodeData := range nodes {
+		out[types.NodeID(nodeData.NodeID)] = nodeData
+	}
+	return out
 }
 
 // GetCurrentRF gets the current replication factor from frogpond
@@ -444,7 +460,7 @@ func (c *Cluster) updateNodeMetadata() {
 	absDataDir, _ := filepath.Abs(c.DataDir)
 
 	nodeData := types.NodeData{
-		NodeID:         string(c.NodeId),
+		NodeID:         c.NodeId,
 		Address:        address,
 		HTTPPort:       c.HTTPDataPort,
 		DiscoveryPort:  c.DiscoveryPort,

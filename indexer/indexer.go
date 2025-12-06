@@ -3,6 +3,8 @@ package indexer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -324,13 +326,17 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 	resultMap := make(map[string]types.SearchResult)
 	for _, entry := range raw {
 		if strings.HasSuffix(entry.path, "/") {
+			now := time.Now()
+			sum := sha256.Sum256([]byte(fmt.Sprintf("%v%v", entry.path, now.UnixNano())))
 			meta := types.FileMetadata{
 				Name:        filepath.Base(entry.path),
 				Path:        entry.path,
 				Size:        0,
 				ContentType: "application/directory",
 				IsDirectory: true,
-				Checksum:    "",
+				Checksum:    hex.EncodeToString(sum[:]),
+				CreatedAt:   now,
+				ModifiedAt:  now,
 			}
 			types.AddResultToMap(buildSearchResult(entry.path, meta), resultMap, entry.path, prefix)
 

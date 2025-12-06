@@ -138,9 +138,9 @@ func (pm *PartitionManager) RemoveNodeFromPartitionWithTimestamp(nodeID types.No
 	resultingUpdates := pm.deps.Frogpond.AppendDataPoints(tombstone)
 
 	// Send both the original tombstone and any resulting updates to peers
-	pm.sendUpdates(tombstone)
+	pm.deps.SendUpdatesToPeers(tombstone)
 	if len(resultingUpdates) > 0 {
-		pm.sendUpdates(resultingUpdates)
+		pm.deps.SendUpdatesToPeers(resultingUpdates)
 	}
 
 	pm.debugf("[PARTITION] Removed node %s from partition %s with backdated timestamp %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
@@ -214,12 +214,6 @@ func (pm *PartitionManager) verifyFileChecksum(content []byte, expectedChecksum,
 			path, peerID, expectedChecksum, actualChecksum)
 	}
 	return nil
-}
-
-func (pm *PartitionManager) sendUpdates(updates []frogpond.DataPoint) {
-	if pm.deps.SendUpdatesToPeers != nil && len(updates) > 0 {
-		pm.deps.SendUpdatesToPeers(updates)
-	}
 }
 
 func (pm *PartitionManager) notifyFileListChanged() {
@@ -313,16 +307,12 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	if pm.deps.Indexer != nil {
 		var metadata types.FileMetadata
 		if err := json.Unmarshal(metadataJSON, &metadata); err == nil {
-			if metadata.Path == "" {
-				metadata.Path = path
-			}
+			types.Assertf(metadata.Path != "", "metadata path for %s must not be empty", path)
 			pm.deps.Indexer.AddFile(path, metadata)
 		}
 	}
 
 	// Update partition metadata in CRDT
-	pm.MarkForReindex(partitionID, fmt.Sprintf("stored file %s", path))
-	pm.MarkForSync(partitionID, fmt.Sprintf("stored file %s", path))
 	pm.MarkFileForSync(path, fmt.Sprintf("stored file %s", path))
 
 	// Debug: verify what we just stored
@@ -338,8 +328,8 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	return nil
 }
 
-func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename string) ([]byte, error) {
-	// Try to get from this peer
+// fetchFileStreamFromPeer streams a file from a peer without buffering it all in memory.
+func (pm *PartitionManager) fetchFileStreamFromPeer(ctx context.Context, peer *types.PeerInfo, filename string) (io.ReadCloser, error) {
 	decodedPath, err := url.PathUnescape(filename)
 	if err != nil {
 		decodedPath = filename
@@ -351,28 +341,40 @@ func (pm *PartitionManager) fetchFileFromPeer(peer *types.PeerInfo, filename str
 
 	fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, decodedPath)
 	if err != nil {
-		pm.debugf("[PARTITION] Failed to build URL for %s on %s: %v", filename, peer.NodeID, err)
 		return nil, err
 	}
 
-	// Create request with internal header to prevent recursion
-	content, _, status, err := httpclient.SimpleGet(context.Background(), pm.httpClient(), fileURL,
+	resp, err := httpclient.Get(ctx, pm.httpClient(), fileURL,
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
 	)
 	if err != nil {
-		pm.debugf("[PARTITION] Failed to get file %s from %s: %v", filename, peer.NodeID, err)
 		return nil, err
 	}
 
-	if status != http.StatusOK {
-		pm.debugf("[PARTITION] Peer %s returned %d for file %s", peer.NodeID, status, filename)
-		if len(content) > 0 {
-			return nil, fmt.Errorf("peer %s returned %d for file %s: %s", peer.NodeID, status, filename, string(content))
-		}
-		return nil, fmt.Errorf("peer %s returned %d for file %s", peer.NodeID, status, filename)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := resp.ReadAllAndClose()
+		return nil, fmt.Errorf("peer %s returned %d for file %s: %s", peer.NodeID, resp.StatusCode, filename, strings.TrimSpace(string(body)))
 	}
-	return content, nil
+
+	type stream struct {
+		resp *httpclient.Response
+	}
+	var reader stream
+	reader.resp = resp
+
+	return readCloserFunc{
+		read:  func(p []byte) (int, error) { return reader.resp.Body.Read(p) },
+		close: func() error { return reader.resp.Close() },
+	}, nil
 }
+
+type readCloserFunc struct {
+	read  func([]byte) (int, error)
+	close func() error
+}
+
+func (r readCloserFunc) Read(p []byte) (int, error) { return r.read(p) }
+func (r readCloserFunc) Close() error               { return r.close() }
 
 func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename string) (types.FileMetadata, error) {
 	decodedPath, err := url.PathUnescape(filename)
@@ -666,8 +668,6 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 	}
 
 	// Mark the partition for re-scan
-	pm.MarkForReindex(partitionID, fmt.Sprintf("deleted file %s", path))
-	pm.MarkForSync(partitionID, fmt.Sprintf("deleted file %s", path))
 	pm.MarkFileForSync(path, fmt.Sprintf("deleted file %s", path))
 
 	pm.logf("[PARTITION] Marked file %s as deleted in partition %s", path, partitionID)
@@ -783,7 +783,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	}
 
 	// Publish all updates to peers in one batch
-	pm.sendUpdates(allUpdates)
+	pm.deps.SendUpdatesToPeers(allUpdates)
 
 	if len(partitionsCount) == 0 {
 		pm.recordPartitionTimestamp(StartPartitionID, lastReindexTimestampFile, start)
@@ -808,7 +808,7 @@ func (pm *PartitionManager) removePartitionHolder(partitionID types.PartitionID)
 
 	// Remove ourselves as a holder by setting a tombstone
 	updates := pm.deps.Frogpond.DeleteDataPoint(holderKey, 30*time.Minute)
-	pm.sendUpdates(updates)
+	pm.deps.SendUpdatesToPeers(updates)
 
 	pm.debugf("[PARTITION] Removed %s as holder for %s", pm.deps.NodeID, partitionID)
 }
@@ -937,23 +937,17 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 	if pm.deps.Indexer != nil {
 		var metadata types.FileMetadata
 		if err := json.Unmarshal(metadataJSON, &metadata); err == nil {
-			if metadata.Path == "" {
-				metadata.Path = path
-			}
+			types.Assertf(metadata.Path != "", "metadata path for %s must not be empty", path)
 			pm.deps.Indexer.AddFile(path, metadata)
 		}
 	}
 
-	pm.MarkForReindex(partitionID, fmt.Sprintf("stored file %s", path))
-	pm.MarkForSync(partitionID, fmt.Sprintf("stored file %s", path))
 	pm.MarkFileForSync(path, fmt.Sprintf("stored file %s", path))
 
 	if metadataBytes, _, exists, err := pm.deps.FileStore.Get(path); err == nil && exists {
 		var parsedMeta types.FileMetadata
 		if json.Unmarshal(metadataBytes, &parsedMeta) == nil {
-			if parsedMeta.Checksum == "" {
-				panic("fuck ai")
-			}
+			types.Assertf(parsedMeta.Checksum != "", "checksum must not be empty for %s", path)
 		}
 	}
 

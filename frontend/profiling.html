@@ -39,6 +39,11 @@
             <a href="/flamegraph" class="btn">🔥 CPU Flame Graph</a>
         </div>
         <div class="profile-card">
+            <h3>Function Time Profile</h3>
+            <p>Top functions by CPU time (30s sample)</p>
+            <a href="/functionprofile" class="btn">⏱️ Function Profile</a>
+        </div>
+        <div class="profile-card">
             <h3>Memory Flame Graph</h3>
             <p>Shows current memory allocation patterns</p>
             <a href="/memorygraph" class="btn">🧠 Memory Flame Graph</a>
@@ -56,6 +61,7 @@
             <li>Click "Start Profiling" to enable detailed profiling</li>
             <li>Use your application normally to generate load</li>
             <li>Click "CPU Flame Graph" to view CPU usage patterns (30s sample)</li>
+            <li>Click "Function Profile" to see which functions used CPU time (30s sample)</li>
             <li>Click "Memory Flame Graph" to view current heap allocation patterns</li>
             <li>Click "Allocation Flame Graph" to view memory allocation call sites</li>
             <li>Click "Stop Profiling" to disable when done</li>
