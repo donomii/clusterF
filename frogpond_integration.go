@@ -25,12 +25,12 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 	}
 
 	go func() {
-		peers := c.DiscoveryManager().GetPeers()
+		peers := c.GetAvailablePeerList()
 		for _, peer := range peers {
 			if c.AppContext().Err() != nil {
 				return
 			}
-			func(p *types.PeerInfo) {
+			func(p types.NodeData) {
 				endpointURL, err := urlutil.BuildHTTPURL(p.Address, p.HTTPPort, "/frogpond/update")
 				if err != nil {
 					c.debugf("[FROGPOND] Failed to build update URL for %s: %v", p.NodeID, err)

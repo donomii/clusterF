@@ -19,16 +19,49 @@ import (
 	"github.com/donomii/clusterF/urlutil"
 )
 
-// handleInternalFilesAPI handles internal peer-to-peer file operations
-// Separate endpoint for internal cluster communication at /internal/files/
-func (c *Cluster) handleInternalFilesAPI(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/internal/files")
+func normalizeAPIPath(prefix string, r *http.Request) string {
+	path := strings.TrimPrefix(r.URL.Path, prefix)
 	if path == "" {
 		path = "/"
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+	return path
+}
+
+func writeDirectoryHeadResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-ClusterF-Is-Directory", "true")
+	w.WriteHeader(http.StatusOK)
+}
+
+func (c *Cluster) respondWithDirectoryListing(w http.ResponseWriter, path, logPrefix string) {
+	if logPrefix == "" {
+		logPrefix = "[FILES]"
+	}
+
+	c.debugf("%s Directory request for: %s", logPrefix, path)
+	entries, err := c.FileSystem.ListDirectory(path)
+	if err != nil {
+		c.debugf("%s Failed to list directory %s: %v", logPrefix, path, err)
+		http.Error(w, fmt.Sprintf("Directory not found or listing failed: %s", path), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"path":    path,
+		"entries": entries,
+		"count":   len(entries),
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleInternalFilesAPI handles internal peer-to-peer file operations
+// Separate endpoint for internal cluster communication at /internal/files/
+func (c *Cluster) handleInternalFilesAPI(w http.ResponseWriter, r *http.Request) {
+	path := normalizeAPIPath("/internal/files", r)
 
 	c.internalCallThrottle <- struct{}{}
 	defer func() { <-c.internalCallThrottle }()
@@ -75,13 +108,7 @@ func bufferRequestBodyToFile(r io.Reader) (string, int64, string, error) {
 
 // handleFilesAPI handles file system API operations.
 func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/files")
-	if path == "" {
-		path = "/"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
+	path := normalizeAPIPath("/api/files", r)
 
 	c.externalCallThrottle <- struct{}{}
 	defer func() { <-c.externalCallThrottle }()
@@ -107,26 +134,8 @@ func (c *Cluster) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
 func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, path string) {
 	c.debugf("[FILES] Internal GET request for path: %s", path)
 
-	serveDirectory := func() {
-		c.debugf("[FILES] Internal directory request for: %s", path)
-		entries, err := c.FileSystem.ListDirectory(path)
-		if err != nil {
-			c.debugf("[FILES] Failed to list directory %s: %v", path, err)
-			http.Error(w, fmt.Sprintf("Directory not found or listing failed: %s", path), http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		response := map[string]interface{}{
-			"path":    path,
-			"entries": entries,
-			"count":   len(entries),
-		}
-		json.NewEncoder(w).Encode(response)
-	}
-
 	if strings.HasSuffix(path, "/") {
-		serveDirectory()
+		c.respondWithDirectoryListing(w, path, "[FILES] Internal")
 		return
 	}
 
@@ -135,7 +144,7 @@ func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		switch {
 		case errors.Is(err, types.ErrIsDirectory):
-			serveDirectory()
+			c.respondWithDirectoryListing(w, path, "[FILES] Internal")
 			return
 		case errors.Is(err, types.ErrFileNotFound):
 			detail := err.Error()
@@ -299,29 +308,13 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 }
 
 func (c *Cluster) serveDirectoryListing(w http.ResponseWriter, path string) {
-	c.debugf("[FILES] Directory request for: %s", path)
-	entries, err := c.FileSystem.ListDirectory(path)
-	if err != nil {
-		c.debugf("[FILES] Failed to list directory %s: %v", path, err)
-		http.Error(w, fmt.Sprintf("Directory not found or listing failed: %s", path), http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	response := map[string]interface{}{
-		"path":    path,
-		"entries": entries,
-		"count":   len(entries),
-	}
-	json.NewEncoder(w).Encode(response)
+	c.respondWithDirectoryListing(w, path, "[FILES]")
 }
 
 // writeHeadResponse writes metadata headers for HEAD responses without a body.
 func (c *Cluster) writeHeadResponse(w http.ResponseWriter, metadata types.FileMetadata) {
 	if metadata.IsDirectory {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-ClusterF-Is-Directory", "true")
-		w.WriteHeader(http.StatusOK)
+		writeDirectoryHeadResponse(w)
 		return
 	}
 
@@ -366,9 +359,7 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 
 	// FIXME we should do a basic search here to see if there are any files in this directory tree
 	if strings.HasSuffix(path, "/") {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-ClusterF-Is-Directory", "true")
-		w.WriteHeader(http.StatusOK)
+		writeDirectoryHeadResponse(w)
 		return
 	}
 
@@ -622,9 +613,7 @@ func (c *Cluster) handleFileHeadInternal(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		switch {
 		case errors.Is(err, types.ErrIsDirectory):
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-ClusterF-Is-Directory", "true")
-			w.WriteHeader(http.StatusOK)
+			writeDirectoryHeadResponse(w)
 			return
 		case errors.Is(err, types.ErrFileNotFound):
 			c.debugf("[FILES] Internal HEAD metadata not found locally for %s", path)
@@ -725,7 +714,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		return
 	}
 
-	peerLookup := c.DiscoveryManager().GetPeerMap()
+	peerLookup := c.GetAvailablePeerMap()
 
 	var (
 		successful bool
@@ -735,14 +724,8 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 
 	now := time.Now()
 	for _, holderID := range partitionInfo.Holders {
-		var peer *types.PeerInfo
-		if holderID == c.ID() {
-			peer = &types.PeerInfo{
-				NodeID:   c.ID(),
-				Address:  c.DiscoveryManager().GetLocalAddress(),
-				HTTPPort: c.HTTPPort(),
-			}
-		} else if p, ok := peerLookup.Load(string(holderID)); ok {
+		var peer types.NodeData
+		if p, ok := peerLookup[holderID]; ok {
 			peer = p
 		} else {
 			errors = append(errors, fmt.Sprintf("%s: no peer info", holderID))
