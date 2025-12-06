@@ -46,10 +46,9 @@ func NewPartitionManager(deps *types.App) *PartitionManager {
 	}
 }
 
-func (pm *PartitionManager) recordEssentialDiskActivity() {
-	if pm.deps.Cluster != nil {
-		pm.deps.Cluster.RecordDiskActivity(types.DiskActivityEssential)
-	}
+func (pm *PartitionManager) RecordEssentialDiskActivity() {
+	types.Assert(pm.deps.Cluster != nil, "Cluster must not be nil")
+	pm.deps.Cluster.RecordDiskActivity(types.DiskActivityEssential)
 }
 
 func (pm *PartitionManager) MarkForReindex(pId types.PartitionID, reason string) {
@@ -285,7 +284,7 @@ func (pm *PartitionManager) StoreFileInPartition(ctx context.Context, path strin
 	if pm.deps.Cluster.NoStore() {
 		panic("wtf")
 	}
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	// If in no-store mode, don't store locally
 	if pm.deps.Cluster.NoStore() {
 		//FIXME panic here
@@ -406,7 +405,7 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 
 // getFileAndMetaFromPartition retrieves metadata and content from separate stores
 func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, types.FileMetadata, error) {
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	// If in no-store mode, always try peers first
 	if pm.deps.Cluster.NoStore() {
 		return []byte{}, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path))
@@ -461,7 +460,7 @@ func (pm *PartitionManager) GetFileAndMetaFromPartition(path string) ([]byte, ty
 
 // GetFileAndMetaFromPartitionStream retrieves metadata and a streaming reader when supported by the filestore.
 func (pm *PartitionManager) GetFileAndMetaFromPartitionStream(path string) (io.ReadCloser, types.FileMetadata, error) {
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	if pm.deps.Cluster.NoStore() {
 		return nil, types.FileMetadata{}, fmt.Errorf("%v", pm.debugf("[PARTITION] No-store mode: getting file %s from peers", path))
 	}
@@ -517,7 +516,7 @@ func (pm *PartitionManager) localFileNotFound(path string, partitionID types.Par
 }
 
 func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMetadata, error) {
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	//pm.debugf("Starting GetMetadataFromPartition for path %v", path)
 	//defer pm.debugf("Leaving GetMetadataFromPartition for path %v", path)
 	if pm.deps.Cluster.NoStore() {
@@ -619,7 +618,7 @@ func (pm *PartitionManager) DeleteFileFromPartition(ctx context.Context, path st
 
 // DeleteFileFromPartitionWithTimestamp removes a file from its partition with explicit timestamp
 func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Context, path string, modTime time.Time) error {
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	// If in no-store mode, don't delete locally (we don't have it anyway)
 	if pm.deps.Cluster.NoStore() {
 		//FIXME panic here
@@ -908,7 +907,7 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 
 	partitionID := HashToPartition(path)
 	pm.debugf("[PARTITION] Streaming store of file %s in partition %s (%d bytes)", path, partitionID, size)
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	if streamer, ok := pm.deps.FileStore.(interface {
 		PutStream(path string, metadata []byte, content io.Reader, size int64) error
 	}); ok {

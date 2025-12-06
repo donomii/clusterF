@@ -310,7 +310,7 @@ func (pm *PartitionManager) storeEntryMetadata(entry PartitionSyncEntry) error {
 	if entry.Metadata.Path == "" {
 		panic("what the fuck were you thinking you stupid AI")
 	}
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	metadataBytes, marshalErr := json.Marshal(entry.Metadata)
 	if marshalErr != nil {
 		return fmt.Errorf("failed to encode metadata for entry %s: %v", entry.Path, marshalErr)
@@ -340,7 +340,7 @@ func (pm *PartitionManager) storeEntryMetadataAndContent(entry PartitionSyncEntr
 	if pm.deps.Cluster.NoStore() {
 		return fmt.Errorf("no store")
 	}
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	metadataBytes, marshalErr := json.Marshal(entry.Metadata)
 	if marshalErr != nil {
 		return fmt.Errorf("failed to encode metadata for entry %s: %v", entry.Path, marshalErr)
@@ -488,7 +488,7 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 		return pm.deps.Indexer.FilesForPartition(partitionID), nil
 	}
 
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	pm.debugf("[PARTITION] Indexer unavailable, falling back to partition metadata scan for %s", partitionID)
 	paths := []string{}
 	err := pm.deps.FileStore.ScanMetadataPartition(pm.deps.Cluster.AppContext(), partitionID, func(path string, _ []byte) error {
@@ -503,7 +503,7 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 }
 
 func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, path string) (PartitionSyncEntry, error) {
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	localMetadataBytes, err := pm.deps.FileStore.GetMetadata(path)
 	if err != nil {
 		return PartitionSyncEntry{}, err
@@ -657,7 +657,7 @@ func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peer
 
 // shouldUpdateEntry determines if we should update our local copy with the remote entry
 func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bool {
-	pm.recordEssentialDiskActivity()
+	pm.RecordEssentialDiskActivity()
 	// Get our current version
 	localMetadataBytes, _, localExists, err := pm.deps.FileStore.Get(remoteEntry.Path)
 	if err != nil || !localExists {

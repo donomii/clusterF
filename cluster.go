@@ -903,6 +903,7 @@ func (c *Cluster) AppContext() context.Context {
 }
 
 func (c *Cluster) Stop() {
+	c.partitionManager.RecordEssentialDiskActivity()
 	c.Logger().Printf("Stopping node %s", c.NodeId)
 
 	// Set shutdown flag immediately to block new API requests
