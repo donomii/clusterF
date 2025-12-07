@@ -75,7 +75,7 @@ func (pm *PartitionManager) handlePartitionSyncGet(w http.ResponseWriter, r *htt
 		default:
 		}
 
-		entry, entryErr := pm.buildPartitionEntry(partitionID, path)
+		entry, entryErr := pm.buildPartitionEntry(path)
 		if entryErr != nil {
 			pm.debugf("[PARTITION] Skipping %s in %s: %v", path, partitionID, entryErr)
 			continue
@@ -384,24 +384,27 @@ func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []
 	}
 
 	applied := 0
+	errStr := ""
 	for _, entry := range entries {
+		types.Assertf(entry.Metadata.Checksum != "", "%s: missing checksum in metadata", entry.Path)
 		if ctx.Err() != nil {
 			return applied, ctx.Err()
 		}
 
 		pm.logf("[PARTITION SYNC] Fetching %s from %s", entry.Path, peer.NodeID)
-		content, err := pm.fetchFileContentFromPeer(ctx, peer, entry.Path)
-		panicError(err)
-
-		_ = entry.Metadata.Checksum == "" && panicB(fmt.Errorf("%s: missing checksum in metadata", entry.Path))
-
-		panicError(pm.verifyFileChecksum(content, entry.Metadata.Checksum, entry.Path, peer.NodeID))
-		panicError(pm.storeEntryMetadataAndContent(entry, content))
+		err := pm.SyncFile(ctx, entry.Path)
+		if err != nil {
+			errStr += fmt.Sprintf("|%s: %v\n", entry.Path, err)
+			continue
+		}
 
 		applied++
 		if applied%100 == 0 {
 			pm.debugf("[PARTITION] Applied %d entries for partition %s", applied, HashToPartition(entry.Path))
 		}
+	}
+	if errStr != "" {
+		return applied, fmt.Errorf("failed to sync %d entries: %s", applied, errStr)
 	}
 
 	return applied, nil
@@ -459,26 +462,15 @@ func (pm *PartitionManager) processPartitionEntryStream(ctx context.Context, dec
 }
 
 func (pm *PartitionManager) resolvePeerForSync(nodeID types.NodeID) (*types.PeerInfo, error) {
-	if nodeID == "" {
-		return nil, fmt.Errorf("missing peer id")
-	}
+	types.Assert(nodeID != "", "missing peer id in resolvePeerForSync")
 
 	peer, ok := pm.loadPeer(nodeID)
 	if ok {
 		return peer, nil
 	}
 
-	for _, peer := range pm.getPeers() {
-		if types.NodeID(peer.NodeID) == nodeID {
-			return &types.PeerInfo{
-				NodeID:   nodeID,
-				Address:  peer.Address,
-				HTTPPort: peer.HTTPPort,
-			}, nil
-		}
-	}
+	return nil, fmt.Errorf("peer %s not found", nodeID)
 
-	return nil, fmt.Errorf("peer info not found for %s", nodeID)
 }
 
 func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]string, error) {
@@ -500,7 +492,7 @@ func (pm *PartitionManager) partitionPaths(partitionID types.PartitionID) ([]str
 	return paths, nil
 }
 
-func (pm *PartitionManager) buildPartitionEntry(partitionID types.PartitionID, path string) (PartitionSyncEntry, error) {
+func (pm *PartitionManager) buildPartitionEntry(path string) (PartitionSyncEntry, error) {
 	pm.RecordEssentialDiskActivity()
 	localMetadataBytes, err := pm.deps.FileStore.GetMetadata(path)
 	if err != nil {
@@ -561,7 +553,7 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 				return
 			}
 
-			entry, entryErr := pm.buildPartitionEntry(partitionID, path)
+			entry, entryErr := pm.buildPartitionEntry(path)
 			if entryErr != nil {
 				msg := fmt.Sprintf("[PARTITION] Failed %s in %s while pushing to %s: %v", path, partitionID, peerID, entryErr)
 				pm.logf(msg)

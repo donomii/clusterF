@@ -297,11 +297,9 @@ func (idx *Indexer) loadMetadata(path string) (types.FileMetadata, bool) {
 }
 
 func (idx *Indexer) upsertDocLocked(partitionID types.PartitionID, path string) {
+	types.Assert(idx.backend != nil, "no backend")
 	docID := idx.docIDForPath(path)
-
-	if idx.backend != nil {
-		idx.backend.Add(partitionID, path, docID)
-	}
+	idx.backend.Add(partitionID, path, docID)
 	idx.addDocToPartitionLocked(idx.partitionNumber(partitionID), docID)
 }
 

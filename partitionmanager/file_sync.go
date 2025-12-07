@@ -50,9 +50,6 @@ func (pm *PartitionManager) drainFileSyncQueue() []string {
 		paths = append(paths, string(prefix))
 		return nil
 	})
-	for _, p := range paths {
-		pm.fileSyncTrie.Delete(patricia.Prefix(p))
-	}
 
 	sort.Strings(paths)
 	return paths
@@ -93,6 +90,8 @@ func (pm *PartitionManager) processFileSyncQueue(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		pm.fileSyncTrie.Delete(patricia.Prefix(path))
+
 		if err := pm.SyncFile(ctx, path); err != nil {
 			pm.logf("[FILE SYNC] Failed to sync %s: %v", path, err)
 			pm.MarkFileForSync(path, fmt.Sprintf("retry after error: %v", err))

@@ -87,9 +87,12 @@ func (c *Cluster) GetAvailablePeerList() []types.NodeData {
 	nodes := c.getPeerList()
 	peers := c.DiscoveryManager().GetPeerMap()
 	var availablePeerList []types.NodeData
+	fmt.Printf("Considering %+v nodes and %+v peers\n", nodes, peers)
 
 	for _, nodeData := range nodes {
+		fmt.Printf("Considering node %+v\n", nodeData)
 		if nodeData.IsStorage {
+			fmt.Printf("Considering storage node %+v\n", nodeData)
 			if nodeData.DiskSize > 0 {
 				used := nodeData.DiskSize - nodeData.DiskFree
 				if used < 0 {
@@ -97,21 +100,27 @@ func (c *Cluster) GetAvailablePeerList() []types.NodeData {
 				}
 				usage := float64(used) / float64(nodeData.DiskSize)
 				if usage >= 0.9 {
+					fmt.Printf("Skipping node %+v (disk usage %v)\n", nodeData, usage)
 					continue
 				}
 			}
 
 			discPeer, ok := peers.Load(string(nodeData.NodeID))
 			if !ok {
+				fmt.Printf("Skipping node %+v (no peer)\n", nodeData)
 				continue
 			}
 			nodeData.Address = discPeer.Address
 			nodeData.HTTPPort = discPeer.HTTPPort
 
+			fmt.Printf("Adding node %+v\n", nodeData)
 			availablePeerList = append(availablePeerList, nodeData)
+		} else {
+			fmt.Printf("Skipping node %+v (not storage)\n", nodeData)
 		}
 
 	}
+	fmt.Printf("Returning %+v\n", availablePeerList)
 	return availablePeerList
 }
 
@@ -378,12 +387,12 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if time.Since(lastUpdate) < time.Duration(c.GetPartitionSyncInterval())*time.Second {
-				continue
-			}
 			// Update our node metadata
 			c.updateNodeMetadata()
 			c.logger.Print("Updated NodeMetadata\n")
+			if time.Since(lastUpdate) < time.Duration(c.GetPartitionSyncInterval()) {
+				continue
+			}
 
 			// Persist CRDT state to KV
 			c.persistCRDTToFile()
