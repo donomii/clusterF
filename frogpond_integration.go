@@ -390,7 +390,7 @@ func (c *Cluster) periodicFrogpondSync(ctx context.Context) {
 			// Update our node metadata
 			c.updateNodeMetadata()
 			c.logger.Print("Updated NodeMetadata\n")
-			if time.Since(lastUpdate) < time.Duration(c.GetPartitionSyncInterval()) {
+			if time.Since(lastUpdate) < time.Duration(c.GetPartitionSyncInterval())*time.Second {
 				continue
 			}
 
