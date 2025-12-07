@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/donomii/clusterF/types"
 )
 
 func normalizeAbsolutePath(path string) string {
@@ -51,12 +53,8 @@ func encodePath(path string) (string, string) {
 }
 
 func BuildHTTPURL(address string, port int, rawPath string) (string, error) {
-	if address == "" {
-		return "", fmt.Errorf("address is required")
-	}
-	if port <= 0 {
-		return "", fmt.Errorf("port must be positive")
-	}
+	types.Assertf(address != "", "address is required, path: %v, port %v", rawPath, port)
+	types.Assertf(port > 0, "port must be positive, path: %v, port %v", rawPath, port)
 
 	decodedPath, _ := encodePath(rawPath)
 	u := url.URL{

@@ -101,10 +101,12 @@ func (c *Cluster) GetAvailablePeerList() []types.NodeData {
 				}
 			}
 
-			_, ok := peers.Load(string(nodeData.NodeID))
+			discPeer, ok := peers.Load(string(nodeData.NodeID))
 			if !ok {
 				continue
 			}
+			nodeData.Address = discPeer.Address
+			nodeData.HTTPPort = discPeer.HTTPPort
 
 			availablePeerList = append(availablePeerList, nodeData)
 		}
