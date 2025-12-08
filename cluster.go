@@ -791,7 +791,7 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 	knownPeers := make(map[types.NodeID]bool)
 
 	checkPeers := func() {
-		for _, peer := range c.GetAvailablePeerList() {
+		for _, peer := range c.discoveryManager.GetPeers() {
 			if ctx.Err() != nil {
 				return
 			}
@@ -833,7 +833,7 @@ func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 // FullSyncAllPeers requests a full store sync from every currently discovered peer.
 // Primarily used by tests to force deterministic synchronization.
 func (c *Cluster) FullSyncAllPeers() {
-	for _, peer := range c.GetAvailablePeerList() {
+	for _, peer := range c.discoveryManager.GetPeers() {
 		if c.ctx.Err() != nil {
 			return
 		}
@@ -1676,7 +1676,7 @@ func (c *Cluster) handleClusterRestart(w http.ResponseWriter, r *http.Request) {
 
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
 // Returns true on success, false on failure
-func (c *Cluster) requestFullStoreFromPeer(peer types.NodeData) bool {
+func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 	if c.AppContext().Err() != nil {
 		return false
 	}
