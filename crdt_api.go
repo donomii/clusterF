@@ -122,7 +122,7 @@ func (c *Cluster) handleCRDTGetAPI(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{
 		"key":     key,
-		"deleted": dp.Deleted || len(val) == 0,
+		"deleted": dp.Deleted,
 		"size":    len(val),
 	}
 

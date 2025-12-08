@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donomii/clusterF/syncmap"
+
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
 	"github.com/donomii/frogpond"
@@ -32,6 +34,7 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 				return
 			}
 			func(p types.NodeData) {
+				c.debugf("Sending %v updates to %v", len(updates), p.NodeID)
 				endpointURL, err := urlutil.BuildHTTPURL(p.Address, p.HTTPPort, "/frogpond/update")
 				if err != nil {
 					c.debugf("[FROGPOND] Failed to build update URL for %s: %v", p.NodeID, err)
@@ -289,13 +292,13 @@ func (c *Cluster) GetAllNodes() map[types.NodeID]*types.NodeData {
 
 // rebuildPartitionHolderMap refreshes the in-memory partition->holders map from nodes/*/partitions entries.
 func (c *Cluster) rebuildPartitionHolderMap() {
-	if c.frogpond == nil || c.partitionHolders == nil {
-		return
-	}
+	types.Assert(c.frogpond != nil, "frogpond must be initialized before rebuilding partition holder map")
+	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
 
 	dataPoints := c.frogpond.GetAllMatchingPrefix("nodes/")
 	type holderSet map[types.NodeID]struct{}
 	next := make(map[types.PartitionID]holderSet)
+	newMap := syncmap.NewSyncMap[types.PartitionID, []types.NodeID]()
 
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
@@ -327,13 +330,6 @@ func (c *Cluster) rebuildPartitionHolderMap() {
 		}
 	}
 
-	// Remove stale entries
-	for _, pid := range c.partitionHolders.Keys() {
-		if _, ok := next[pid]; !ok {
-			c.partitionHolders.Delete(pid)
-		}
-	}
-
 	// Store updated holders
 	for pid, holderSet := range next {
 		holders := make([]types.NodeID, 0, len(holderSet))
@@ -341,16 +337,16 @@ func (c *Cluster) rebuildPartitionHolderMap() {
 			holders = append(holders, nodeID)
 		}
 		sort.Slice(holders, func(i, j int) bool { return holders[i] < holders[j] })
-		c.partitionHolders.Store(pid, holders)
+		newMap.Store(pid, holders)
 	}
+
+	c.partitionHolders = newMap
 }
 
 // PartitionHolderSnapshot returns a copy of the in-memory partition holder map.
 func (c *Cluster) PartitionHolderSnapshot() map[types.PartitionID][]types.NodeID {
+	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
 	snapshot := make(map[types.PartitionID][]types.NodeID)
-	if c.partitionHolders == nil {
-		return snapshot
-	}
 	c.partitionHolders.Range(func(pid types.PartitionID, holders []types.NodeID) bool {
 		snapshot[pid] = append([]types.NodeID(nil), holders...)
 		return true
@@ -368,18 +364,15 @@ func partitionIDFromNumber(num int) (types.PartitionID, bool) {
 // GetNodesForPartition returns nodes that hold a specific partition
 func (c *Cluster) GetNodesForPartition(partitionName string) []types.NodeID {
 	partitionID := types.PartitionID(partitionName)
-	if c.partitionHolders != nil {
-		if holders, ok := c.partitionHolders.Load(partitionID); ok {
-			return append([]types.NodeID(nil), holders...)
-		}
+	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
+	if holders, ok := c.partitionHolders.Load(partitionID); ok {
+		return append([]types.NodeID(nil), holders...)
 	}
 
 	// Fallback: rebuild once from CRDT if empty or not found yet
 	c.rebuildPartitionHolderMap()
-	if c.partitionHolders != nil {
-		if holders, ok := c.partitionHolders.Load(partitionID); ok {
-			return append([]types.NodeID(nil), holders...)
-		}
+	if holders, ok := c.partitionHolders.Load(partitionID); ok {
+		return append([]types.NodeID(nil), holders...)
 	}
 	return nil
 }
@@ -611,6 +604,9 @@ func (c *Cluster) persistCRDTToFile() {
 	}
 
 	dataPoints := c.frogpond.DataPool.ToList()
+	for _, dp := range dataPoints {
+		dp.Name = string(dp.Key)
+	}
 	dataJSON, err := json.Marshal(dataPoints)
 	if err != nil {
 		c.Logger().Printf("Failed to marshal CRDT data for persistence: %v", err)

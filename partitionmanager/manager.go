@@ -216,7 +216,7 @@ func partitionNumberFromID(partitionID types.PartitionID) (int, bool) {
 }
 
 func (pm *PartitionManager) publishLocalPartitions() {
-	if pm.deps.Cluster.NoStore()  {
+	if pm.deps.Cluster.NoStore() {
 		return
 	}
 
@@ -1524,7 +1524,8 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			needsResync := lastSync.IsZero() || lastUpdate.After(lastSync)
 
 			if needsReindex {
-				pm.MarkForReindex(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
+				// FIXME
+				//pm.MarkForReindex(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
 
 			}
 			if needsResync {

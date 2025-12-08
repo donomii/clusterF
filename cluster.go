@@ -756,6 +756,16 @@ func (c *Cluster) DataClient() *http.Client {
 	return c.HttpDataClient
 }
 
+func (c *Cluster) deletePartitions(ctx context.Context) {
+	c.frogpond.PurgeDeletedDataPoints(time.Now())
+	updates := c.frogpond.DeleteAllMatchingPrefix("partitions")
+	c.sendUpdatesToPeers(updates)
+	updates = c.frogpond.DeleteAllMatchingPrefix("partitions/")
+	c.sendUpdatesToPeers(updates)
+	time.Sleep(30 * time.Second)
+
+}
+
 //  Lifecycle
 
 func (c *Cluster) Start() {
@@ -776,6 +786,7 @@ func (c *Cluster) Start() {
 	//c.threadManager.StartThread("partition-reindex", c.runPartitionReindex)
 	c.threadManager.StartThread("restart-monitor", c.runRestartMonitor)
 	c.threadManager.StartThread("under-replicated-monitor", c.partitionManager.RunUnderReplicatedMonitor)
+	c.threadManager.StartThread("partition-prune", c.deletePartitions)
 	c.debugf("Started all threads")
 }
 
@@ -845,8 +856,7 @@ func (c *Cluster) FullSyncAllPeers() {
 		}
 		c.requestFullStoreFromPeer(peer)
 	}
-	updates := c.frogpond.DeleteAllMatchingPrefix("partitions")
-	c.sendUpdatesToPeers(updates)
+
 }
 
 // runFilesync integrates the FileSyncer with the cluster lifecycle
@@ -935,11 +945,11 @@ func (c *Cluster) Stop() {
 	c.cancel()
 
 	// Flush CRDT state to disk before shutting down threads
-	c.debugf("Flushing CRDT state before thread shutdown")
+	c.Logger().Printf("Flushing CRDT state before thread shutdown")
 	c.persistCRDTToFile()
 
 	// Shutdown all threads via ThreadManager
-	c.debugf("Shutting down all threads")
+	c.Logger().Printf("Shutting down all threads")
 	failedThreads := c.threadManager.Shutdown()
 	if len(failedThreads) > 0 {
 		c.Logger().Printf("Some threads failed to shutdown: %v", failedThreads)
@@ -947,7 +957,7 @@ func (c *Cluster) Stop() {
 	}
 
 	// Flush CRDT state to disk after threads have stopped
-	c.debugf("Flushing CRDT state after thread shutdown")
+	c.Logger().Printf("Flushing CRDT state after thread shutdown")
 	c.persistCRDTToFile()
 
 	// Close HTTP client transports to clean up connections
@@ -966,7 +976,7 @@ func (c *Cluster) Stop() {
 
 	// Close FileStore handles
 	if c.partitionManager != nil {
-		c.debugf("Closing partition file store")
+		c.Logger().Printf("Closing partition file store")
 		c.partitionManager.FileStore().Close()
 	}
 

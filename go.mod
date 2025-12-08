@@ -3,12 +3,12 @@ module github.com/donomii/clusterF
 go 1.25.1
 
 require (
-	github.com/donomii/clusterF/frontend v0.0.0-20251203152000-0c578d3a7344
+	github.com/donomii/clusterF/frontend v0.0.0-20251208151042-bdc05683d927
 	github.com/donomii/clusterF/syncmap v0.0.0
-	github.com/donomii/frogpond v0.0.0-20251203153250-eb57110e8ed3
+	github.com/donomii/frogpond v0.0.0-20251208215005-40b2aa1e51f9
 	github.com/donomii/go-webdav v0.0.0-20240304173232-8e8f80405603
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
-	golang.org/x/sys v0.38.0
+	golang.org/x/sys v0.39.0
 )
 
 require (
@@ -49,7 +49,7 @@ require (
 	github.com/sasha-s/go-deadlock v0.3.6 // indirect
 	go.etcd.io/bbolt v1.4.3 // indirect
 	golang.org/x/exp v0.0.0-20251125195548-87e1e737ad39 // indirect
-	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
 	modernc.org/libc v1.67.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
