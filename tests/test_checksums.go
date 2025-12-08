@@ -46,6 +46,10 @@ func (m *MockCluster) ReplicationFactor() int {
 	return 3
 }
 
+func (m *MockCluster) PartitionHolderSnapshot() map[types.PartitionID][]types.NodeID {
+	return nil
+}
+
 func (m *MockCluster) NoStore() bool {
 	return false
 }

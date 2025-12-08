@@ -41,6 +41,7 @@ type ClusterLike interface {
 	ReplicationFactor() int                                        // Current replication factor
 	NoStore() bool                                                 // Return true if this node does not participate in data storage
 	ListDirectoryUsingSearch(path string) ([]*FileMetadata, error) // Search the cluster for a prefix (a directory)
+	PartitionHolderSnapshot() map[PartitionID][]NodeID             // Current partition->holders map built from CRDT nodes entries
 	DataClient() *http.Client                                      // The data transport client, at the moment, there is only the HTTP protocol client
 	ID() NodeID                                                    // Node id (a string)
 	GetAllNodes() map[NodeID]*NodeData                             // Return a copy of all known nodes

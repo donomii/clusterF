@@ -73,6 +73,10 @@ func (m *MockClusterSearch) ReplicationFactor() int {
 	return 3
 }
 
+func (m *MockClusterSearch) PartitionHolderSnapshot() map[types.PartitionID][]types.NodeID {
+	return nil
+}
+
 func (m *MockClusterSearch) NoStore() bool {
 	return false
 }

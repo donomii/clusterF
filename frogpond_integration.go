@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -286,55 +287,106 @@ func (c *Cluster) GetAllNodes() map[types.NodeID]*types.NodeData {
 	return allNodes
 }
 
-// GetNodesForPartition returns nodes that hold a specific partition
-func (c *Cluster) GetNodesForPartition(partitionName string) []types.NodeID {
-	holderPrefix := fmt.Sprintf("partitions/%s/holders/", partitionName)
-	dataPoints := c.frogpond.GetAllMatchingPrefix(holderPrefix)
+// rebuildPartitionHolderMap refreshes the in-memory partition->holders map from nodes/*/partitions entries.
+func (c *Cluster) rebuildPartitionHolderMap() {
+	if c.frogpond == nil || c.partitionHolders == nil {
+		return
+	}
 
-	var holders []types.NodeID
-	targetSet := make(map[types.NodeID]bool)
+	dataPoints := c.frogpond.GetAllMatchingPrefix("nodes/")
+	type holderSet map[types.NodeID]struct{}
+	next := make(map[types.PartitionID]holderSet)
+
 	for _, dp := range dataPoints {
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
 		}
-
-		// Extract node ID from key
-		nodeID := types.NodeID(strings.TrimPrefix(string(dp.Key), holderPrefix))
-
-		if nodeID == "" {
-			panic("no")
-		}
-		if targetSet[nodeID] {
+		parts := strings.Split(string(dp.Key), "/")
+		if len(parts) != 3 || parts[0] != "nodes" || parts[2] != "partitions" {
 			continue
 		}
-		targetSet[nodeID] = true
 
+		nodeID := types.NodeID(parts[1])
+		var partitionNumbers []int
+		if err := json.Unmarshal(dp.Value, &partitionNumbers); err != nil {
+			c.debugf("[PARTITION MAP] Failed to parse %s: %v", dp.Key, err)
+			continue
+		}
+
+		for _, num := range partitionNumbers {
+			pid, ok := partitionIDFromNumber(num)
+			if !ok {
+				continue
+			}
+			set := next[pid]
+			if set == nil {
+				set = make(holderSet)
+				next[pid] = set
+			}
+			set[nodeID] = struct{}{}
+		}
 	}
 
-	for nodeID := range targetSet {
-		holders = append(holders, nodeID)
+	// Remove stale entries
+	for _, pid := range c.partitionHolders.Keys() {
+		if _, ok := next[pid]; !ok {
+			c.partitionHolders.Delete(pid)
+		}
 	}
 
-	return holders
+	// Store updated holders
+	for pid, holderSet := range next {
+		holders := make([]types.NodeID, 0, len(holderSet))
+		for nodeID := range holderSet {
+			holders = append(holders, nodeID)
+		}
+		sort.Slice(holders, func(i, j int) bool { return holders[i] < holders[j] })
+		c.partitionHolders.Store(pid, holders)
+	}
+}
+
+// PartitionHolderSnapshot returns a copy of the in-memory partition holder map.
+func (c *Cluster) PartitionHolderSnapshot() map[types.PartitionID][]types.NodeID {
+	snapshot := make(map[types.PartitionID][]types.NodeID)
+	if c.partitionHolders == nil {
+		return snapshot
+	}
+	c.partitionHolders.Range(func(pid types.PartitionID, holders []types.NodeID) bool {
+		snapshot[pid] = append([]types.NodeID(nil), holders...)
+		return true
+	})
+	return snapshot
+}
+
+func partitionIDFromNumber(num int) (types.PartitionID, bool) {
+	if num < 0 || num >= types.DefaultPartitionCount {
+		return "", false
+	}
+	return types.PartitionID(fmt.Sprintf("p%05d", num)), true
+}
+
+// GetNodesForPartition returns nodes that hold a specific partition
+func (c *Cluster) GetNodesForPartition(partitionName string) []types.NodeID {
+	partitionID := types.PartitionID(partitionName)
+	if c.partitionHolders != nil {
+		if holders, ok := c.partitionHolders.Load(partitionID); ok {
+			return append([]types.NodeID(nil), holders...)
+		}
+	}
+
+	// Fallback: rebuild once from CRDT if empty or not found yet
+	c.rebuildPartitionHolderMap()
+	if c.partitionHolders != nil {
+		if holders, ok := c.partitionHolders.Load(partitionID); ok {
+			return append([]types.NodeID(nil), holders...)
+		}
+	}
+	return nil
 }
 
 // GetNodesForPartition returns nodes that hold a specific partition
 func (c *Cluster) GetNodesForPartitionMap(partitionName string) []types.NodeID {
-	holderPrefix := fmt.Sprintf("partitions/%s/holders/", partitionName)
-	dataPoints := c.frogpond.GetAllMatchingPrefix(holderPrefix)
-
-	var holders []types.NodeID
-	for _, dp := range dataPoints {
-		if dp.Deleted || len(dp.Value) == 0 {
-			continue
-		}
-
-		// Extract node ID from key
-		nodeID := strings.TrimPrefix(string(dp.Key), holderPrefix)
-		holders = append(holders, types.NodeID(nodeID))
-	}
-
-	return holders
+	return c.GetNodesForPartition(partitionName)
 }
 
 // GetNodeInfo returns information about a specific node

@@ -32,6 +32,7 @@ import (
 	"github.com/donomii/clusterF/indexer"
 	"github.com/donomii/clusterF/metrics"
 	"github.com/donomii/clusterF/partitionmanager"
+	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
@@ -92,6 +93,9 @@ type Cluster struct {
 
 	// Partition system
 	partitionManager *partitionmanager.PartitionManager
+
+	// Partition holder map built from nodes/<node>/partitions entries
+	partitionHolders *syncmap.SyncMap[types.PartitionID, []types.NodeID]
 
 	// File system layer
 	FileSystem *filesystem.ClusterFileSystem // Presentation layer for the cluster
@@ -277,6 +281,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		ClusterDir:    opts.ClusterDir,
 		ImportDir:     opts.ImportDir,
 
+		partitionHolders:     syncmap.NewSyncMap[types.PartitionID, []types.NodeID](),
 		ctx:                  ctx,
 		cancel:               cancel,
 		Debug:                opts.Debug,
@@ -761,6 +766,7 @@ func (c *Cluster) Start() {
 	c.threadManager.StartThreadOnce("indexer-import", c.runIndexerImport)
 	c.threadManager.StartThread("filesync", c.runFilesync)
 	c.threadManager.StartThread("frogpond-sync", c.periodicFrogpondSync)
+	c.threadManager.StartThread("partition-holder-refresh", c.runPartitionHolderRefresh)
 	c.threadManager.StartThread("partition-check", c.partitionManager.PeriodicSyncCheck)
 	c.threadManager.StartThread("file-sync", c.partitionManager.RunFileSync)
 	c.threadManager.StartThread("node-pruning", c.periodicNodePruning)
@@ -892,6 +898,23 @@ func (c *Cluster) runPartitionReindex(ctx context.Context) {
 			}
 		}
 
+	}
+}
+
+func (c *Cluster) runPartitionHolderRefresh(ctx context.Context) {
+	// Build once immediately on startup so early callers have data
+	c.rebuildPartitionHolderMap()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.rebuildPartitionHolderMap()
+		}
 	}
 }
 
