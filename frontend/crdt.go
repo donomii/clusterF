@@ -144,8 +144,12 @@ func (f *Frontend) HandleCRDTInspectorPageUI(w http.ResponseWriter, r *http.Requ
             if (!res.ok) { console.log('Failed to load key'); return; }
             const data = await res.json();
             const v = document.getElementById('value');
-            const pretty = data.value_json ? JSON.stringify(data.value_json, null, 2) : (data.value_text || '[binary]');
-            v.textContent = pretty;
+            if (data.deleted || !data.size) {
+                v.textContent = '[deleted/tombstone]';
+            } else {
+                const pretty = data.value_json ? JSON.stringify(data.value_json, null, 2) : (data.value_text || '[binary]');
+                v.textContent = pretty;
+            }
             document.getElementById('keytitle').textContent = key + (data.deleted ? ' (deleted)' : '');
         }
 

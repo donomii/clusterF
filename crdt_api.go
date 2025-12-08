@@ -116,28 +116,32 @@ func (c *Cluster) handleCRDTGetAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing required 'key' parameter in CRDT get request", http.StatusBadRequest)
 		return
 	}
-	
+
 	dp := c.frogpond.GetDataPoint(key)
-	
 	val := dp.Value
-	var parsed interface{}
-	_ = json.Unmarshal(val, &parsed)
-	var textStr string
-	if utf8.Valid(val) {
-		textStr = string(val)
-	}
+
 	resp := map[string]interface{}{
-		"key":          key,
-		"deleted":      dp.Deleted,
-		"size":         len(val),
-		"value_base64": base64.StdEncoding.EncodeToString(val),
+		"key":     key,
+		"deleted": dp.Deleted || len(val) == 0,
+		"size":    len(val),
 	}
-	if parsed != nil {
-		resp["value_json"] = parsed
+
+	if len(val) > 0 && !dp.Deleted {
+		var parsed interface{}
+		_ = json.Unmarshal(val, &parsed)
+		var textStr string
+		if utf8.Valid(val) {
+			textStr = string(val)
+		}
+		resp["value_base64"] = base64.StdEncoding.EncodeToString(val)
+		if parsed != nil {
+			resp["value_json"] = parsed
+		}
+		if textStr != "" {
+			resp["value_text"] = textStr
+		}
 	}
-	if textStr != "" {
-		resp["value_text"] = textStr
-	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

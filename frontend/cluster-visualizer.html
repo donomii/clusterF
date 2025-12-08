@@ -561,7 +561,7 @@
                     // Extract partition info from frogpond data using holder-based structure
                     const partitionMap = {};
                     frogpondData.forEach(dp => {
-                        if (!dp.Deleted && dp.Key.startsWith('partitions/')) {
+                        if (!dp.Deleted && dp.Value && dp.Value.length && dp.Key.startsWith('partitions/')) {
                             // Parse holder entries: partitions/p12345/holders/node-name
                             const keyParts = dp.Key.split('/');
                             if (keyParts.length >= 4 && keyParts[2] === 'holders') {

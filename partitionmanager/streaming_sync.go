@@ -627,22 +627,13 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 }
 
 func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peerID types.NodeID, backdate time.Duration) {
-	if !pm.hasFrogpond() {
+	// Membership comes from nodes/<node>/partitions; we cannot rewrite remote state here.
+	if peerID == pm.deps.NodeID {
+		pm.updateLocalPartitionMembership(partitionID, false)
+		pm.debugf("[PARTITION] Removed local holder entry for %s", partitionID)
 		return
 	}
-
-	if pm.deps.Cluster.NoStore() {
-		return // No-store nodes don't claim to hold partitions
-	}
-
-	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, peerID)
-
-	dps := pm.deps.Frogpond.DeleteDataPoint(holderKey, backdate)
-
-	pm.deps.SendUpdatesToPeers(dps)
-
-	pm.debugf("[PARTITION] Removed %s as holder for %s", peerID, partitionID)
+	pm.debugf("[PARTITION] Skipping removal of remote holder %s for %s; owner will publish its own partition list", peerID, partitionID)
 }
 
 // shouldUpdateEntry determines if we should update our local copy with the remote entry

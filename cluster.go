@@ -845,6 +845,8 @@ func (c *Cluster) FullSyncAllPeers() {
 		}
 		c.requestFullStoreFromPeer(peer)
 	}
+	updates := c.frogpond.DeleteAllMatchingPrefix("partitions")
+	c.sendUpdatesToPeers(updates)
 }
 
 // runFilesync integrates the FileSyncer with the cluster lifecycle

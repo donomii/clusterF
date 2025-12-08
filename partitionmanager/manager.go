@@ -25,7 +25,6 @@ import (
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
-	"github.com/donomii/frogpond"
 	"github.com/tchap/go-patricia/patricia"
 )
 
@@ -40,6 +39,7 @@ type PartitionManager struct {
 	fileSyncMu      sync.RWMutex
 	fileSyncTrie    *patricia.Trie
 	localPartitions *syncmap.SyncMap[types.PartitionID, bool]
+	localHolderData *syncmap.SyncMap[types.PartitionID, types.HolderData]
 }
 
 type PartitionVersion int64
@@ -51,6 +51,7 @@ func NewPartitionManager(deps *types.App) *PartitionManager {
 		SyncList:        syncmap.NewSyncMap[types.PartitionID, bool](),
 		fileSyncTrie:    patricia.NewTrie(),
 		localPartitions: syncmap.NewSyncMap[types.PartitionID, bool](),
+		localHolderData: syncmap.NewSyncMap[types.PartitionID, types.HolderData](),
 	}
 }
 
@@ -62,6 +63,20 @@ func (pm *PartitionManager) RecordEssentialDiskActivity() {
 func (pm *PartitionManager) MarkForReindex(pId types.PartitionID, reason string) {
 	pm.ReindexList.Store(pId, true)
 	pm.logf("[MarkForReindex] Marked partition %v for reindex, because %s", pId, reason)
+}
+
+// updateLocalPartitionMembership toggles this node's local holder state and publishes to nodes/<node>/partitions.
+func (pm *PartitionManager) updateLocalPartitionMembership(partitionID types.PartitionID, holds bool) {
+	if holds {
+		if pm.addLocalPartition(partitionID) {
+			pm.publishLocalPartitions()
+		}
+		return
+	}
+	if pm.removeLocalPartition(partitionID) {
+		pm.localHolderData.Delete(partitionID)
+		pm.publishLocalPartitions()
+	}
 }
 
 // MarkForSync flags a partition to be synced on the next PeriodicPartitionCheck cycle.
@@ -124,29 +139,13 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 
 // RemoveNodeFromPartitionWithTimestamp removes a node from a partition holder list with backdated timestamp
 func (pm *PartitionManager) RemoveNodeFromPartitionWithTimestamp(nodeID types.NodeID, partitionName string, backdatedTime time.Time) error {
-	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
-
-	partitionKey := fmt.Sprintf("partitions/%s", partitionName)
-	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, nodeID)
-
-	// Create a backdated tombstone to remove this node as a holder
-	tombstone := []frogpond.DataPoint{{
-		Key:     []byte(holderKey),
-		Value:   nil,
-		Updated: backdatedTime,
-		Deleted: true,
-	}}
-
-	// Apply the tombstone locally and get resulting updates
-	resultingUpdates := pm.deps.Frogpond.AppendDataPoints(tombstone)
-
-	// Send both the original tombstone and any resulting updates to peers
-	pm.deps.SendUpdatesToPeers(tombstone)
-	if len(resultingUpdates) > 0 {
-		pm.deps.SendUpdatesToPeers(resultingUpdates)
+	// Membership is driven by nodes/<node>/partitions; only update local state.
+	if nodeID == pm.deps.NodeID {
+		pm.updateLocalPartitionMembership(types.PartitionID(partitionName), false)
+		pm.debugf("[PARTITION] Removed local node %s from partition %s with backdated timestamp %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
+	} else {
+		pm.debugf("[PARTITION] Ignoring request to remove remote node %s from partition %s; membership is published by the owner", nodeID, partitionName)
 	}
-
-	pm.debugf("[PARTITION] Removed node %s from partition %s with backdated timestamp %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
 	return nil
 }
 
@@ -217,7 +216,7 @@ func partitionNumberFromID(partitionID types.PartitionID) (int, bool) {
 }
 
 func (pm *PartitionManager) publishLocalPartitions() {
-	if pm.deps.Cluster.NoStore() || pm.deps.Frogpond == nil {
+	if pm.deps.Cluster.NoStore()  {
 		return
 	}
 
@@ -789,7 +788,6 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	pm.debugf("[updatePartitionMetadata] Finished scan for partition %v after %v seconds", StartPartitionID, time.Since(start))
 
 	// Build all CRDT updates for publication
-	allUpdates := []frogpond.DataPoint{}
 	for partitionID, count := range partitionsCount {
 		if ctx.Err() != nil {
 			pm.deps.Logger.Printf("[FULL_REINDEX] Context cancelled during CRDT update building")
@@ -806,9 +804,6 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			changedLocalPartitions = true
 		}
 
-		// Update partition metadata in CRDT using individual keys per holder
-		partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-
 		checksum, err := pm.CalculatePartitionChecksum(ctx, partitionID)
 		if checksum == "" {
 			pm.deps.Logger.Printf("[FULL_REINDEX] ERROR: Unable to calculate checksum for partition %v", partitionID)
@@ -819,34 +814,13 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			continue
 		}
 
-		// Add ourselves as a holder
-		holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-
-		if count > 0 {
-			holderData := types.HolderData{
-				File_count: count,
-				Checksum:   checksum,
-			}
-			holderJSON, _ := json.Marshal(holderData)
-
-			// Update file count metadata
-			metadataKey := fmt.Sprintf("%s/metadata/file_count", partitionKey)
-			fileCountJSON, _ := json.Marshal(count)
-
-			// Add both updates to the list
-			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(holderKey, holderJSON)...)
-			allUpdates = append(allUpdates, pm.deps.Frogpond.SetDataPoint(metadataKey, fileCountJSON)...)
-
-			pm.logf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
-		} else {
-			// Remove ourselves as a holder
-			pm.removePartitionHolder(partitionID)
-			pm.logf("[FULL_REINDEX] Removed %s as holder for %s", pm.deps.NodeID, partitionID)
-		}
+		pm.localHolderData.Store(partitionID, types.HolderData{
+			File_count: count,
+			Checksum:   checksum,
+		})
+		pm.logf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
 	}
 
-	// Publish all updates to peers in one batch
-	pm.deps.SendUpdatesToPeers(allUpdates)
 	if changedLocalPartitions {
 		pm.publishLocalPartitions()
 	}
@@ -863,25 +837,13 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 
 // removePartitionHolder removes this node as a holder for a partition
 func (pm *PartitionManager) removePartitionHolder(partitionID types.PartitionID) {
-	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
-
 	if pm.deps.Cluster.NoStore() {
 		return // No-store nodes don't claim to hold partitions
 	}
 
-	partitionKey := fmt.Sprintf("partitions/%s", partitionID)
-	holderKey := fmt.Sprintf("%s/holders/%s", partitionKey, pm.deps.NodeID)
-
-	// Remove ourselves as a holder by setting a tombstone
-	updates := pm.deps.Frogpond.DeleteDataPoint(holderKey, 30*time.Minute)
-	pm.deps.SendUpdatesToPeers(updates)
-
-	removed := pm.removeLocalPartition(partitionID)
-	if removed {
-		pm.publishLocalPartitions()
-	}
-
-	pm.debugf("[PARTITION] Removed %s as holder for %s", pm.deps.NodeID, partitionID)
+	pm.localHolderData.Delete(partitionID)
+	pm.updateLocalPartitionMembership(partitionID, false)
+	pm.debugf("[PARTITION] Removed %s as holder for %s (local state only)", pm.deps.NodeID, partitionID)
 }
 
 // isNodeActive checks if a node is active in the CRDT nodes/ section
@@ -964,19 +926,13 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 }
 
 func (pm *PartitionManager) getHolderData(partitionID types.PartitionID, holder types.NodeID) (types.HolderData, bool) {
-	holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionID, holder)
-	dp := pm.deps.Frogpond.GetDataPoint(holderKey)
-	if dp.Deleted || len(dp.Value) == 0 {
+	if holder != pm.deps.NodeID {
 		return types.HolderData{}, false
 	}
-
-	var holderData types.HolderData
-	if err := json.Unmarshal(dp.Value, &holderData); err != nil {
-		pm.errorf(dp.Value, "corrupt holder data")
-		return types.HolderData{}, false
+	if data, ok := pm.localHolderData.Load(partitionID); ok {
+		return data, true
 	}
-
-	return holderData, true
+	return types.HolderData{}, false
 }
 
 func (pm *PartitionManager) buildPartitionInfo(partitionID types.PartitionID, holders []types.NodeID) *types.PartitionInfo {
