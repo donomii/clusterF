@@ -54,6 +54,7 @@ type ClusterLike interface {
 	GetCurrentRF() int                                             // Get current replication factor
 	GetAvailablePeerList() []NodeData
 	GetAvailablePeerMap() map[NodeID]NodeData
+	GetAvailablePeerNames() []NodeID
 }
 
 // The partition manager, everything needed to access partitions and files

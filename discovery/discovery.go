@@ -300,6 +300,7 @@ func (dm *DiscoveryManager) handleDiscoveryMessage(message string, addr *net.UDP
 		LastSeen: time.Now(),
 	}
 
+	fmt.Printf("Storing peer %+v at %s:%d at %v\n", peer, addr.IP.String(), httpPort, peer.LastSeen)
 	_, isKnown := dm.peers.Load(nodeID)
 	dm.peers.Store(nodeID, peer)
 

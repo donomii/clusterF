@@ -83,23 +83,31 @@ func (c *Cluster) getPeerList() []types.NodeData {
 	return peerList
 }
 
+func (c *Cluster) GetAvailablePeerNames() []types.NodeID {
+	avail := c.GetAvailablePeerList()
+	var names []types.NodeID
+	for _, nodeData := range avail {
+		names = append(names, nodeData.NodeID)
+	}
+	return names
+}
+
 func (c *Cluster) GetAvailablePeerList() []types.NodeData {
 	nodes := c.getPeerList()
 	peers := c.DiscoveryManager().GetPeerMap()
 	var availablePeerList []types.NodeData
-	fmt.Printf("Considering %+v nodes and %+v peers\n", nodes, peers)
 
 	for _, nodeData := range nodes {
-		fmt.Printf("Considering node %+v\n", nodeData)
+		fmt.Printf("Considering node %v\n", nodeData.NodeID)
 		if nodeData.IsStorage {
-			fmt.Printf("Considering storage node %+v\n", nodeData)
+			fmt.Printf("Considering storage node %+v\n", nodeData.NodeID)
 			if nodeData.DiskSize > 0 {
 				used := nodeData.DiskSize - nodeData.DiskFree
 				if used < 0 {
 					used = 0
 				}
 				usage := float64(used) / float64(nodeData.DiskSize)
-				if usage >= 0.9 {
+				if usage >= 0.95 {
 					fmt.Printf("Skipping node %+v (disk usage %v)\n", nodeData, usage)
 					continue
 				}
@@ -113,10 +121,10 @@ func (c *Cluster) GetAvailablePeerList() []types.NodeData {
 			nodeData.Address = discPeer.Address
 			nodeData.HTTPPort = discPeer.HTTPPort
 
-			fmt.Printf("Adding node %+v\n", nodeData)
+			fmt.Printf("Adding node %+v\n", nodeData.NodeID)
 			availablePeerList = append(availablePeerList, nodeData)
 		} else {
-			fmt.Printf("Skipping node %+v (not storage)\n", nodeData)
+			fmt.Printf("Skipping node %+v (not storage)\n", nodeData.NodeID)
 		}
 
 	}

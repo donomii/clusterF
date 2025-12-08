@@ -257,57 +257,26 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 	// Build the list of nodes that must receive the upload (holders first, otherwise RF candidates).
 	targetNodes := make([]types.NodeID, 0)
-	targetSet := make(map[types.NodeID]bool)
+
 	// When we already host the partition we must push the update to every current holder.
 	if len(nodesForPartition) > 0 {
 		// Existing holders already replicate this partition; include every holder so they all receive the update.
 		// Walk the holder list so we capture a deduplicated slice of nodes to push to.
-		for _, nodeID := range nodesForPartition {
-			id := nodeID
-			if id == "" {
-				continue
-			}
-			if targetSet[id] {
-				continue
-			}
-			targetSet[id] = true
-			targetNodes = append(targetNodes, id)
-		}
+
+		targetNodes = nodesForPartition
+
 	} else {
 		// No holders yet, so choose fresh storage nodes that can accept the data without being over capacity.
-		candidates := make([]types.NodeID, 0, len(allNodes))
+		candidates := fs.cluster.GetAvailablePeerList()
 		// Inspect every known storage node to assemble the list of initial replica targets.
-		for nodeID, nodeInfo := range allNodes {
-			// Ignore peers that are not active storage hosts so uploads target real capacity.
-			if nodeInfo != nil && nodeInfo.IsStorage {
-				// Skip peers that are dangerously full so we do not overload their disks with new replicas.
-				if nodeInfo.DiskSize > 0 {
-					used := nodeInfo.DiskSize - nodeInfo.DiskFree
-					if used < 0 {
-						used = 0
-					}
-					usage := float64(used) / float64(nodeInfo.DiskSize)
-					if usage >= 0.9 {
-						continue
-					}
-				}
-				candidates = append(candidates, nodeID)
-			}
-		}
-		if len(candidates) == 0 {
-			return []types.NodeID{}, fmt.Errorf("no storage nodes available to forward upload")
-		}
+
 		if len(candidates) > 1 {
 			rand.Shuffle(len(candidates), func(i, j int) {
 				candidates[i], candidates[j] = candidates[j], candidates[i]
 			})
 		}
-		// Copy the filtered candidates into the target set without adding duplicates.
-		for _, id := range candidates {
-			if targetSet[id] {
-				continue
-			}
-			targetSet[id] = true
+		for _, cand := range candidates {
+			id := cand.NodeID
 			targetNodes = append(targetNodes, id)
 		}
 	}
