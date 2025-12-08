@@ -99,9 +99,9 @@ func (c *Cluster) GetAvailablePeerList() []types.NodeData {
 	var availablePeerList []types.NodeData
 
 	for _, nodeData := range nodes {
-		fmt.Printf("Considering node %v\n", nodeData.NodeID)
+		//fmt.Printf("Considering node %v\n", nodeData.NodeID)
 		if nodeData.IsStorage {
-			fmt.Printf("Considering storage node %+v\n", nodeData.NodeID)
+			//fmt.Printf("Considering storage node %+v\n", nodeData.NodeID)
 			if nodeData.DiskSize > 0 {
 				used := nodeData.DiskSize - nodeData.DiskFree
 				if used < 0 {
@@ -109,27 +109,27 @@ func (c *Cluster) GetAvailablePeerList() []types.NodeData {
 				}
 				usage := float64(used) / float64(nodeData.DiskSize)
 				if usage >= 0.95 {
-					fmt.Printf("Skipping node %+v (disk usage %v)\n", nodeData, usage)
+					//fmt.Printf("Skipping node %+v (disk usage %v)\n", nodeData, usage)
 					continue
 				}
 			}
 
 			discPeer, ok := peers.Load(string(nodeData.NodeID))
 			if !ok {
-				fmt.Printf("Skipping node %+v (no peer)\n", nodeData)
+				//fmt.Printf("Skipping node %+v (no peer)\n", nodeData)
 				continue
 			}
 			nodeData.Address = discPeer.Address
 			nodeData.HTTPPort = discPeer.HTTPPort
 
-			fmt.Printf("Adding node %+v\n", nodeData.NodeID)
+			//fmt.Printf("Adding node %+v\n", nodeData.NodeID)
 			availablePeerList = append(availablePeerList, nodeData)
 		} else {
-			fmt.Printf("Skipping node %+v (not storage)\n", nodeData.NodeID)
+			//fmt.Printf("Skipping node %+v (not storage)\n", nodeData.NodeID)
 		}
 
 	}
-	fmt.Printf("Returning %+v\n", availablePeerList)
+	//fmt.Printf("Returning %+v\n", availablePeerList)
 	return availablePeerList
 }
 
