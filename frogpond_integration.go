@@ -105,10 +105,7 @@ func (c *Cluster) GetAvailablePeerNames() []types.NodeID {
 
 func (c *Cluster) refreshConnectedFromDiscovery() {
 	dm := c.discoveryManager
-	if dm == nil {
-		c.connected.Store(false)
-		return
-	}
+	types.Assertf(dm != nil, "discovery manager must be initialized before checking connectivity")
 	connected := dm.GetPeerCount() > 0
 	c.connected.Store(connected)
 }
