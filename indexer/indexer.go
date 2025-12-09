@@ -474,20 +474,12 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 		return nil
 	})
 
-	var publishErr error
-	if err == nil {
-		idx.lock()
-		defer idx.unlock()
-		publishErr = idx.publishAllPartitionMembershipLocked()
-	}
 
 	if err != nil {
 		idx.logger.Printf("[INDEXER] Import failed after %d files: %v", total, err)
 		return err
 	}
-	if publishErr != nil {
-		return fmt.Errorf("publish partition membership: %w", publishErr)
-	}
+
 
 	idx.logger.Printf("[INDEXER] Import complete: processed %d files (%d active)", total, active)
 	return nil

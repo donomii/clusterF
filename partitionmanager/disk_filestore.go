@@ -167,7 +167,7 @@ func (fs *DiskFileStore) recordPartitionUpdateTimestamp(path string, ts time.Tim
 
 // Get loads both metadata and content for a path.
 func (fs *DiskFileStore) Get(path string) ([]byte, []byte, bool, error) {
-	defer metrics.StartGlobalTimer("disk_filestore.get")()
+	defer metrics.FinishGlobalTimer("disk_filestore.get", metrics.StartGlobalTimer("disk_filestore.get"))
 	metrics.IncrementGlobalCounter("disk_filestore.get.calls")
 
 	metaPath, err := fs.metadataPath(path)
@@ -208,7 +208,7 @@ func (fs *DiskFileStore) Get(path string) ([]byte, []byte, bool, error) {
 
 // GetMetadata loads only metadata for a path.
 func (fs *DiskFileStore) GetMetadata(path string) ([]byte, error) {
-	defer metrics.StartGlobalTimer("disk_filestore.get_metadata")()
+	defer metrics.FinishGlobalTimer("disk_filestore.get_metadata", metrics.StartGlobalTimer("disk_filestore.get_metadata"))
 	metrics.IncrementGlobalCounter("disk_filestore.get_metadata.calls")
 
 	metaPath, err := fs.metadataPath(path)
@@ -233,7 +233,7 @@ func (fs *DiskFileStore) GetMetadata(path string) ([]byte, error) {
 
 // GetContent loads only content for a path.
 func (fs *DiskFileStore) GetContent(path string) ([]byte, error) {
-	defer metrics.StartGlobalTimer("disk_filestore.get_content")()
+	defer metrics.FinishGlobalTimer("disk_filestore.get_content", metrics.StartGlobalTimer("disk_filestore.get_content"))
 	metrics.IncrementGlobalCounter("disk_filestore.get_content.calls")
 
 	contentPath, err := fs.contentPath(path)
@@ -276,7 +276,7 @@ func (fs *DiskFileStore) GetContentStream(path string) (io.ReadCloser, error) {
 
 // Put stores both metadata and content.
 func (fs *DiskFileStore) Put(path string, metadata, content []byte) error {
-	defer metrics.StartGlobalTimer("disk_filestore.put")()
+	defer metrics.FinishGlobalTimer("disk_filestore.put", metrics.StartGlobalTimer("disk_filestore.put"))
 	metrics.IncrementGlobalCounter("disk_filestore.put.calls")
 
 	metaPath, err := fs.metadataPath(path)
@@ -336,7 +336,7 @@ func (fs *DiskFileStore) Put(path string, metadata, content []byte) error {
 
 // PutStream stores metadata and content streaming from a reader to avoid buffering the entire payload.
 func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Reader, size int64) error {
-	defer metrics.StartGlobalTimer("disk_filestore.put_stream")()
+	defer metrics.FinishGlobalTimer("disk_filestore.put_stream", metrics.StartGlobalTimer("disk_filestore.put_stream"))
 	metrics.IncrementGlobalCounter("disk_filestore.put_stream.calls")
 
 	metaPath, err := fs.metadataPath(path)
@@ -469,7 +469,7 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 
 // PutMetadata stores metadata only.
 func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
-	defer metrics.StartGlobalTimer("disk_filestore.put_metadata")()
+	defer metrics.FinishGlobalTimer("disk_filestore.put_metadata", metrics.StartGlobalTimer("disk_filestore.put_metadata"))
 	metrics.IncrementGlobalCounter("disk_filestore.put_metadata.calls")
 
 	metaPath, err := fs.metadataPath(path)
@@ -507,7 +507,7 @@ func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
 
 // Delete removes metadata and content for a path.
 func (fs *DiskFileStore) Delete(path string) error {
-	defer metrics.StartGlobalTimer("disk_filestore.delete")()
+	defer metrics.FinishGlobalTimer("disk_filestore.delete", metrics.StartGlobalTimer("disk_filestore.delete"))
 	metrics.IncrementGlobalCounter("disk_filestore.delete.calls")
 
 	metaPath, err := fs.metadataPath(path)
@@ -542,7 +542,7 @@ func (fs *DiskFileStore) Delete(path string) error {
 func (fs *DiskFileStore) Scan(pathPrefix string, fn func(path string, metadata, content []byte) error) error {
 	checkForRecursiveScan()
 
-	defer metrics.StartGlobalTimer("disk_filestore.scan")()
+	defer metrics.FinishGlobalTimer("disk_filestore.scan", metrics.StartGlobalTimer("disk_filestore.scan"))
 	metrics.IncrementGlobalCounter("disk_filestore.scan.calls")
 
 	err := fs.walkMetadataFiles(func(path, metaPath string) error {
@@ -591,7 +591,7 @@ func (fs *DiskFileStore) Scan(pathPrefix string, fn func(path string, metadata, 
 func (fs *DiskFileStore) ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error {
 	checkForRecursiveScan()
 
-	defer metrics.StartGlobalTimer("disk_filestore.scan_metadata")()
+	defer metrics.FinishGlobalTimer("disk_filestore.scan_metadata", metrics.StartGlobalTimer("disk_filestore.scan_metadata"))
 	metrics.IncrementGlobalCounter("disk_filestore.scan_metadata.calls")
 
 	err := fs.walkMetadataFiles(func(path, metaPath string) error {
@@ -628,7 +628,7 @@ func (fs *DiskFileStore) ScanMetadata(pathPrefix string, fn func(path string, me
 // ScanMetadataPartition scans only files belonging to a specific partition
 func (fs *DiskFileStore) ScanMetadataPartition(ctx context.Context, partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {
 	checkForRecursiveScan()
-	defer metrics.StartGlobalTimer("disk_filestore.scan_metadata_partition")()
+	defer metrics.FinishGlobalTimer("disk_filestore.scan_metadata_partition", metrics.StartGlobalTimer("disk_filestore.scan_metadata_partition"))
 	metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.calls")
 
 	// Get the partition directory path
@@ -706,7 +706,7 @@ func (fs *DiskFileStore) ScanMetadataPartition(ctx context.Context, partitionID 
 
 // GetAllPartitionStores returns all known partition IDs.
 func (fs *DiskFileStore) GetAllPartitionStores() ([]types.PartitionStore, error) {
-	defer metrics.StartGlobalTimer("disk_filestore.list_partitions")()
+	defer metrics.FinishGlobalTimer("disk_filestore.list_partitions", metrics.StartGlobalTimer("disk_filestore.list_partitions"))
 	metrics.IncrementGlobalCounter("disk_filestore.list_partitions.calls")
 
 	partitionSet := make(map[types.PartitionStore]struct{})

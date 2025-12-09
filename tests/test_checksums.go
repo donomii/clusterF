@@ -93,6 +93,14 @@ func (m *MockCluster) CheckCircuitBreaker(target string) error {
 func (m *MockCluster) TripCircuitBreaker(target string, cause error) {
 }
 
+func (m *MockCluster) ConnectedStatus() bool {
+	return true
+}
+
+func (m *MockCluster) CircuitBreakerStatus() types.CircuitBreakerSnapshot {
+	return types.CircuitBreakerSnapshot{}
+}
+
 func (m *MockCluster) RecordDiskActivity(level types.DiskActivityLevel) {}
 
 func (m *MockCluster) CanRunNonEssentialDiskOp() bool {

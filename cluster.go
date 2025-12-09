@@ -107,6 +107,8 @@ type Cluster struct {
 	httpClient     *http.Client // short-lived control traffic
 	HttpDataClient *http.Client // long-running data transfers
 
+	metricsCollector *metrics.MetricsCollector
+
 	// Server shutdown
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -293,7 +295,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		externalCallThrottle: make(chan struct{}, 1),
 	}
 	c.debugf("Initialized cluster struct\n")
-	c.lastDiskMetrics.Store(diskMetricsSnapshot{})
+
 	c.markDiskActive()
 	c.startTime = time.Now()
 
@@ -382,16 +384,6 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	}
 	c.debugf("Initialized thread manager\n")
 
-	// Initialize metrics collector
-	metricsCollector := metrics.NewMetricsCollector(c.publishMetricsDataPoint, c.threadManager, string(c.NodeId))
-	if metricsCollector == nil {
-		log.Fatalf("Failed to create metrics collector")
-	}
-	metricsCollector.SetCircuitBreakerProvider(c.breakerSnapshot)
-	metricsCollector.SetConnectedProvider(c.connectedStatus)
-	metrics.SetGlobalCollector(metricsCollector)
-	c.debugf("Initialized metrics collector\n")
-
 	// Create HTTP clients with connection pooling and differentiated timeouts
 	controlTransport := &http.Transport{
 		MaxIdleConns:        50, // Limit idle connections
@@ -420,6 +412,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 
 	// Initialize discovery manager
 	c.discoveryManager = discovery.NewDiscoveryManager(id, opts.HTTPDataPort, opts.DiscoveryPort, c.threadManager, opts.Logger)
+	c.connected.Store(false)
 	c.debugf("Initialized discovery manager\n")
 
 	// Initialize frogpond CRDT node
@@ -501,6 +494,12 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		SendUpdatesToPeers: c.sendUpdatesToPeers,
 	}
 	c.app = deps
+
+	// Initialize metrics collector now that CRDT sink exists
+	metr := metrics.NewMetricsCollector(c.app)
+	c.metricsCollector = metr
+	c.debugf("Initialized metrics collector\n")
+
 	// Initialize indexer first (needed by partition manager)
 	idx := indexer.NewIndexer(c.Logger(), deps)
 	c.indexer = idx
@@ -793,7 +792,24 @@ func (c *Cluster) Start() {
 	c.threadManager.StartThread("restart-monitor", c.runRestartMonitor)
 	c.threadManager.StartThread("under-replicated-monitor", c.partitionManager.RunUnderReplicatedMonitor)
 	c.threadManager.StartThread("partition-prune", c.deletePartitions)
+	c.threadManager.StartThread("metrics-store", c.metricsStoreLoop)
 	c.debugf("Started all threads")
+}
+
+func (c *Cluster) metricsStoreLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if c.metricsCollector != nil {
+				c.metricsCollector.StoreMetrics()
+			}
+		}
+	}
 }
 
 // runDiscoveryManager starts the peer discovery manager and blocks until the context is cancelled.

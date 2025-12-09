@@ -175,6 +175,14 @@ func (m *MockClusterSearch) CheckCircuitBreaker(target string) error {
 func (m *MockClusterSearch) TripCircuitBreaker(target string, cause error) {
 }
 
+func (m *MockClusterSearch) ConnectedStatus() bool {
+	return true
+}
+
+func (m *MockClusterSearch) CircuitBreakerStatus() types.CircuitBreakerSnapshot {
+	return types.CircuitBreakerSnapshot{}
+}
+
 func (m *MockClusterSearch) RecordDiskActivity(level types.DiskActivityLevel) {}
 
 func (m *MockClusterSearch) CanRunNonEssentialDiskOp() bool {
@@ -195,7 +203,7 @@ func setupSearchTest(t *testing.T) (*filesystem.ClusterFileSystem, string) {
 		ctx:        context.Background(),
 		httpClient: &http.Client{},
 		nodeData: types.NodeData{
-			NodeID:    string(nodeID),
+			NodeID:    nodeID,
 			Available: true,
 			IsStorage: true,
 		},

@@ -207,7 +207,7 @@ func decodeStoreKey(key []byte) (types.PartitionID, string, error) {
 
 // Get retrieves both metadata and content atomically
 func (fs *FileStore) Get(path string) ([]byte, []byte, bool, error) {
-	defer metrics.StartGlobalTimer("filestore.get")()
+	defer metrics.FinishGlobalTimer("filestore.get", metrics.StartGlobalTimer("filestore.get"))
 	metrics.IncrementGlobalCounter("filestore.get.calls")
 
 	partition := types.PartitionIDForPath(path)
@@ -270,7 +270,7 @@ func (fs *FileStore) unLockPartition(partitionStoreID types.PartitionStore) {
 
 // GetMetadata retrieves only metadata
 func (fs *FileStore) GetMetadata(path string) ([]byte, error) {
-	defer metrics.StartGlobalTimer("filestore.get_metadata")()
+	defer metrics.FinishGlobalTimer("filestore.get_metadata", metrics.StartGlobalTimer("filestore.get_metadata"))
 	metrics.IncrementGlobalCounter("filestore.get_metadata.calls")
 
 	partition := types.PartitionIDForPath(path)
@@ -317,7 +317,7 @@ func (fs *FileStore) GetMetadata(path string) ([]byte, error) {
 
 // GetContent retrieves only content
 func (fs *FileStore) GetContent(path string) ([]byte, error) {
-	defer metrics.StartGlobalTimer("filestore.get_content")()
+	defer metrics.FinishGlobalTimer("filestore.get_content", metrics.StartGlobalTimer("filestore.get_content"))
 	metrics.IncrementGlobalCounter("filestore.get_content.calls")
 
 	partition := types.PartitionIDForPath(path)
@@ -351,7 +351,7 @@ func (fs *FileStore) GetContent(path string) ([]byte, error) {
 
 // Put stores both metadata and content atomically
 func (fs *FileStore) Put(path string, metadata, content []byte) error {
-	defer metrics.StartGlobalTimer("filestore.put")()
+	defer metrics.FinishGlobalTimer("filestore.put", metrics.StartGlobalTimer("filestore.put"))
 	metrics.IncrementGlobalCounter("filestore.put.calls")
 
 	partition := types.PartitionIDForPath(path)
@@ -401,7 +401,7 @@ func (fs *FileStore) Put(path string, metadata, content []byte) error {
 
 // PutMetadata stores only metadata
 func (fs *FileStore) PutMetadata(path string, metadata []byte) error {
-	defer metrics.StartGlobalTimer("filestore.put_metadata")()
+	defer metrics.FinishGlobalTimer("filestore.put_metadata", metrics.StartGlobalTimer("filestore.put_metadata"))
 	metrics.IncrementGlobalCounter("filestore.put_metadata.calls")
 
 	partition := types.PartitionIDForPath(path)
@@ -444,7 +444,7 @@ func (fs *FileStore) PutMetadata(path string, metadata []byte) error {
 // Delete removes both metadata and content atomically
 func (fs *FileStore) Delete(path string) error {
 	checkForRecursiveScan()
-	defer metrics.StartGlobalTimer("filestore.delete")()
+	defer metrics.FinishGlobalTimer("filestore.delete", metrics.StartGlobalTimer("filestore.delete"))
 	metrics.IncrementGlobalCounter("filestore.delete.calls")
 
 	partition := types.PartitionIDForPath(path)
@@ -480,7 +480,7 @@ func (fs *FileStore) Delete(path string) error {
 // Scan calls fn for each file that matches the provided filters.
 func (fs *FileStore) Scan(pathPrefix string, fn func(path string, metadata, content []byte) error) error {
 	checkForRecursiveScan()
-	defer metrics.StartGlobalTimer("filestore.scan")()
+	defer metrics.FinishGlobalTimer("filestore.scan", metrics.StartGlobalTimer("filestore.scan"))
 	metrics.IncrementGlobalCounter("filestore.scan.calls")
 
 	// Determine which partition stores to scan
@@ -575,7 +575,7 @@ func (fs *FileStore) Scan(pathPrefix string, fn func(path string, metadata, cont
 func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error {
 	start := time.Now()
 	checkForRecursiveScan()
-	defer metrics.StartGlobalTimer("filestore.scan_metadata")()
+	defer metrics.FinishGlobalTimer("filestore.scan_metadata", metrics.StartGlobalTimer("filestore.scan_metadata"))
 	metrics.IncrementGlobalCounter("filestore.scan_metadata.calls")
 
 	// Determine which partition stores to scan
@@ -664,7 +664,7 @@ func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metada
 func (fs *FileStore) ScanMetadataPartition(ctx context.Context, partitionID types.PartitionID, fn func(path string, metadata []byte) error) error {
 	start := time.Now()
 	checkForRecursiveScan()
-	defer metrics.StartGlobalTimer("filestore.scan_metadata_partition")()
+	defer metrics.FinishGlobalTimer("filestore.scan_metadata_partition", metrics.StartGlobalTimer("filestore.scan_metadata_partition"))
 	metrics.IncrementGlobalCounter("filestore.scan_metadata_partition.calls")
 
 	// Convert partition ID to store ID
@@ -732,7 +732,7 @@ func (fs *FileStore) ScanMetadataPartition(ctx context.Context, partitionID type
 
 // GetAllPartitionStores lists all known partition stores, which may hold thousands of partitions
 func (fs *FileStore) GetAllPartitionStores() ([]types.PartitionStore, error) {
-	defer metrics.StartGlobalTimer("filestore.list_partitions")()
+	defer metrics.FinishGlobalTimer("filestore.list_partitions", metrics.StartGlobalTimer("filestore.list_partitions"))
 	metrics.IncrementGlobalCounter("filestore.list_partitions.calls")
 
 	// Scan all partition directories

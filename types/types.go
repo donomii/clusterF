@@ -58,6 +58,8 @@ type ClusterLike interface {
 	GetAvailablePeerList() []NodeData
 	GetAvailablePeerMap() map[NodeID]NodeData
 	GetAvailablePeerNames() []NodeID
+	ConnectedStatus() bool
+	CircuitBreakerStatus() CircuitBreakerSnapshot
 }
 
 // The partition manager, everything needed to access partitions and files
@@ -303,6 +305,13 @@ type HolderData struct {
 	Checksum   string `json:"checksum"`
 }
 
+type MetricsLike interface {
+	IncrementCounter(name string)
+	AddCounter(name string, value int64)
+	RecordTiming(name string, duration time.Duration)
+	StoreMetrics()
+}
+
 type App struct {
 	NodeID                NodeID
 	NoStore               bool
@@ -316,6 +325,15 @@ type App struct {
 	SendUpdatesToPeers    func([]frogpond.DataPoint)
 	NotifyFileListChanged func()
 	Indexer               IndexerLike
+	Metrics               MetricsLike
+}
+
+// CircuitBreakerSnapshot captures the current breaker state for a node.
+type CircuitBreakerSnapshot struct {
+	Open   bool   `json:"open"`
+	SetBy  string `json:"set_by"`
+	Target string `json:"target"`
+	Reason string `json:"reason"`
 }
 
 func CollapseToDirectory(relPath, basePath string) string {
@@ -462,6 +480,7 @@ func ExtractFilePath(_ PartitionID, path string) string {
 	if path == "" {
 		log.Panicf("invalid empty path provided to ExtractFilePath")
 	}
+
 	if !strings.HasPrefix(path, "/") {
 		log.Panicf("path must be absolute in ExtractFilePath: %v", path)
 	}
@@ -472,9 +491,7 @@ type PartitionID string
 
 // ExtractPartitionID validates and returns the provided partition identifier.
 func ExtractPartitionID(partition PartitionID, _ string) PartitionID {
-	if partition == "" {
-		log.Panicf("invalid empty partition provided to ExtractPartitionID")
-	}
+	Assertf(partition != "", "invalid empty partition provided to ExtractPartitionID")
 	return partition
 }
 

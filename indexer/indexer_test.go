@@ -39,6 +39,10 @@ func (c *testCluster) GetPartitionSyncPaused() bool                  { return fa
 func (c *testCluster) AppContext() context.Context                   { return context.Background() }
 func (c *testCluster) CheckCircuitBreaker(target string) error       { return nil }
 func (c *testCluster) TripCircuitBreaker(target string, cause error) {}
+func (c *testCluster) ConnectedStatus() bool                         { return true }
+func (c *testCluster) CircuitBreakerStatus() types.CircuitBreakerSnapshot {
+	return types.CircuitBreakerSnapshot{}
+}
 func (c *testCluster) RecordDiskActivity(types.DiskActivityLevel)    {}
 func (c *testCluster) CanRunNonEssentialDiskOp() bool                { return true }
 func (c *testCluster) LoadPeer(types.NodeID) (*types.PeerInfo, bool) { return nil, false }

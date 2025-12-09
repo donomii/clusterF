@@ -1,8 +1,7 @@
-// metrics.go - Performance metrics collection and publishing
+// metrics.go - Performance metrics collection and storage
 package metrics
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"runtime"
@@ -11,23 +10,16 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/syncmap"
-	"github.com/donomii/clusterF/threadmanager"
+	"github.com/donomii/clusterF/types"
 )
 
-// MetricsCollector collects and publishes performance metrics
+// MetricsCollector collects and writes performance metrics
 type MetricsCollector struct {
-	publishFunc       func(key string, payload []byte)
-	threadMgr         *threadmanager.ThreadManager
-	nodeID            string
-	publishChan       chan struct{}
-	counters          syncmap.SyncMap[string, *int64]
-	timers            syncmap.SyncMap[string, *TimerMetric]
-	mu                sync.RWMutex
-	lastPublish       time.Time
-	localCancel       context.CancelFunc
-	backgroundWg      sync.WaitGroup
-	breakerProvider   func() CircuitBreakerSnapshot
-	connectedProvider func() ConnectionSnapshot
+	nodeID   string
+	counters syncmap.SyncMap[string, *int64]
+	timers   syncmap.SyncMap[string, *TimerMetric]
+	mu       sync.RWMutex
+	app      *types.App
 }
 
 // TimerMetric tracks timing statistics
@@ -41,26 +33,13 @@ type TimerMetric struct {
 
 // MetricsSnapshot represents a point-in-time view of metrics
 type MetricsSnapshot struct {
-	NodeID         string                 `json:"node_id"`
-	Timestamp      int64                  `json:"timestamp"`
-	Counters       map[string]int64       `json:"counters"`
-	Timers         map[string]TimerStats  `json:"timers"`
-	Runtime        RuntimeStats           `json:"runtime"`
-	CircuitBreaker CircuitBreakerSnapshot `json:"circuit_breaker"`
-	Connection     ConnectionSnapshot     `json:"connection"`
-}
-
-// CircuitBreakerSnapshot captures the current breaker state for a node.
-type CircuitBreakerSnapshot struct {
-	Open   bool   `json:"open"`
-	SetBy  string `json:"set_by"`
-	Target string `json:"target"`
-	Reason string `json:"reason"`
-}
-
-// ConnectionSnapshot captures whether the node currently sees peers.
-type ConnectionSnapshot struct {
-	Connected bool `json:"connected"`
+	NodeID         string                       `json:"node_id"`
+	Timestamp      int64                        `json:"timestamp"`
+	Counters       map[string]int64             `json:"counters"`
+	Timers         map[string]TimerStats        `json:"timers"`
+	Runtime        RuntimeStats                 `json:"runtime"`
+	CircuitBreaker types.CircuitBreakerSnapshot `json:"circuit_breaker"`
+	Connection     bool                         `json:"connection"`
 }
 
 // TimerStats contains aggregated timer statistics
@@ -82,33 +61,14 @@ type RuntimeStats struct {
 }
 
 // NewMetricsCollector creates a new metrics collector
-func NewMetricsCollector(publishFunc func(key string, payload []byte), threadMgr *threadmanager.ThreadManager, nodeID string) *MetricsCollector {
-	if publishFunc == nil {
-		panic("metrics publisher function cannot be nil")
-	}
-
+func NewMetricsCollector(app *types.App) *MetricsCollector {
 	mc := &MetricsCollector{
-		publishFunc: publishFunc,
-		threadMgr:   threadMgr,
-		nodeID:      nodeID,
-		publishChan: make(chan struct{}, 1),
-		lastPublish: time.Now(),
+		app:    app,
+		nodeID: string(app.NodeID),
 	}
-
-	startPublisher := func(ctx context.Context) {
-		mc.publisherLoop(ctx)
-	}
-	startScheduler := func(ctx context.Context) {
-		mc.schedulerLoop(ctx)
-	}
-
-	if err := threadMgr.StartThreadWithRestart("metrics-publisher", startPublisher, true, nil); err != nil {
-		panic(fmt.Sprintf("failed to start metrics publisher thread: %v", err))
-	}
-	if err := threadMgr.StartThreadWithRestart("metrics-scheduler", startScheduler, true, nil); err != nil {
-		panic(fmt.Sprintf("failed to start metrics scheduler thread: %v", err))
-	}
-
+	collectorMutex.Lock()
+	globalCollector = mc
+	collectorMutex.Unlock()
 	return mc
 }
 
@@ -146,82 +106,28 @@ func (mc *MetricsCollector) RecordTiming(name string, duration time.Duration) {
 	}
 }
 
-// StartTimer returns a function that records timing when called
-func (mc *MetricsCollector) StartTimer(name string) func() {
-	start := time.Now()
-	return func() {
-		mc.RecordTiming(name, time.Since(start))
-	}
-}
-
-// SetCircuitBreakerProvider registers a callback to include breaker state in snapshots.
-func (mc *MetricsCollector) SetCircuitBreakerProvider(provider func() CircuitBreakerSnapshot) {
-	mc.breakerProvider = provider
-}
-
-// SetConnectedProvider registers a callback to include connection state in snapshots.
-func (mc *MetricsCollector) SetConnectedProvider(provider func() ConnectionSnapshot) {
-	mc.connectedProvider = provider
-}
-
-// RequestPublish signals that metrics should be published
-func (mc *MetricsCollector) RequestPublish() {
-	select {
-	case mc.publishChan <- struct{}{}:
-	default:
-		// Channel full, publish already pending
-	}
-}
-
-// publisherLoop handles background metric publishing
-func (mc *MetricsCollector) publisherLoop(ctx context.Context) {
-	for {
-		select {
-		case <-mc.publishChan:
-			mc.publishMetrics()
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func (mc *MetricsCollector) schedulerLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			mc.RequestPublish()
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-// publishMetrics publishes current metrics to the CRDT
-func (mc *MetricsCollector) publishMetrics() {
+// StoreMetrics writes current metrics to the CRDT
+func (mc *MetricsCollector) StoreMetrics() {
 	snapshot := mc.captureSnapshot()
 
 	key := fmt.Sprintf("metrics/%s", mc.nodeID)
 
 	data, err := json.Marshal(snapshot)
-	if err != nil {
-		return // Silently ignore marshal errors
-	}
+	types.Assertf(err == nil, "failed to marshal metrics snapshot: %v", err)
 
-	mc.publishFunc(key, data)
-	mc.lastPublish = time.Now()
+	mc.app.Frogpond.SetDataPoint(key, data)
 }
 
 // captureSnapshot creates a point-in-time metrics snapshot
 func (mc *MetricsCollector) captureSnapshot() MetricsSnapshot {
 	snapshot := MetricsSnapshot{
-		NodeID:    mc.nodeID,
-		Timestamp: time.Now().Unix(),
-		Counters:  make(map[string]int64),
-		Timers:    make(map[string]TimerStats),
-		Runtime:   mc.captureRuntimeStats(),
+		NodeID:         mc.nodeID,
+		Timestamp:      time.Now().Unix(),
+		Counters:       make(map[string]int64),
+		Timers:         make(map[string]TimerStats),
+		Runtime:        mc.captureRuntimeStats(),
+		CircuitBreaker: mc.app.Cluster.CircuitBreakerStatus(),
+		Connection:     mc.app.Cluster.ConnectedStatus(),
 	}
 
 	// Capture counters
@@ -248,13 +154,6 @@ func (mc *MetricsCollector) captureSnapshot() MetricsSnapshot {
 		return true
 	})
 
-	if mc.breakerProvider != nil {
-		snapshot.CircuitBreaker = mc.breakerProvider()
-	}
-	if mc.connectedProvider != nil {
-		snapshot.Connection = mc.connectedProvider()
-	}
-
 	return snapshot
 }
 
@@ -274,67 +173,42 @@ func (mc *MetricsCollector) captureRuntimeStats() RuntimeStats {
 
 // Close shuts down the metrics collector
 func (mc *MetricsCollector) Close() {
-	if mc.localCancel != nil {
-		mc.localCancel()
-		mc.backgroundWg.Wait()
-	}
+
 }
 
 // Global metrics collector instance
 var globalCollector *MetricsCollector
 var collectorMutex sync.RWMutex
 
-// SetGlobalCollector sets the global metrics collector instance
-func SetGlobalCollector(collector *MetricsCollector) {
-	collectorMutex.Lock()
-	defer collectorMutex.Unlock()
-	globalCollector = collector
-}
-
 // GetGlobalCollector returns the global metrics collector instance
 func GetGlobalCollector() *MetricsCollector {
 	collectorMutex.RLock()
 	defer collectorMutex.RUnlock()
+	types.Assert(globalCollector != nil, "no global collector")
 	return globalCollector
 }
 
 // IncrementGlobalCounter atomically increments a counter metric on the global collector
 func IncrementGlobalCounter(name string) {
-	collectorMutex.RLock()
-	collector := globalCollector
-	collectorMutex.RUnlock()
-
-	if collector != nil {
-		collector.IncrementCounter(name)
-	}
+	GetGlobalCollector().IncrementCounter(name)
 }
 
 // AddGlobalCounter atomically adds value to a counter metric on the global collector
 func AddGlobalCounter(name string, value int64) {
-	collectorMutex.RLock()
-	collector := globalCollector
-	collectorMutex.RUnlock()
-
-	if collector != nil {
-		collector.AddCounter(name, value)
-	}
+	GetGlobalCollector().AddCounter(name, value)
 }
 
 // RecordGlobalTiming records a timing measurement on the global collector
 func RecordGlobalTiming(name string, duration time.Duration) {
-	collectorMutex.RLock()
-	collector := globalCollector
-	collectorMutex.RUnlock()
-
-	if collector != nil {
-		collector.RecordTiming(name, duration)
-	}
+	GetGlobalCollector().RecordTiming(name, duration)
 }
 
-// StartGlobalTimer returns a function that records timing when called on the global collector
-func StartGlobalTimer(name string) func() {
-	start := time.Now()
-	return func() {
-		RecordGlobalTiming(name, time.Since(start))
-	}
+// StartGlobalTimer records the start time for a timer on the global collector.
+func StartGlobalTimer(name string) time.Time {
+	return time.Now()
+}
+
+// FinishGlobalTimer records elapsed time for a timer started with StartGlobalTimer.
+func FinishGlobalTimer(name string, started time.Time) {
+	RecordGlobalTiming(name, time.Since(started))
 }
