@@ -16,17 +16,18 @@ import (
 
 // MetricsCollector collects and publishes performance metrics
 type MetricsCollector struct {
-	publishFunc     func(key string, payload []byte)
-	threadMgr       *threadmanager.ThreadManager
-	nodeID          string
-	publishChan     chan struct{}
-	counters        syncmap.SyncMap[string, *int64]
-	timers          syncmap.SyncMap[string, *TimerMetric]
-	mu              sync.RWMutex
-	lastPublish     time.Time
-	localCancel     context.CancelFunc
-	backgroundWg    sync.WaitGroup
-	breakerProvider func() CircuitBreakerSnapshot
+	publishFunc       func(key string, payload []byte)
+	threadMgr         *threadmanager.ThreadManager
+	nodeID            string
+	publishChan       chan struct{}
+	counters          syncmap.SyncMap[string, *int64]
+	timers            syncmap.SyncMap[string, *TimerMetric]
+	mu                sync.RWMutex
+	lastPublish       time.Time
+	localCancel       context.CancelFunc
+	backgroundWg      sync.WaitGroup
+	breakerProvider   func() CircuitBreakerSnapshot
+	connectedProvider func() ConnectionSnapshot
 }
 
 // TimerMetric tracks timing statistics
@@ -46,6 +47,7 @@ type MetricsSnapshot struct {
 	Timers         map[string]TimerStats  `json:"timers"`
 	Runtime        RuntimeStats           `json:"runtime"`
 	CircuitBreaker CircuitBreakerSnapshot `json:"circuit_breaker"`
+	Connection     ConnectionSnapshot     `json:"connection"`
 }
 
 // CircuitBreakerSnapshot captures the current breaker state for a node.
@@ -54,6 +56,11 @@ type CircuitBreakerSnapshot struct {
 	SetBy  string `json:"set_by"`
 	Target string `json:"target"`
 	Reason string `json:"reason"`
+}
+
+// ConnectionSnapshot captures whether the node currently sees peers.
+type ConnectionSnapshot struct {
+	Connected bool `json:"connected"`
 }
 
 // TimerStats contains aggregated timer statistics
@@ -152,6 +159,11 @@ func (mc *MetricsCollector) SetCircuitBreakerProvider(provider func() CircuitBre
 	mc.breakerProvider = provider
 }
 
+// SetConnectedProvider registers a callback to include connection state in snapshots.
+func (mc *MetricsCollector) SetConnectedProvider(provider func() ConnectionSnapshot) {
+	mc.connectedProvider = provider
+}
+
 // RequestPublish signals that metrics should be published
 func (mc *MetricsCollector) RequestPublish() {
 	select {
@@ -238,6 +250,9 @@ func (mc *MetricsCollector) captureSnapshot() MetricsSnapshot {
 
 	if mc.breakerProvider != nil {
 		snapshot.CircuitBreaker = mc.breakerProvider()
+	}
+	if mc.connectedProvider != nil {
+		snapshot.Connection = mc.connectedProvider()
 	}
 
 	return snapshot

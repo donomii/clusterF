@@ -181,6 +181,28 @@
             margin-top: 6px;
             line-height: 1.4;
         }
+
+        .status-pill {
+            display: inline-block;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            margin: 8px 8px 0 0;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+        }
+
+        .status-pill.connected {
+            background: rgba(52, 211, 153, 0.14);
+            color: #bbf7d0;
+            border-color: rgba(52, 211, 153, 0.5);
+        }
+
+        .status-pill.disconnected {
+            background: rgba(239, 68, 68, 0.12);
+            color: #fecdd3;
+            border-color: rgba(248, 113, 113, 0.5);
+        }
     </style>
 </head>
 

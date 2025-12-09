@@ -151,6 +151,13 @@ function renderCircuitBreaker(container, breaker) {
     container.appendChild(section);
 }
 
+function renderConnectionStatus(container, connected) {
+    const pill = document.createElement('div');
+    pill.className = `status-pill ${connected ? 'connected' : 'disconnected'}`;
+    pill.textContent = connected ? 'Connected' : 'Disconnected';
+    container.appendChild(pill);
+}
+
 function renderBreakerBanner(openBreakers) {
     const banner = document.getElementById('breakerBanner');
     if (!banner) {
@@ -197,6 +204,7 @@ function renderSnapshots(data) {
         title.textContent = snapshot.node_id || 'Unknown Node';
         card.appendChild(title);
 
+        renderConnectionStatus(card, !!(snapshot.connection && snapshot.connection.connected));
         const ts = document.createElement('div');
         ts.className = 'timestamp';
         ts.textContent = `Last updated ${formatTimestamp(snapshot.timestamp)}`;

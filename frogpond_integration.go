@@ -103,7 +103,18 @@ func (c *Cluster) GetAvailablePeerNames() []types.NodeID {
 	return names
 }
 
+func (c *Cluster) refreshConnectedFromDiscovery() {
+	dm := c.discoveryManager
+	if dm == nil {
+		c.connected.Store(false)
+		return
+	}
+	connected := dm.GetPeerCount() > 0
+	c.connected.Store(connected)
+}
+
 func (c *Cluster) GetAvailablePeerList() []types.NodeData {
+	c.refreshConnectedFromDiscovery()
 	nodes := c.getPeerList()
 	peers := c.DiscoveryManager().GetPeerMap()
 	var availablePeerList []types.NodeData

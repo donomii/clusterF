@@ -136,6 +136,8 @@ type Cluster struct {
 	shuttingDown atomic.Bool
 	startTime    time.Time
 
+	connected atomic.Bool
+
 	internalCallThrottle chan struct{}
 	externalCallThrottle chan struct{}
 
@@ -386,6 +388,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		log.Fatalf("Failed to create metrics collector")
 	}
 	metricsCollector.SetCircuitBreakerProvider(c.breakerSnapshot)
+	metricsCollector.SetConnectedProvider(c.connectedStatus)
 	metrics.SetGlobalCollector(metricsCollector)
 	c.debugf("Initialized metrics collector\n")
 
