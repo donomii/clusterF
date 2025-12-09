@@ -86,6 +86,13 @@ func (m *MockCluster) AppContext() context.Context {
 	return context.Background()
 }
 
+func (m *MockCluster) CheckCircuitBreaker(target string) error {
+	return nil
+}
+
+func (m *MockCluster) TripCircuitBreaker(target string, cause error) {
+}
+
 func (m *MockCluster) RecordDiskActivity(level types.DiskActivityLevel) {}
 
 func (m *MockCluster) CanRunNonEssentialDiskOp() bool {

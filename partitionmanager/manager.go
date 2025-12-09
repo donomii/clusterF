@@ -293,6 +293,20 @@ func (pm *PartitionManager) httpClient() *http.Client {
 	return http.DefaultClient
 }
 
+func (pm *PartitionManager) checkCircuitBreaker(target string) error {
+	if pm.deps == nil || pm.deps.Cluster == nil {
+		return nil
+	}
+	return pm.deps.Cluster.CheckCircuitBreaker(target)
+}
+
+func (pm *PartitionManager) tripCircuitBreaker(target string, err error) {
+	if err == nil || pm.deps == nil || pm.deps.Cluster == nil {
+		return
+	}
+	pm.deps.Cluster.TripCircuitBreaker(target, err)
+}
+
 func (pm *PartitionManager) getPeers() []*types.PeerInfo {
 	if pm.deps.Discovery == nil {
 		return nil
@@ -406,16 +420,23 @@ func (pm *PartitionManager) fetchFileStreamFromPeer(ctx context.Context, peer *t
 		return nil, err
 	}
 
+	if err := pm.checkCircuitBreaker(fileURL); err != nil {
+		return nil, err
+	}
+
 	resp, err := httpclient.Get(ctx, pm.httpClient(), fileURL,
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
 	)
 	if err != nil {
+		pm.tripCircuitBreaker(fileURL, err)
 		return nil, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := resp.ReadAllAndClose()
-		return nil, fmt.Errorf("peer %s returned %d for file %s: %s", peer.NodeID, resp.StatusCode, filename, strings.TrimSpace(string(body)))
+		errStatus := fmt.Errorf("peer %s returned %d for file %s: %s", peer.NodeID, resp.StatusCode, filename, strings.TrimSpace(string(body)))
+		pm.tripCircuitBreaker(fileURL, errStatus)
+		return nil, errStatus
 	}
 
 	type stream struct {
@@ -453,16 +474,25 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 		return types.FileMetadata{}, err
 	}
 
+	if err := pm.checkCircuitBreaker(metadataURL); err != nil {
+		return types.FileMetadata{}, err
+	}
+
 	body, _, status, err := httpclient.SimpleGet(context.Background(), pm.httpClient(), metadataURL)
 	if err != nil {
+		pm.tripCircuitBreaker(metadataURL, err)
 		return types.FileMetadata{}, err
 	}
 
 	if status != http.StatusOK {
 		if len(body) > 0 {
-			return types.FileMetadata{}, fmt.Errorf("peer %s returned %d for metadata %s: %s", peer.NodeID, status, filename, string(body))
+			errStatus := fmt.Errorf("peer %s returned %d for metadata %s: %s", peer.NodeID, status, filename, string(body))
+			pm.tripCircuitBreaker(metadataURL, errStatus)
+			return types.FileMetadata{}, errStatus
 		}
-		return types.FileMetadata{}, fmt.Errorf("peer %s returned %d for metadata %s", peer.NodeID, status, filename)
+		errStatus := fmt.Errorf("peer %s returned %d for metadata %s", peer.NodeID, status, filename)
+		pm.tripCircuitBreaker(metadataURL, errStatus)
+		return types.FileMetadata{}, errStatus
 	}
 
 	var metadata types.FileMetadata

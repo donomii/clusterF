@@ -138,6 +138,8 @@ type Cluster struct {
 
 	internalCallThrottle chan struct{}
 	externalCallThrottle chan struct{}
+
+	circuitBreaker CircuitBreaker
 }
 
 func (c *Cluster) SetTimings(partitionSyncInterval, partitionReIndexInterval time.Duration) {
@@ -383,6 +385,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	if metricsCollector == nil {
 		log.Fatalf("Failed to create metrics collector")
 	}
+	metricsCollector.SetCircuitBreakerProvider(c.breakerSnapshot)
 	metrics.SetGlobalCollector(metricsCollector)
 	c.debugf("Initialized metrics collector\n")
 
@@ -1441,10 +1444,16 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		if err := c.CheckCircuitBreaker(metadataURL); err != nil {
+			http.Error(w, fmt.Sprintf("circuit breaker open for %s: %v", metadataURL, err), http.StatusServiceUnavailable)
+			return
+		}
+
 		body, headers, status, err := httpclient.SimpleGet(r.Context(), c.HttpDataClient, metadataURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		)
 		if err != nil {
+			c.TripCircuitBreaker(metadataURL, err)
 			c.debugf("[METADATA_API] Failed to get metadata from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
@@ -1721,8 +1730,14 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 		return false
 	}
 
+	if err := c.CheckCircuitBreaker(fullStoreURL); err != nil {
+		c.Logger().Printf("[FULL_SYNC] Circuit breaker open; refusing to fetch full store from %s (%s): %v", peer.NodeID, fullStoreURL, err)
+		return false
+	}
+
 	body, _, status, err := httpclient.SimpleGet(c.AppContext(), c.HttpDataClient, fullStoreURL)
 	if err != nil {
+		c.TripCircuitBreaker(fullStoreURL, err)
 		c.Logger().Printf("[FULL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
 		return false
 	}

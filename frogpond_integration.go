@@ -40,10 +40,17 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 					c.debugf("[FROGPOND] Failed to build update URL for %s: %v", p.NodeID, err)
 					return
 				}
+
+				if err := c.CheckCircuitBreaker(endpointURL); err != nil {
+					c.debugf("[FROGPOND] Circuit breaker open; skipping update to %s via %s: %v", p.NodeID, endpointURL, err)
+					return
+				}
+
 				updatesJSON, _ := json.Marshal(updates)
 
 				resp, err := c.httpClient.Post(endpointURL, "application/json", strings.NewReader(string(updatesJSON)))
 				if err != nil {
+					c.TripCircuitBreaker(endpointURL, err)
 					return
 				}
 				defer func() {

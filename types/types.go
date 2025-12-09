@@ -49,6 +49,8 @@ type ClusterLike interface {
 	GetNodeInfo(nodeID NodeID) *NodeData                           // Get info about a specific node
 	GetPartitionSyncPaused() bool                                  // Partition sync activity
 	AppContext() context.Context                                   //Closed when the application shuts down
+	CheckCircuitBreaker(target string) error                       // Guard outbound network calls
+	TripCircuitBreaker(target string, cause error)                 // Trip circuit breaker on network failure
 	RecordDiskActivity(level DiskActivityLevel)                    // Track essential/non-essential disk activity
 	CanRunNonEssentialDiskOp() bool                                // Whether non-essential disk operations are allowed right now
 	LoadPeer(id NodeID) (*PeerInfo, bool)                          // Load peer info from CRDT or Discovery

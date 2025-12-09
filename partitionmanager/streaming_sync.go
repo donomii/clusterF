@@ -237,6 +237,10 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 	}
 	pm.debugf("[PARTITION DOWNLOAD] Downloading partition %s from %s", partitionID, syncURL)
 
+	if err := pm.checkCircuitBreaker(syncURL); err != nil {
+		return 0, 0, err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, syncURL, nil)
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to build sync request: %v", err)
@@ -244,7 +248,8 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 
 	resp, err := pm.httpClient().Do(req)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to request partition sync: %v", err)
+		pm.tripCircuitBreaker(syncURL, err)
+		return 0, 0, fmt.Errorf("failed to request partition sync for %s from %s: %v", partitionID, syncURL, err)
 	}
 	defer func() {
 		io.Copy(io.Discard, resp.Body)
@@ -254,7 +259,9 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 	if resp.StatusCode != http.StatusOK {
 		pm.RemoveNodeFromPartitionWithTimestamp(peerID, string(partitionID), time.Now().Add(-30*time.Minute))
 		pm.logf("[PARTITION DOWNLOAD] Removed %s as holder for %s because sync failed with %d", peerID, partitionID, resp.StatusCode)
-		return 0, 0, fmt.Errorf("peer returned error %d '%s'", resp.StatusCode, resp.Status)
+		errStatus := fmt.Errorf("peer returned error %d '%s' for partition %s via %s", resp.StatusCode, resp.Status, partitionID, syncURL)
+		pm.tripCircuitBreaker(syncURL, errStatus)
+		return 0, 0, errStatus
 	}
 
 	decoder := json.NewDecoder(resp.Body)
@@ -283,10 +290,16 @@ func (pm *PartitionManager) fetchFileContentFromPeer(ctx context.Context, peer *
 		return nil, err
 	}
 
+	target := fmt.Sprintf("%s:%d%s", peer.Address, peer.HTTPPort, path)
+	if err := pm.checkCircuitBreaker(target); err != nil {
+		return nil, err
+	}
+
 	content, _, status, err := httpclient.SimpleGet(ctx, pm.httpClient(), fileURL,
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
 	)
 	if err != nil {
+		pm.tripCircuitBreaker(target, err)
 		return nil, err
 	}
 
@@ -297,7 +310,9 @@ func (pm *PartitionManager) fetchFileContentFromPeer(ctx context.Context, peer *
 		} else {
 			msg = fmt.Sprintf("%d %s", status, msg)
 		}
-		return nil, fmt.Errorf("failed to fetch %s from %s via internal API: %s", path, peer.NodeID, msg)
+		errStatus := fmt.Errorf("failed to fetch %s from %s via internal API %s: %s", path, peer.NodeID, target, msg)
+		pm.tripCircuitBreaker(target, errStatus)
+		return nil, errStatus
 	}
 
 	return content, nil
@@ -588,11 +603,18 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-ClusterF-Node", string(pm.deps.NodeID))
 
+	if err := pm.checkCircuitBreaker(pushURL); err != nil {
+		pw.CloseWithError(err)
+		<-errCh
+		return 0, err
+	}
+
 	resp, err := pm.httpClient().Do(req)
 	if err != nil {
 		pw.CloseWithError(err)
 		<-errCh
-		return 0, err
+		pm.tripCircuitBreaker(pushURL, err)
+		return 0, fmt.Errorf("failed to push partition %s to %s: %v", partitionID, pushURL, err)
 	}
 	defer func() {
 		io.Copy(io.Discard, resp.Body)
@@ -607,9 +629,13 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 			msg = resp.Status
 		}
 		if streamErr != nil {
-			return 0, fmt.Errorf("peer %s rejected partition push (%s): %v", peerID, msg, streamErr)
+			errStatus := fmt.Errorf("peer %s rejected partition push via %s (%s): %v", peerID, pushURL, msg, streamErr)
+			pm.tripCircuitBreaker(pushURL, errStatus)
+			return 0, errStatus
 		}
-		return 0, fmt.Errorf("peer %s rejected partition push (%s)", peerID, msg)
+		errStatus := fmt.Errorf("peer %s rejected partition push via %s (%s)", peerID, pushURL, msg)
+		pm.tripCircuitBreaker(pushURL, errStatus)
+		return 0, errStatus
 	}
 
 	var streamErr error

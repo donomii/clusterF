@@ -37,6 +37,8 @@ func (c *testCluster) GetNodesForPartition(string) []types.NodeID    { return ni
 func (c *testCluster) GetNodeInfo(types.NodeID) *types.NodeData      { return nil }
 func (c *testCluster) GetPartitionSyncPaused() bool                  { return false }
 func (c *testCluster) AppContext() context.Context                   { return context.Background() }
+func (c *testCluster) CheckCircuitBreaker(target string) error       { return nil }
+func (c *testCluster) TripCircuitBreaker(target string, cause error) {}
 func (c *testCluster) RecordDiskActivity(types.DiskActivityLevel)    {}
 func (c *testCluster) CanRunNonEssentialDiskOp() bool                { return true }
 func (c *testCluster) LoadPeer(types.NodeID) (*types.PeerInfo, bool) { return nil, false }

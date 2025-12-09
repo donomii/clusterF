@@ -133,6 +133,54 @@
             border-radius: 12px;
             color: #94a3b8;
         }
+
+        .breaker-banner {
+            margin: 0 auto 20px auto;
+            max-width: 1200px;
+            padding: 14px 18px;
+            border-radius: 10px;
+            background: linear-gradient(120deg, rgba(239, 68, 68, 0.12), rgba(248, 113, 113, 0.18));
+            border: 1px solid rgba(248, 113, 113, 0.5);
+            color: #fecdd3;
+            font-size: 14px;
+        }
+
+        .breaker-banner strong {
+            color: #fecdd3;
+        }
+
+        .breaker-list {
+            margin: 8px 0 0 0;
+            padding-left: 16px;
+        }
+
+        .breaker-pill {
+            display: inline-block;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            margin: 6px 0;
+        }
+
+        .breaker-pill.open {
+            background: rgba(248, 113, 113, 0.16);
+            color: #fecdd3;
+            border: 1px solid rgba(248, 113, 113, 0.6);
+        }
+
+        .breaker-pill.closed {
+            background: rgba(52, 211, 153, 0.12);
+            color: #bbf7d0;
+            border: 1px solid rgba(52, 211, 153, 0.4);
+        }
+
+        .breaker-details {
+            font-size: 13px;
+            color: #cbd5f5;
+            margin-top: 6px;
+            line-height: 1.4;
+        }
     </style>
 </head>
 
@@ -148,6 +196,8 @@
     </div>
 
     <div class="status-bar" id="status">Loading metrics...</div>
+
+    <div id="breakerBanner" class="breaker-banner" style="display:none;"></div>
 
     <div id="metricsContainer" class="metrics-grid"></div>
 

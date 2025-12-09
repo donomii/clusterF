@@ -168,6 +168,13 @@ func (m *MockClusterSearch) GetPartitionSyncPaused() bool {
 	return false
 }
 
+func (m *MockClusterSearch) CheckCircuitBreaker(target string) error {
+	return nil
+}
+
+func (m *MockClusterSearch) TripCircuitBreaker(target string, cause error) {
+}
+
 func (m *MockClusterSearch) RecordDiskActivity(level types.DiskActivityLevel) {}
 
 func (m *MockClusterSearch) CanRunNonEssentialDiskOp() bool {

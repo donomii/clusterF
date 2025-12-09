@@ -72,6 +72,20 @@ func (c *ClusterFileSystem) debugf(format string, v ...interface{}) {
 	_ = c.cluster.Logger().Output(2, msg)
 }
 
+func (c *ClusterFileSystem) checkCircuitBreaker(target string) error {
+	if c.cluster == nil {
+		return nil
+	}
+	return c.cluster.CheckCircuitBreaker(target)
+}
+
+func (c *ClusterFileSystem) tripCircuitBreaker(target string, err error) {
+	if err == nil || c.cluster == nil {
+		return
+	}
+	c.cluster.TripCircuitBreaker(target, err)
+}
+
 // logerrf formats an error message with call site information and returns the formatted message
 func logerrf(format string, args ...interface{}) error {
 	// Format the main error message
@@ -544,12 +558,18 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 				return
 			}
 
+			if err := fs.checkCircuitBreaker(fileURL); err != nil {
+				results <- forwardResult{node: types.NodeID(nodeID), err: err}
+				return
+			}
+
 			respBody, _, status, err := httpclient.SimplePut(ctx, fs.cluster.DataClient(), fileURL, bytes.NewReader(content),
 				httpclient.WithHeader("Content-Type", contentType),
 				httpclient.WithHeader("X-Forwarded-From", string(fs.cluster.ID())),
 				httpclient.WithHeader("X-ClusterF-Metadata", metaHeader),
 			)
 			if err != nil {
+				fs.tripCircuitBreaker(fileURL, err)
 				results <- forwardResult{node: types.NodeID(nodeID), err: err}
 				return
 			}
@@ -559,9 +579,11 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 				results <- forwardResult{node: types.NodeID(nodeID)}
 				return
 			}
+			errStatus := fmt.Errorf("peer %s returned %d for PUT %s: %s", peer.NodeID, status, path, strings.TrimSpace(string(respBody)))
+			fs.tripCircuitBreaker(fileURL, errStatus)
 			results <- forwardResult{
 				node: types.NodeID(nodeID),
-				err:  fmt.Errorf("peer %s returned %d for PUT %s: %s", peer.NodeID, status, path, strings.TrimSpace(string(respBody))),
+				err:  errStatus,
 			}
 		}(nodeID)
 	}
@@ -663,6 +685,11 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 				return
 			}
 
+			if err := fs.checkCircuitBreaker(fileURL); err != nil {
+				results <- forwardResult{node: types.NodeID(nodeID), err: err}
+				return
+			}
+
 			f, err := os.Open(contentPath)
 			if err != nil {
 				results <- forwardResult{node: types.NodeID(nodeID), err: err}
@@ -680,6 +707,7 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 				}),
 			)
 			if err != nil {
+				fs.tripCircuitBreaker(fileURL, err)
 				results <- forwardResult{node: types.NodeID(nodeID), err: err}
 				return
 			}
@@ -694,9 +722,11 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 				results <- forwardResult{node: types.NodeID(nodeID)}
 				return
 			}
+			errStatus := fmt.Errorf("peer %s returned %d for PUT %s: %s", peer.NodeID, status, path, strings.TrimSpace(string(respBody)))
+			fs.tripCircuitBreaker(fileURL, errStatus)
 			results <- forwardResult{
 				node: types.NodeID(nodeID),
-				err:  fmt.Errorf("peer %s returned %d for PUT %s: %s", peer.NodeID, status, path, strings.TrimSpace(string(respBody))),
+				err:  errStatus,
 			}
 		}(nodeID)
 	}
@@ -871,8 +901,13 @@ func (fs *ClusterFileSystem) MetadataViaAPI(ctx context.Context, path string) (t
 		return types.FileMetadata{}, err
 	}
 
+	if err := fs.checkCircuitBreaker(metadataURL); err != nil {
+		return types.FileMetadata{}, err
+	}
+
 	body, _, status, err := httpclient.SimpleGet(ctx, fs.cluster.DataClient(), metadataURL)
 	if err != nil {
+		fs.tripCircuitBreaker(metadataURL, err)
 		return types.FileMetadata{}, err
 	}
 
@@ -886,7 +921,9 @@ func (fs *ClusterFileSystem) MetadataViaAPI(ctx context.Context, path string) (t
 	case http.StatusNotFound:
 		return types.FileMetadata{}, types.ErrFileNotFound
 	default:
-		return types.FileMetadata{}, fmt.Errorf("metadata API returned %d: %s", status, strings.TrimSpace(string(body)))
+		errStatus := fmt.Errorf("metadata API returned %d for %s: %s", status, metadataURL, strings.TrimSpace(string(body)))
+		fs.tripCircuitBreaker(metadataURL, errStatus)
+		return types.FileMetadata{}, errStatus
 	}
 }
 
@@ -907,8 +944,14 @@ func (fs *ClusterFileSystem) PeerHasUpToDateFile(peer types.NodeData, path strin
 	if err != nil {
 		return false, err
 	}
+
+	if err := fs.checkCircuitBreaker(fileURL); err != nil {
+		return false, err
+	}
+
 	headers, status, err := httpclient.SimpleHead(fs.cluster.AppContext(), fs.cluster.DataClient(), fileURL)
 	if err != nil {
+		fs.tripCircuitBreaker(fileURL, err)
 		return false, err
 	}
 	switch status {
@@ -937,7 +980,9 @@ func (fs *ClusterFileSystem) PeerHasUpToDateFile(peer types.NodeData, path strin
 		}
 		return false, nil
 	default:
-		return false, fmt.Errorf("unexpected status %d", status)
+		errStatus := fmt.Errorf("unexpected status %d while checking %s on %s:%d", status, path, peer.Address, peer.HTTPPort)
+		fs.tripCircuitBreaker(fileURL, errStatus)
+		return false, errStatus
 	}
 }
 
@@ -963,8 +1008,13 @@ func (fs *ClusterFileSystem) ClusterHasUpToDateFile(path string, modTime time.Ti
 		return false, types.FileMetadata{}, err
 	}
 
+	if err := fs.checkCircuitBreaker(metadataURL); err != nil {
+		return false, types.FileMetadata{}, err
+	}
+
 	body, _, status, err := httpclient.SimpleGet(fs.cluster.AppContext(), fs.cluster.DataClient(), metadataURL)
 	if err != nil {
+		fs.tripCircuitBreaker(metadataURL, err)
 		return false, types.FileMetadata{}, err
 	}
 
@@ -978,7 +1028,9 @@ func (fs *ClusterFileSystem) ClusterHasUpToDateFile(path string, modTime time.Ti
 	case http.StatusNotFound:
 		return false, types.FileMetadata{}, fmt.Errorf("file not found")
 	default:
-		return false, types.FileMetadata{}, fmt.Errorf("unexpected status %d", status)
+		errStatus := fmt.Errorf("unexpected status %d for %s while checking %s", status, metadataURL, path)
+		fs.tripCircuitBreaker(metadataURL, errStatus)
+		return false, types.FileMetadata{}, errStatus
 	}
 }
 

@@ -16,16 +16,17 @@ import (
 
 // MetricsCollector collects and publishes performance metrics
 type MetricsCollector struct {
-	publishFunc  func(key string, payload []byte)
-	threadMgr    *threadmanager.ThreadManager
-	nodeID       string
-	publishChan  chan struct{}
-	counters     syncmap.SyncMap[string, *int64]
-	timers       syncmap.SyncMap[string, *TimerMetric]
-	mu           sync.RWMutex
-	lastPublish  time.Time
-	localCancel  context.CancelFunc
-	backgroundWg sync.WaitGroup
+	publishFunc     func(key string, payload []byte)
+	threadMgr       *threadmanager.ThreadManager
+	nodeID          string
+	publishChan     chan struct{}
+	counters        syncmap.SyncMap[string, *int64]
+	timers          syncmap.SyncMap[string, *TimerMetric]
+	mu              sync.RWMutex
+	lastPublish     time.Time
+	localCancel     context.CancelFunc
+	backgroundWg    sync.WaitGroup
+	breakerProvider func() CircuitBreakerSnapshot
 }
 
 // TimerMetric tracks timing statistics
@@ -39,11 +40,20 @@ type TimerMetric struct {
 
 // MetricsSnapshot represents a point-in-time view of metrics
 type MetricsSnapshot struct {
-	NodeID    string                `json:"node_id"`
-	Timestamp int64                 `json:"timestamp"`
-	Counters  map[string]int64      `json:"counters"`
-	Timers    map[string]TimerStats `json:"timers"`
-	Runtime   RuntimeStats          `json:"runtime"`
+	NodeID         string                 `json:"node_id"`
+	Timestamp      int64                  `json:"timestamp"`
+	Counters       map[string]int64       `json:"counters"`
+	Timers         map[string]TimerStats  `json:"timers"`
+	Runtime        RuntimeStats           `json:"runtime"`
+	CircuitBreaker CircuitBreakerSnapshot `json:"circuit_breaker"`
+}
+
+// CircuitBreakerSnapshot captures the current breaker state for a node.
+type CircuitBreakerSnapshot struct {
+	Open   bool   `json:"open"`
+	SetBy  string `json:"set_by"`
+	Target string `json:"target"`
+	Reason string `json:"reason"`
 }
 
 // TimerStats contains aggregated timer statistics
@@ -137,6 +147,11 @@ func (mc *MetricsCollector) StartTimer(name string) func() {
 	}
 }
 
+// SetCircuitBreakerProvider registers a callback to include breaker state in snapshots.
+func (mc *MetricsCollector) SetCircuitBreakerProvider(provider func() CircuitBreakerSnapshot) {
+	mc.breakerProvider = provider
+}
+
 // RequestPublish signals that metrics should be published
 func (mc *MetricsCollector) RequestPublish() {
 	select {
@@ -220,6 +235,10 @@ func (mc *MetricsCollector) captureSnapshot() MetricsSnapshot {
 		snapshot.Timers[name] = stats
 		return true
 	})
+
+	if mc.breakerProvider != nil {
+		snapshot.CircuitBreaker = mc.breakerProvider()
+	}
 
 	return snapshot
 }

@@ -261,6 +261,11 @@ func (pm *PartitionManager) pushFileToPeerFromFile(ctx context.Context, peer *ty
 	}
 	defer file.Close()
 
+	target := fmt.Sprintf("%s:%d%s", peer.Address, peer.HTTPPort, meta.Path)
+	if err := pm.checkCircuitBreaker(target); err != nil {
+		return err
+	}
+
 	_, _, status, err := httpclient.SimplePut(ctx, pm.httpClient(), fileURL, file,
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		httpclient.WithHeader("X-Forwarded-From", string(pm.deps.NodeID)),
@@ -269,10 +274,13 @@ func (pm *PartitionManager) pushFileToPeerFromFile(ctx context.Context, peer *ty
 		httpclient.WithHeader("Content-Type", meta.ContentType),
 	)
 	if err != nil {
+		pm.tripCircuitBreaker(target, err)
 		return err
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
-		return fmt.Errorf("peer %s returned %d for PUT %s", peer.NodeID, status, meta.Path)
+		errStatus := fmt.Errorf("peer %s returned %d for PUT %s", peer.NodeID, status, meta.Path)
+		pm.tripCircuitBreaker(target, errStatus)
+		return errStatus
 	}
 
 	return nil
@@ -285,16 +293,24 @@ func (pm *PartitionManager) pushDeleteToPeer(ctx context.Context, peer *types.Pe
 	modified := meta.ModifiedAt
 	types.Assertf(!modified.IsZero(), "modified time must not be zero for %s", meta.Path)
 
+	target := fmt.Sprintf("%s:%d%s", peer.Address, peer.HTTPPort, meta.Path)
+	if err := pm.checkCircuitBreaker(target); err != nil {
+		return err
+	}
+
 	_, _, status, err := httpclient.SimpleDelete(ctx, pm.httpClient(), fileURL,
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		httpclient.WithHeader("X-ClusterF-Modified-At", modified.Format(time.RFC3339)),
 	)
 	if err != nil {
+		pm.tripCircuitBreaker(target, err)
 		return err
 	}
 
 	if status != http.StatusNoContent && status != http.StatusOK {
-		return fmt.Errorf("peer %s returned %d for DELETE %s", peer.NodeID, status, meta.Path)
+		errStatus := fmt.Errorf("peer %s returned %d for DELETE %s", peer.NodeID, status, meta.Path)
+		pm.tripCircuitBreaker(target, errStatus)
+		return errStatus
 	}
 	return nil
 }

@@ -257,6 +257,11 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 			continue
 		}
 
+		if err := c.CheckCircuitBreaker(fileURL); err != nil {
+			http.Error(w, fmt.Sprintf("circuit breaker open for %s: %v", fileURL, err), http.StatusServiceUnavailable)
+			return
+		}
+
 		options := []httpclient.RequestOption{
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		}
@@ -266,6 +271,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 
 		resp, err := httpclient.Get(r.Context(), c.HttpDataClient, fileURL, options...)
 		if err != nil {
+			c.TripCircuitBreaker(fileURL, err)
 			c.debugf("[FILES] Failed to get file from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
@@ -408,10 +414,16 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 			continue
 		}
 
+		if err := c.CheckCircuitBreaker(fileURL); err != nil {
+			http.Error(w, fmt.Sprintf("circuit breaker open for %s: %v", fileURL, err), http.StatusServiceUnavailable)
+			return
+		}
+
 		headers, status, err := httpclient.SimpleHead(r.Context(), c.HttpDataClient, fileURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		)
 		if err != nil {
+			c.TripCircuitBreaker(fileURL, err)
 			c.debugf("[FILES] Failed HEAD metadata from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
@@ -735,11 +747,17 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		deleteURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
 		types.Assertf(err != nil, "%s: URL build failed: %v", peer.NodeID, err)
 
+		if err := c.CheckCircuitBreaker(deleteURL); err != nil {
+			http.Error(w, fmt.Sprintf("circuit breaker open for %s: %v", deleteURL, err), http.StatusServiceUnavailable)
+			return
+		}
+
 		body, _, status, err := httpclient.SimpleDelete(r.Context(), c.HttpDataClient, deleteURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
 			httpclient.WithHeader("X-ClusterF-Modified-At", now.Format(time.RFC3339)),
 		)
 		if err != nil {
+			c.TripCircuitBreaker(deleteURL, err)
 			errors = append(errors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
 		}

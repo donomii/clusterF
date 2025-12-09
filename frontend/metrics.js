@@ -121,14 +121,68 @@ function renderRuntimeStats(container, runtime) {
     container.appendChild(grid);
 }
 
+function renderCircuitBreaker(container, breaker) {
+    const state = breaker || {};
+    const open = !!state.open;
+
+    const section = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'section-title';
+    title.textContent = 'Circuit Breaker';
+    section.appendChild(title);
+
+    const pill = document.createElement('div');
+    pill.className = `breaker-pill ${open ? 'open' : 'closed'}`;
+    pill.textContent = open ? 'OPEN' : 'CLOSED';
+    section.appendChild(pill);
+
+    const details = document.createElement('div');
+    details.className = 'breaker-details';
+    if (open) {
+        const reason = state.reason || 'breaker tripped';
+        const setter = state.set_by || 'unknown';
+        const target = state.target || 'unknown target';
+        details.textContent = `Set by ${setter} while calling ${target}. Reason: ${reason}`;
+    } else {
+        details.textContent = 'Ready for outbound machine calls.';
+    }
+    section.appendChild(details);
+
+    container.appendChild(section);
+}
+
+function renderBreakerBanner(openBreakers) {
+    const banner = document.getElementById('breakerBanner');
+    if (!banner) {
+        return;
+    }
+    if (!openBreakers.length) {
+        banner.style.display = 'none';
+        banner.textContent = '';
+        return;
+    }
+
+    const noun = openBreakers.length === 1 ? 'breaker' : 'breakers';
+    const rows = openBreakers.map(info => {
+        const reason = info.reason || 'no reason provided';
+        const target = info.target || 'unknown target';
+        return `<li>${info.node}: set by ${info.set_by || info.node} while calling ${target} — ${reason}</li>`;
+    });
+
+    banner.style.display = 'block';
+    banner.innerHTML = `<strong>${openBreakers.length} circuit ${noun} open</strong><ul class="breaker-list">${rows.join('')}</ul>`;
+}
+
 function renderSnapshots(data) {
     const container = document.getElementById('metricsContainer');
     const emptyState = document.getElementById('emptyState');
     container.innerHTML = '';
+    const openBreakers = [];
 
     if (!data.snapshots || !data.snapshots.length) {
         container.style.display = 'none';
         emptyState.style.display = 'block';
+        renderBreakerBanner(openBreakers);
         return;
     }
 
@@ -148,6 +202,16 @@ function renderSnapshots(data) {
         ts.textContent = `Last updated ${formatTimestamp(snapshot.timestamp)}`;
         card.appendChild(ts);
 
+        if (snapshot.circuit_breaker && snapshot.circuit_breaker.open) {
+            openBreakers.push({
+                node: snapshot.node_id || 'unknown',
+                set_by: snapshot.circuit_breaker.set_by,
+                target: snapshot.circuit_breaker.target,
+                reason: snapshot.circuit_breaker.reason,
+            });
+        }
+
+        renderCircuitBreaker(card, snapshot.circuit_breaker);
         renderRuntimeStats(card, snapshot.runtime);
 
         const countersTitle = document.createElement('div');
@@ -164,6 +228,8 @@ function renderSnapshots(data) {
 
         container.appendChild(card);
     }
+
+    renderBreakerBanner(openBreakers);
 }
 
 async function fetchMetrics() {
