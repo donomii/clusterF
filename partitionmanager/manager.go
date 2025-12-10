@@ -108,7 +108,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 	}
 
 	start := time.Now()
-	//pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
+	pm.debugf("[REINDEX] Found %v partitions to reindex: %v", pm.ReindexList.Len(), pm.ReindexList.Keys())
 	count := 0
 
 	keys := pm.ReindexList.Keys()
@@ -1359,8 +1359,8 @@ func (pm *PartitionManager) UpdateAllLocalPartitionsMetadata(ctx context.Context
 			needsResync := lastSync.IsZero() || lastUpdate.After(lastSync)
 
 			if needsReindex {
-				// FIXME
-				//pm.MarkForReindex(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
+
+				pm.MarkForReindex(partitionID, fmt.Sprintf("timestamps out of date (reindex:%v resync:%v)", needsReindex, needsResync))
 
 			}
 			if needsResync {
