@@ -1350,6 +1350,7 @@ func (c *Cluster) handleMetricsAPI(w http.ResponseWriter, r *http.Request) {
 
 // handlePartitionSyncAPI serves partition data for peer synchronization
 func (c *Cluster) handlePartitionSyncAPI(w http.ResponseWriter, r *http.Request) {
+	c.circuitBreaker.Reset()
 	// Extract partition ID from URL path
 	path := strings.TrimPrefix(r.URL.Path, "/api/partition-sync/")
 	if path == "" {
@@ -1419,6 +1420,7 @@ func (c *Cluster) handleIntegrityCheck(w http.ResponseWriter, r *http.Request) {
 
 // handleMetadataAPI handles external metadata requests by calling internal handler
 func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
+	c.circuitBreaker.Reset()
 	path := strings.TrimPrefix(r.URL.Path, "/api/metadata")
 	if path == "" {
 		path = "/"
@@ -1755,6 +1757,7 @@ func (c *Cluster) handleClusterRestart(w http.ResponseWriter, r *http.Request) {
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
 // Returns true on success, false on failure
 func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
+	c.circuitBreaker.Reset()
 	if c.AppContext().Err() != nil {
 		return false
 	}
