@@ -402,7 +402,7 @@ func (c *Cluster) GetPartitionHolders(partitionID types.PartitionID) []types.Nod
 	types.Assertf(partitionID != "", "partitionID must not be empty when getting partition holders")
 	types.Assertf(c.frogpond != nil, "frogpond must be initialized when getting partition holders for %v", partitionID)
 
-	prefix := fmt.Sprintf("partitions/%s/holders/", partitionID)
+	prefix := fmt.Sprintf("nodes/")
 	dataPoints := c.frogpond.GetAllMatchingPrefix(prefix)
 	holderSet := make(map[types.NodeID]struct{})
 
@@ -432,7 +432,7 @@ func (c *Cluster) GetPartitionHolders(partitionID types.PartitionID) []types.Nod
 func (c *Cluster) GetAllPartitions() map[types.PartitionID][]types.NodeID {
 	types.Assertf(c.frogpond != nil, "frogpond must be initialized when getting all partitions")
 
-	raw := c.frogpond.GetAllMatchingPrefix("partitions/")
+	raw := c.frogpond.GetAllMatchingPrefix("nodes/")
 	holderSets := make(map[types.PartitionID]map[types.NodeID]struct{})
 
 	for _, dp := range raw {
