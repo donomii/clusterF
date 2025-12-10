@@ -1170,7 +1170,7 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 		}
 
 		numHolders := len(pm.deps.Cluster.GetPartitionHolders(partitionID))
-		if numHolders < pm.replicationFactor() {
+		if numHolders < pm.replicationFactor() && numHolders > 0 { // If there are no holders, we will never be able to sync
 			pm.MarkForSync(partitionID, fmt.Sprintf("Under replicated: have %v, need %v", numHolders, pm.replicationFactor()))
 		} else {
 			pm.debugf("[PARTITION]  Partition %v fully replicated", partitionID)
