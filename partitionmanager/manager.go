@@ -7,9 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -18,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/donomii/clusterF/httpclient"
@@ -295,9 +298,33 @@ func (pm *PartitionManager) tripCircuitBreaker(target string, err error) {
 	if err == nil {
 		return
 	}
+	if !isTransportError(err) {
+		return
+	}
 	types.Assertf(pm.deps != nil, "partition manager dependencies must not be nil when tripping circuit breaker for target %s with error %v", target, err)
 	types.Assertf(pm.deps.Cluster != nil, "cluster dependency must not be nil when tripping circuit breaker for target %s with error %v", target, err)
 	pm.deps.Cluster.TripCircuitBreaker(target, err)
+}
+
+func isTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	return false
 }
 
 func (pm *PartitionManager) getPeers() []*types.PeerInfo {

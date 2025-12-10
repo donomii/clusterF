@@ -12,13 +12,16 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/donomii/clusterF/httpclient"
@@ -81,6 +84,9 @@ func (c *ClusterFileSystem) checkCircuitBreaker(target string) error {
 
 func (c *ClusterFileSystem) tripCircuitBreaker(target string, err error) {
 	if err == nil || c.cluster == nil {
+		return
+	}
+	if !isTransportError(err) {
 		return
 	}
 	c.cluster.TripCircuitBreaker(target, err)
@@ -1046,4 +1052,25 @@ func metadataMatches(meta types.FileMetadata, size int64, modTime time.Time) boo
 	}
 
 	return diff.Milliseconds() < 1000
+}
+
+func isTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	return false
 }

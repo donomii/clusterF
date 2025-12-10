@@ -50,7 +50,9 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 
 				resp, err := c.httpClient.Post(endpointURL, "application/json", strings.NewReader(string(updatesJSON)))
 				if err != nil {
-					c.TripCircuitBreaker(endpointURL, err)
+					if isNetworkTransportError(err) {
+						c.TripCircuitBreaker(endpointURL, err)
+					}
 					return
 				}
 				defer func() {

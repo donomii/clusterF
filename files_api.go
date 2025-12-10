@@ -271,7 +271,9 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 
 		resp, err := httpclient.Get(r.Context(), c.HttpDataClient, fileURL, options...)
 		if err != nil {
-			c.TripCircuitBreaker(fileURL, err)
+			if isNetworkTransportError(err) {
+				c.TripCircuitBreaker(fileURL, err)
+			}
 			c.debugf("[FILES] Failed to get file from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
@@ -423,7 +425,9 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		)
 		if err != nil {
-			c.TripCircuitBreaker(fileURL, err)
+			if isNetworkTransportError(err) {
+				c.TripCircuitBreaker(fileURL, err)
+			}
 			c.debugf("[FILES] Failed HEAD metadata from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
@@ -757,7 +761,9 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 			httpclient.WithHeader("X-ClusterF-Modified-At", now.Format(time.RFC3339)),
 		)
 		if err != nil {
-			c.TripCircuitBreaker(deleteURL, err)
+			if isNetworkTransportError(err) {
+				c.TripCircuitBreaker(deleteURL, err)
+			}
 			errors = append(errors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
 		}

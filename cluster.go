@@ -1489,7 +1489,9 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		)
 		if err != nil {
-			c.TripCircuitBreaker(metadataURL, err)
+			if isNetworkTransportError(err) {
+				c.TripCircuitBreaker(metadataURL, err)
+			}
 			c.debugf("[METADATA_API] Failed to get metadata from peer %s: %v", peer.NodeID, err)
 			holderErrors = append(holderErrors, fmt.Sprintf("%s: HTTP request failed: %v", peer.NodeID, err))
 			continue
@@ -1774,7 +1776,9 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 
 	body, _, status, err := httpclient.SimpleGet(c.AppContext(), c.HttpDataClient, fullStoreURL)
 	if err != nil {
-		c.TripCircuitBreaker(fullStoreURL, err)
+		if isNetworkTransportError(err) {
+			c.TripCircuitBreaker(fullStoreURL, err)
+		}
 		c.Logger().Printf("[FULL_SYNC] Failed to request full store from %s: %v", peer.NodeID, err)
 		return false
 	}
