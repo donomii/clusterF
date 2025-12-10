@@ -770,7 +770,6 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	}
 
 	partitionsCount := make(map[types.PartitionID]int)
-	changedLocalPartitions := false
 
 	pm.debugf("[PARTITION] Starting updatePartitionMetadata for partition %s", StartPartitionID)
 
@@ -819,16 +818,12 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			pm.logf("[PARTITION] Removed %s as holder for %s because no files on disk", pm.deps.NodeID, partitionID)
 			continue
 		}
-		if pm.addLocalPartition(partitionID) {
-			changedLocalPartitions = true
-		}
+		pm.addLocalPartition(partitionID)
 
 		pm.logf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
 	}
 
-	if changedLocalPartitions {
-		pm.publishLocalPartitions()
-	}
+	pm.publishLocalPartitions()
 
 	if len(partitionsCount) == 0 {
 		pm.recordPartitionTimestamp(StartPartitionID, lastReindexTimestampFile, start)

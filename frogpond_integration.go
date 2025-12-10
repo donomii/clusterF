@@ -333,9 +333,7 @@ func (c *Cluster) rebuildPartitionHolderMap() {
 
 		for _, num := range partitionNumbers {
 			pid, ok := partitionIDFromNumber(num)
-			if !ok {
-				continue
-			}
+			types.Assertf(ok, "Partition number %d is invalid", num)
 			set := next[pid]
 			if set == nil {
 				set = make(holderSet)
@@ -399,74 +397,18 @@ func (c *Cluster) GetNodesForPartitionMap(partitionName string) []types.NodeID {
 
 // GetPartitionHolders returns all holders for a partition using CRDT holder keys.
 func (c *Cluster) GetPartitionHolders(partitionID types.PartitionID) []types.NodeID {
-	types.Assertf(partitionID != "", "partitionID must not be empty when getting partition holders")
-	types.Assertf(c.frogpond != nil, "frogpond must be initialized when getting partition holders for %v", partitionID)
-
-	prefix := fmt.Sprintf("nodes/")
-	dataPoints := c.frogpond.GetAllMatchingPrefix(prefix)
-	holderSet := make(map[types.NodeID]struct{})
-
-	for _, dp := range dataPoints {
-		if dp.Deleted || len(dp.Value) == 0 {
-			continue
-		}
-
-		parts := strings.Split(string(dp.Key), "/")
-		if len(parts) != 4 || parts[0] != "partitions" || parts[2] != "holders" {
-			continue
-		}
-
-		holderSet[types.NodeID(parts[3])] = struct{}{}
-	}
-
-	holders := make([]types.NodeID, 0, len(holderSet))
-	for holder := range holderSet {
-		holders = append(holders, holder)
-	}
-	sort.Slice(holders, func(i, j int) bool { return holders[i] < holders[j] })
-
-	return holders
+	return c.GetNodesForPartition(string(partitionID))
 }
 
 // GetAllPartitions returns all partitions with their holders by scanning CRDT holder entries.
 func (c *Cluster) GetAllPartitions() map[types.PartitionID][]types.NodeID {
 	types.Assertf(c.frogpond != nil, "frogpond must be initialized when getting all partitions")
-
-	raw := c.frogpond.GetAllMatchingPrefix("nodes/")
-	holderSets := make(map[types.PartitionID]map[types.NodeID]struct{})
-
-	for _, dp := range raw {
-		if dp.Deleted || len(dp.Value) == 0 {
-			continue
-		}
-
-		parts := strings.Split(string(dp.Key), "/")
-		if len(parts) != 4 || parts[0] != "partitions" || parts[2] != "holders" {
-			continue
-		}
-
-		partitionID := types.PartitionID(parts[1])
-		holderID := types.NodeID(parts[3])
-
-		set, exists := holderSets[partitionID]
-		if !exists {
-			set = make(map[types.NodeID]struct{})
-			holderSets[partitionID] = set
-		}
-		set[holderID] = struct{}{}
-	}
-
-	result := make(map[types.PartitionID][]types.NodeID)
-	for partitionID, holderSet := range holderSets {
-		holders := make([]types.NodeID, 0, len(holderSet))
-		for holder := range holderSet {
-			holders = append(holders, holder)
-		}
-		sort.Slice(holders, func(i, j int) bool { return holders[i] < holders[j] })
-		result[partitionID] = holders
-	}
-
-	return result
+	out := make(map[types.PartitionID][]types.NodeID)
+	c.partitionHolders.Range(func(pid types.PartitionID, holders []types.NodeID) bool {
+		out[types.PartitionID(pid)] = holders
+		return true
+	})
+	return out
 }
 
 // GetNodeInfo returns information about a specific node
