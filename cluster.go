@@ -762,12 +762,23 @@ func (c *Cluster) DataClient() *http.Client {
 }
 
 func (c *Cluster) deletePartitions(ctx context.Context) {
-	c.frogpond.PurgeDeletedDataPoints(time.Now())
-	updates := c.frogpond.DeleteAllMatchingPrefix("partitions")
-	c.sendUpdatesToPeers(updates)
-	updates = c.frogpond.DeleteAllMatchingPrefix("partitions/")
-	c.sendUpdatesToPeers(updates)
-	time.Sleep(30 * time.Second)
+	if c.frogpond == nil {
+		return
+	}
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		// Only purge expired tombstones; do not remove live partition metadata from the CRDT.
+		c.frogpond.PurgeDeletedDataPoints(time.Now())
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 
 }
 
@@ -788,7 +799,7 @@ func (c *Cluster) Start() {
 	c.threadManager.StartThread("discovery-manager", c.runDiscoveryManager)
 	c.threadManager.StartThread("peer-fullstore-sync", c.runPeerFullStoreSync)
 	c.threadManager.StartThread("http-server", c.startHTTPServer)
-	//c.threadManager.StartThread("partition-reindex", c.runPartitionReindex)
+	c.threadManager.StartThread("partition-reindex", c.runPartitionReindex)
 	c.threadManager.StartThread("restart-monitor", c.runRestartMonitor)
 	c.threadManager.StartThread("under-replicated-monitor", c.partitionManager.RunUnderReplicatedMonitor)
 	c.threadManager.StartThread("partition-prune", c.deletePartitions)

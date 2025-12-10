@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/httpclient"
-	"github.com/donomii/clusterF/metrics"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	"github.com/donomii/clusterF/urlutil"
@@ -182,9 +181,7 @@ func (pm *PartitionManager) logf(format string, args ...interface{}) string {
 }
 
 func (pm *PartitionManager) addLocalPartition(partitionID types.PartitionID) bool {
-	if partitionID == "" {
-		return false
-	}
+	types.Assertf(partitionID != "", "partitionID must not be empty when adding a local partition")
 	if _, exists := pm.localPartitions.Load(partitionID); exists {
 		return false
 	}
@@ -193,9 +190,7 @@ func (pm *PartitionManager) addLocalPartition(partitionID types.PartitionID) boo
 }
 
 func (pm *PartitionManager) removeLocalPartition(partitionID types.PartitionID) bool {
-	if partitionID == "" {
-		return false
-	}
+	types.Assertf(partitionID != "", "partitionID must not be empty when removing a local partition")
 	if _, exists := pm.localPartitions.Load(partitionID); exists {
 		pm.localPartitions.Delete(partitionID)
 		return true
@@ -294,23 +289,22 @@ func (pm *PartitionManager) httpClient() *http.Client {
 }
 
 func (pm *PartitionManager) checkCircuitBreaker(target string) error {
-	if pm.deps == nil || pm.deps.Cluster == nil {
-		return nil
-	}
+	types.Assertf(pm.deps != nil, "partition manager dependencies must not be nil when checking circuit breaker for target %s", target)
+	types.Assertf(pm.deps.Cluster != nil, "cluster dependency must not be nil when checking circuit breaker for target %s", target)
 	return pm.deps.Cluster.CheckCircuitBreaker(target)
 }
 
 func (pm *PartitionManager) tripCircuitBreaker(target string, err error) {
-	if err == nil || pm.deps == nil || pm.deps.Cluster == nil {
+	if err == nil {
 		return
 	}
+	types.Assertf(pm.deps != nil, "partition manager dependencies must not be nil when tripping circuit breaker for target %s with error %v", target, err)
+	types.Assertf(pm.deps.Cluster != nil, "cluster dependency must not be nil when tripping circuit breaker for target %s with error %v", target, err)
 	pm.deps.Cluster.TripCircuitBreaker(target, err)
 }
 
 func (pm *PartitionManager) getPeers() []*types.PeerInfo {
-	if pm.deps.Discovery == nil {
-		return nil
-	}
+	types.Assertf(pm.deps.Discovery != nil, "discovery must not be nil when fetching peers for node %s", pm.deps.NodeID)
 	return pm.deps.Discovery.GetPeers()
 }
 
@@ -461,9 +455,7 @@ func (r readCloserFunc) Close() error               { return r.close() }
 
 func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename string) (types.FileMetadata, error) {
 	decodedPath, err := url.PathUnescape(filename)
-	if err != nil {
-		decodedPath = filename
-	}
+	types.Assertf(err == nil, "failed to unescape filename %s while fetching metadata from peer %s", filename, peer.NodeID)
 
 	if !strings.HasPrefix(decodedPath, "/") {
 		decodedPath = "/" + decodedPath
@@ -834,19 +826,8 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			changedLocalPartitions = true
 		}
 
-		checksum, err := pm.CalculatePartitionChecksum(ctx, partitionID)
-		if checksum == "" {
-			pm.deps.Logger.Printf("[FULL_REINDEX] ERROR: Unable to calculate checksum for partition %v", partitionID)
-			continue
-		}
-		if err != nil {
-			pm.deps.Logger.Printf("[FULL_REINDEX] ERROR: Unable to calculate checksum for partition %v: %v", partitionID, err)
-			continue
-		}
-
 		pm.localHolderData.Store(partitionID, types.HolderData{
 			File_count: count,
-			Checksum:   checksum,
 		})
 		pm.logf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
 	}
@@ -955,23 +936,19 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 	return nil
 }
 
-func (pm *PartitionManager) getHolderData(partitionID types.PartitionID, holder types.NodeID) (types.HolderData, bool) {
-	if holder != pm.deps.NodeID {
-		return types.HolderData{}, false
-	}
-	if data, ok := pm.localHolderData.Load(partitionID); ok {
-		return data, true
-	}
-	return types.HolderData{}, false
-}
-
 func (pm *PartitionManager) buildPartitionInfo(partitionID types.PartitionID, holders []types.NodeID) *types.PartitionInfo {
 	if len(holders) == 0 {
 		return nil
 	}
 
+	holderData := make(map[types.NodeID]types.HolderData)
+	for _, holder := range holders {
+		if data, ok := pm.getHolderData(partitionID, holder); ok {
+			holderData[holder] = data
+		}
+	}
+
 	var filtered []types.NodeID
-	holderMap := make(map[types.NodeID]types.HolderData)
 	checksums := make(map[types.NodeID]string)
 	var totalFiles int
 
@@ -982,12 +959,11 @@ func (pm *PartitionManager) buildPartitionInfo(partitionID types.PartitionID, ho
 		}
 		filtered = append(filtered, holder)
 
-		if holderData, ok := pm.getHolderData(partitionID, holder); ok {
-			holderMap[holder] = holderData
-			if int(holderData.File_count) > totalFiles {
-				totalFiles = int(holderData.File_count)
+		if data, ok := holderData[holder]; ok {
+			if int(data.File_count) > totalFiles {
+				totalFiles = int(data.File_count)
 			}
-			checksums[holder] = holderData.Checksum
+			checksums[holder] = data.Checksum
 		}
 	}
 
@@ -1000,17 +976,65 @@ func (pm *PartitionManager) buildPartitionInfo(partitionID types.PartitionID, ho
 		FileCount:  totalFiles,
 		Holders:    filtered,
 		Checksums:  checksums,
-		HolderData: holderMap,
+		HolderData: holderData,
 	}
+}
+
+// getHolderData loads per-holder metadata for a partition directly from CRDT.
+func (pm *PartitionManager) getHolderData(partitionID types.PartitionID, holder types.NodeID) (types.HolderData, bool) {
+	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
+
+	key := fmt.Sprintf("partitions/%s/holders/%s", partitionID, holder)
+	dp := pm.deps.Frogpond.GetDataPoint(key)
+	if dp.Deleted || len(dp.Value) == 0 {
+		return types.HolderData{}, false
+	}
+
+	var data types.HolderData
+	if err := json.Unmarshal(dp.Value, &data); err != nil {
+		pm.debugf("[PARTITION] Failed to parse holder data for %s/%s: %v (raw: %s)", partitionID, holder, err, string(dp.Value))
+		return types.HolderData{}, false
+	}
+
+	return data, true
 }
 
 // getAllPartitions returns all known partitions from CRDT using individual holder keys
 func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.PartitionInfo {
 	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
 
+	holderSets := make(map[types.PartitionID]map[types.NodeID]struct{})
+
+	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("partitions/")
+	for _, dp := range dataPoints {
+		if dp.Deleted || len(dp.Value) == 0 {
+			continue
+		}
+
+		parts := strings.Split(string(dp.Key), "/")
+		if len(parts) != 4 || parts[0] != "partitions" || parts[2] != "holders" {
+			continue
+		}
+
+		partitionID := types.PartitionID(parts[1])
+		holderID := types.NodeID(parts[3])
+
+		set, exists := holderSets[partitionID]
+		if !exists {
+			set = make(map[types.NodeID]struct{})
+			holderSets[partitionID] = set
+		}
+		set[holderID] = struct{}{}
+	}
+
 	result := make(map[types.PartitionID]*types.PartitionInfo)
-	snapshot := pm.deps.Cluster.PartitionHolderSnapshot()
-	for partitionID, holders := range snapshot {
+	for partitionID, holderSet := range holderSets {
+		holders := make([]types.NodeID, 0, len(holderSet))
+		for holderID := range holderSet {
+			holders = append(holders, holderID)
+		}
+		sort.Slice(holders, func(i, j int) bool { return holders[i] < holders[j] })
+
 		if info := pm.buildPartitionInfo(partitionID, holders); info != nil {
 			result[partitionID] = info
 		}
@@ -1105,82 +1129,6 @@ type PartitionSnapshot struct {
 type partitionChecksumEntry struct {
 	path     string
 	metadata []byte
-}
-
-// calculatePartitionChecksum computes a checksum for all files in a partition
-func (pm *PartitionManager) CalculatePartitionChecksum(ctx context.Context, partitionID types.PartitionID) (string, error) {
-	//pm.debugf("[PARTITION] Calculating checksum for partition %s", partitionID)
-	defer metrics.FinishGlobalTimer("partition.calculate_checksum", metrics.StartGlobalTimer("partition.calculate_checksum"))
-	metrics.IncrementGlobalCounter("partition.calculate_checksum.calls")
-
-	type checksumMetadata struct {
-		Path string `json:"path"` // Full path like "/docs/readme.txt"
-		Size int64  `json:"size"` // Total file size in bytes
-
-		CreatedAt  time.Time `json:"created_at"`
-		ModifiedAt time.Time `json:"modified_at"`
-
-		Checksum  string    `json:"checksum,omitempty"` // SHA-256 hash in hex format
-		Deleted   bool      `json:"deleted,omitempty"`
-		DeletedAt time.Time `json:"deleted_at,omitempty"`
-	}
-
-	type entry struct {
-		partition types.PartitionID
-		path      string
-		metadata  checksumMetadata
-	}
-
-	var entries []entry
-
-	err := pm.deps.FileStore.ScanMetadataPartition(ctx, partitionID, func(path string, metadata []byte) error {
-		if ctx.Err() != nil {
-			metrics.IncrementGlobalCounter("partition.calculate_checksum.errors")
-			return ctx.Err()
-		}
-
-		var parsedMetadata types.FileMetadata
-		if err := json.Unmarshal(metadata, &parsedMetadata); err == nil {
-			if !parsedMetadata.Deleted {
-				chMeta := checksumMetadata{
-					Path:       path,
-					Size:       parsedMetadata.Size,
-					CreatedAt:  parsedMetadata.CreatedAt,
-					ModifiedAt: parsedMetadata.ModifiedAt,
-					Checksum:   parsedMetadata.Checksum,
-					Deleted:    parsedMetadata.Deleted,
-					DeletedAt:  parsedMetadata.DeletedAt,
-				}
-				entries = append(entries, entry{
-					partition: types.PartitionIDForPath(path),
-					path:      path,
-					metadata:  chMeta,
-				})
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		metrics.IncrementGlobalCounter("partition.calculate_checksum.errors")
-		return "", err
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].partition == entries[j].partition {
-			return entries[i].path < entries[j].path
-		}
-		return entries[i].partition < entries[j].partition
-	})
-
-	hash := sha256.New()
-	for _, e := range entries {
-		data, _ := json.Marshal(e.metadata)
-		hash.Write(data)
-	}
-
-	metrics.IncrementGlobalCounter("partition.calculate_checksum.success")
-	metrics.AddGlobalCounter("partition.calculate_checksum.entries", int64(len(entries)))
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // getPartitionSyncInterval returns the partition sync interval from CRDT, or default
