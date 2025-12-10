@@ -425,8 +425,7 @@ func (pm *PartitionManager) fetchFileStreamFromPeer(ctx context.Context, peer *t
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := resp.ReadAllAndClose()
-		errStatus := fmt.Errorf("peer %s returned %d for file %s: %s", peer.NodeID, resp.StatusCode, filename, strings.TrimSpace(string(body)))
-		pm.tripCircuitBreaker(fileURL, errStatus)
+		errStatus := fmt.Errorf("peer %s returned %d for file %s via %s: %s", peer.NodeID, resp.StatusCode, filename, fileURL, strings.TrimSpace(string(body)))
 		return nil, errStatus
 	}
 
@@ -475,12 +474,10 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 
 	if status != http.StatusOK {
 		if len(body) > 0 {
-			errStatus := fmt.Errorf("peer %s returned %d for metadata %s: %s", peer.NodeID, status, filename, string(body))
-			pm.tripCircuitBreaker(metadataURL, errStatus)
+			errStatus := fmt.Errorf("peer %s returned %d for metadata %s via %s: %s", peer.NodeID, status, filename, metadataURL, string(body))
 			return types.FileMetadata{}, errStatus
 		}
-		errStatus := fmt.Errorf("peer %s returned %d for metadata %s", peer.NodeID, status, filename)
-		pm.tripCircuitBreaker(metadataURL, errStatus)
+		errStatus := fmt.Errorf("peer %s returned %d for metadata %s via %s", peer.NodeID, status, filename, metadataURL)
 		return types.FileMetadata{}, errStatus
 	}
 

@@ -11,8 +11,47 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/donomii/frogpond"
+	"github.com/donomii/clusterF/types"
 )
+
+const (
+	crdtDefaultPageLimit = 100
+	crdtMaxPageLimit     = 2000
+)
+
+type crdtListItem struct {
+	Name  string `json:"name"`
+	Key   string `json:"key"`
+	Type  string `json:"type"`
+	Count int    `json:"count,omitempty"`
+}
+
+type crdtSearchItem struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
+	Type string `json:"type"`
+}
+
+type crdtListResponse struct {
+	Prefix    string         `json:"prefix"`
+	Items     []crdtListItem `json:"items"`
+	HasMore   bool           `json:"has_more"`
+	NextAfter string         `json:"next_after,omitempty"`
+}
+
+type crdtSearchResponse struct {
+	Prefix    string           `json:"prefix"`
+	Query     string           `json:"q"`
+	Items     []crdtSearchItem `json:"items"`
+	HasMore   bool             `json:"has_more"`
+	NextAfter string           `json:"next_after,omitempty"`
+}
+
+type crdtChildAggregate struct {
+	HasChildren bool
+	HasLeaf     bool
+	Count       int
+}
 
 // handleCRDTListAPI lists immediate children (dirs and keys) under a prefix, with pagination.
 func (c *Cluster) handleCRDTListAPI(w http.ResponseWriter, r *http.Request) {
@@ -20,77 +59,95 @@ func (c *Cluster) handleCRDTListAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Method %s not allowed for CRDT list API (only GET supported)", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
-	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
 
-	dps := c.frogpond.GetAllMatchingPrefix(prefix)
+	prefix := normalizeCRDTPrefix(r.URL.Query().Get("prefix"))
+	after := strings.TrimSpace(r.URL.Query().Get("after"))
+	limit := parseCRDTLimit(r.URL.Query().Get("limit"))
 
-	// Filter out deleted keys
-	var activeDPs []frogpond.DataPoint
-	for _, dp := range dps {
-		if !dp.Deleted && len(dp.Value) > 0 {
-			activeDPs = append(activeDPs, dp)
+	types.Assertf(c.frogpond != nil, "frogpond must not be nil when listing CRDT prefix %s", prefix)
+
+	dataPoints := c.frogpond.GetAllMatchingPrefix(prefix)
+
+	childAggregates := make(map[string]crdtChildAggregate)
+
+	for _, dp := range dataPoints {
+		if dp.Deleted || len(dp.Value) == 0 {
+			continue
 		}
-	}
 
-	log.Printf("CRDT ListAPI: found %d entries under prefix %q", len(activeDPs), prefix)
-	prefix_len := len(prefix)
-
-	ke := make(map[string]bool)
-	if len(activeDPs) > 100 {
-
-		for _, dp := range activeDPs {
-			k := string(dp.Key)
-			var newk string
-			if len(k) > prefix_len {
-				newk = k[:prefix_len+1]
-			} else {
-				newk = k
-			}
-			ke[newk] = true
+		keyStr := string(dp.Key)
+		remaining := strings.TrimPrefix(keyStr, prefix)
+		remaining = strings.TrimPrefix(remaining, "/")
+		if remaining == "" {
+			continue
 		}
-	} else {
-		for _, dp := range activeDPs {
-			k := string(dp.Key)
-			ke[k] = true
 
+		segment := remaining
+		remainder := ""
+		if idx := strings.Index(segment, "/"); idx >= 0 {
+			remainder = segment[idx+1:]
+			segment = segment[:idx]
 		}
-	}
+		if segment == "" {
+			continue
+		}
 
-	log.Printf("CRDT keylist: %+v", ke)
-
-	// Find common prefix in ke
-	var commonPrefix string
-	for k := range ke {
-		if commonPrefix == "" {
-			commonPrefix = k
+		agg := childAggregates[segment]
+		agg.Count++
+		if remainder == "" {
+			agg.HasLeaf = true
 		} else {
-			commonPrefix = longestCommonPrefix(commonPrefix, k)
+			agg.HasChildren = true
 		}
-	}
-	log.Printf("CRDT common prefix: %q", commonPrefix)
-	prefix = commonPrefix
-
-	out := make([]map[string]string, 0, 100)
-	for k := range ke {
-		name := strings.TrimPrefix(k, prefix)
-		dps := c.frogpond.GetAllMatchingPrefix(k)
-		// Count only non-deleted keys
-		count := 0
-		for _, dp := range dps {
-			if !dp.Deleted && len(dp.Value) > 0 {
-				count++
-			}
-		}
-		out = append(out, map[string]string{"name": name, "key": k, "count": strconv.Itoa(count)})
+		childAggregates[segment] = agg
 	}
 
-	resp := map[string]interface{}{
-		"prefix": prefix,
-		"items":  out,
+	childNames := make([]string, 0, len(childAggregates))
+	for name := range childAggregates {
+		childNames = append(childNames, name)
 	}
-	log.Printf("CRDT ListAPI response: %+v", resp)
+	sort.Strings(childNames)
+
+	startIndex := 0
+	if after != "" {
+		startIndex = sort.Search(len(childNames), func(i int) bool {
+			return childNames[i] > after
+		})
+	}
+
+	endIndex := startIndex + limit
+	if endIndex > len(childNames) {
+		endIndex = len(childNames)
+	}
+
+	items := make([]crdtListItem, 0, endIndex-startIndex)
+	for _, name := range childNames[startIndex:endIndex] {
+		aggregate := childAggregates[name]
+		itemType := "key"
+		if aggregate.HasChildren {
+			itemType = "dir"
+		}
+		itemKey := joinCRDTPath(prefix, name)
+		items = append(items, crdtListItem{
+			Name:  name,
+			Key:   itemKey,
+			Type:  itemType,
+			Count: aggregate.Count,
+		})
+	}
+
+	response := crdtListResponse{
+		Prefix:  prefix,
+		Items:   items,
+		HasMore: endIndex < len(childNames),
+	}
+	if response.HasMore {
+		response.NextAfter = childNames[endIndex-1]
+	}
+
+	log.Printf("CRDT ListAPI: prefix=%q items=%d has_more=%v", prefix, len(items), response.HasMore)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(response)
 }
 
 func longestCommonPrefix(a, b string) string {
@@ -111,11 +168,13 @@ func (c *Cluster) handleCRDTGetAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Method %s not allowed for CRDT get API (only GET supported)", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
-	key := r.URL.Query().Get("key")
+	key := normalizeCRDTPrefix(r.URL.Query().Get("key"))
 	if key == "" {
 		http.Error(w, "Missing required 'key' parameter in CRDT get request", http.StatusBadRequest)
 		return
 	}
+
+	types.Assertf(c.frogpond != nil, "frogpond must not be nil when fetching CRDT key %s", key)
 
 	dp := c.frogpond.GetDataPoint(key)
 	val := dp.Value
@@ -165,62 +224,96 @@ func (c *Cluster) handleCRDTSearchAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Method %s not allowed for CRDT search API (only GET supported)", r.Method), http.StatusMethodNotAllowed)
 		return
 	}
-	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
+	prefix := normalizeCRDTPrefix(r.URL.Query().Get("prefix"))
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		http.Error(w, "Missing required 'q' (query) parameter in CRDT search request", http.StatusBadRequest)
 		return
 	}
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 2000 {
-			limit = v
-		}
-	}
-	after := r.URL.Query().Get("after")
-	dps := c.frogpond.GetAllMatchingPrefix("")
+	limit := parseCRDTLimit(r.URL.Query().Get("limit"))
+	after := strings.TrimSpace(r.URL.Query().Get("after"))
+
+	types.Assertf(c.frogpond != nil, "frogpond must not be nil when searching CRDT prefix %s for query %s", prefix, q)
+
+	dps := c.frogpond.GetAllMatchingPrefix(prefix)
 	keys := make([]string, 0, len(dps))
 	for _, dp := range dps {
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
 		}
 		k := string(dp.Key)
-		if strings.Contains(k, q) {
+		if strings.Contains(k, q) && strings.HasPrefix(k, prefix) {
 			keys = append(keys, k)
 		}
 	}
 	sort.Strings(keys)
 	start := 0
 	if after != "" {
-		for i := range keys {
-			if keys[i] > after {
-				start = i
-				break
-			}
-		}
+		start = sort.Search(len(keys), func(i int) bool {
+			return keys[i] > after
+		})
 	}
 	end := start + limit
 	if end > len(keys) {
 		end = len(keys)
 	}
-	items := make([]map[string]string, 0, end-start)
+
+	items := make([]crdtSearchItem, 0, end-start)
 	for _, k := range keys[start:end] {
-		name := k
-		items = append(items, map[string]string{
-			"type": "key",
-			"name": name,
-			"key":  k,
+		name := strings.TrimPrefix(k, prefix)
+		name = strings.TrimPrefix(name, "/")
+		items = append(items, crdtSearchItem{
+			Type: "key",
+			Name: name,
+			Key:  k,
 		})
 	}
-	resp := map[string]interface{}{
-		"prefix":   prefix,
-		"q":        q,
-		"items":    items,
-		"has_more": end < len(keys),
+
+	response := crdtSearchResponse{
+		Prefix:  prefix,
+		Query:   q,
+		Items:   items,
+		HasMore: end < len(keys),
 	}
-	if end < len(keys) {
-		resp["next_after"] = keys[end-1]
+	if response.HasMore {
+		response.NextAfter = keys[end-1]
 	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	json.NewEncoder(w).Encode(response)
+}
+
+func normalizeCRDTPrefix(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	for strings.HasPrefix(trimmed, "/") {
+		trimmed = strings.TrimPrefix(trimmed, "/")
+	}
+	return trimmed
+}
+
+func parseCRDTLimit(raw string) int {
+	if raw == "" {
+		return crdtDefaultPageLimit
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return crdtDefaultPageLimit
+	}
+	if value < 1 {
+		return crdtDefaultPageLimit
+	}
+	if value > crdtMaxPageLimit {
+		return crdtMaxPageLimit
+	}
+	return value
+}
+
+func joinCRDTPath(prefix, name string) string {
+	if prefix == "" {
+		return name
+	}
+	if name == "" {
+		return prefix
+	}
+	return prefix + "/" + name
 }

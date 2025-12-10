@@ -580,7 +580,6 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 				return
 			}
 			errStatus := fmt.Errorf("peer %s returned %d for PUT %s: %s", peer.NodeID, status, path, strings.TrimSpace(string(respBody)))
-			fs.tripCircuitBreaker(fileURL, errStatus)
 			results <- forwardResult{
 				node: types.NodeID(nodeID),
 				err:  errStatus,
@@ -723,7 +722,6 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 				return
 			}
 			errStatus := fmt.Errorf("peer %s returned %d for PUT %s: %s", peer.NodeID, status, path, strings.TrimSpace(string(respBody)))
-			fs.tripCircuitBreaker(fileURL, errStatus)
 			results <- forwardResult{
 				node: types.NodeID(nodeID),
 				err:  errStatus,
@@ -922,7 +920,6 @@ func (fs *ClusterFileSystem) MetadataViaAPI(ctx context.Context, path string) (t
 		return types.FileMetadata{}, types.ErrFileNotFound
 	default:
 		errStatus := fmt.Errorf("metadata API returned %d for %s: %s", status, metadataURL, strings.TrimSpace(string(body)))
-		fs.tripCircuitBreaker(metadataURL, errStatus)
 		return types.FileMetadata{}, errStatus
 	}
 }
@@ -981,7 +978,6 @@ func (fs *ClusterFileSystem) PeerHasUpToDateFile(peer types.NodeData, path strin
 		return false, nil
 	default:
 		errStatus := fmt.Errorf("unexpected status %d while checking %s on %s:%d", status, path, peer.Address, peer.HTTPPort)
-		fs.tripCircuitBreaker(fileURL, errStatus)
 		return false, errStatus
 	}
 }
@@ -1029,7 +1025,6 @@ func (fs *ClusterFileSystem) ClusterHasUpToDateFile(path string, modTime time.Ti
 		return false, types.FileMetadata{}, fmt.Errorf("file not found")
 	default:
 		errStatus := fmt.Errorf("unexpected status %d for %s while checking %s", status, metadataURL, path)
-		fs.tripCircuitBreaker(metadataURL, errStatus)
 		return false, types.FileMetadata{}, errStatus
 	}
 }

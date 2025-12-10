@@ -260,7 +260,6 @@ func (pm *PartitionManager) downloadPartitionFromPeer(ctx context.Context, parti
 		pm.RemoveNodeFromPartitionWithTimestamp(peerID, string(partitionID), time.Now().Add(-30*time.Minute))
 		pm.logf("[PARTITION DOWNLOAD] Removed %s as holder for %s because sync failed with %d", peerID, partitionID, resp.StatusCode)
 		errStatus := fmt.Errorf("peer returned error %d '%s' for partition %s via %s", resp.StatusCode, resp.Status, partitionID, syncURL)
-		pm.tripCircuitBreaker(syncURL, errStatus)
 		return 0, 0, errStatus
 	}
 
@@ -311,7 +310,6 @@ func (pm *PartitionManager) fetchFileContentFromPeer(ctx context.Context, peer *
 			msg = fmt.Sprintf("%d %s", status, msg)
 		}
 		errStatus := fmt.Errorf("failed to fetch %s from %s via internal API %s: %s", path, peer.NodeID, target, msg)
-		pm.tripCircuitBreaker(target, errStatus)
 		return nil, errStatus
 	}
 
@@ -630,11 +628,9 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 		}
 		if streamErr != nil {
 			errStatus := fmt.Errorf("peer %s rejected partition push via %s (%s): %v", peerID, pushURL, msg, streamErr)
-			pm.tripCircuitBreaker(pushURL, errStatus)
 			return 0, errStatus
 		}
 		errStatus := fmt.Errorf("peer %s rejected partition push via %s (%s)", peerID, pushURL, msg)
-		pm.tripCircuitBreaker(pushURL, errStatus)
 		return 0, errStatus
 	}
 

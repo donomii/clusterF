@@ -107,12 +107,11 @@ type fileHolderState struct {
 
 func (pm *PartitionManager) SyncFile(ctx context.Context, path string) error {
 	partitionID := HashToPartition(path)
-	holders :=pm.deps.Cluster.GetPartitionHolders(partitionID)
+	holders := pm.deps.Cluster.GetPartitionHolders(partitionID)
 	if holders == nil {
 		return fmt.Errorf("no partition info for %s", partitionID)
 	}
 
-	
 	if len(holders) == 0 {
 		return fmt.Errorf("no holders recorded for %s", path)
 	}
@@ -278,8 +277,7 @@ func (pm *PartitionManager) pushFileToPeerFromFile(ctx context.Context, peer *ty
 		return err
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
-		errStatus := fmt.Errorf("peer %s returned %d for PUT %s", peer.NodeID, status, meta.Path)
-		pm.tripCircuitBreaker(target, errStatus)
+		errStatus := fmt.Errorf("peer %s returned %d for PUT %s via %s", peer.NodeID, status, meta.Path, target)
 		return errStatus
 	}
 
@@ -308,8 +306,7 @@ func (pm *PartitionManager) pushDeleteToPeer(ctx context.Context, peer *types.Pe
 	}
 
 	if status != http.StatusNoContent && status != http.StatusOK {
-		errStatus := fmt.Errorf("peer %s returned %d for DELETE %s", peer.NodeID, status, meta.Path)
-		pm.tripCircuitBreaker(target, errStatus)
+		errStatus := fmt.Errorf("peer %s returned %d for DELETE %s via %s", peer.NodeID, status, meta.Path, target)
 		return errStatus
 	}
 	return nil
