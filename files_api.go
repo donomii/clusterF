@@ -213,15 +213,15 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 
 	// Get partition info to find which nodes hold this file
 	partitionID := c.PartitionManager().CalculatePartitionName(path)
-	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
+	holders := c.GetPartitionHolders(types.PartitionID(partitionID))
 
-	if partitionInfo == nil {
+	if holders == nil {
 		c.debugf("[FILES] No partition info found for %s (partition %s)", path, partitionID)
 		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition info found for partition %s)", path, partitionID), http.StatusNotFound)
 		return
 	}
 
-	if len(partitionInfo.Holders) == 0 {
+	if len(holders) == 0 {
 		c.debugf("[FILES] No holders registered for partition %s (file %s)", partitionID, path)
 		http.Error(w, fmt.Sprintf("File not found in cluster: %s (partition %s has no holders registered)", path, partitionID), http.StatusNotFound)
 		return
@@ -230,12 +230,12 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 	// Get peer info for all holders
 	peerLookup := c.GetAvailablePeerMap()
 
-	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
+	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, holders)
 
 	// Try each holder until we find the file
 	// TODO: download all headers from all peers, make sure we return the newest file, in case sync is not complete
 	var holderErrors []string
-	for _, holderID := range partitionInfo.Holders {
+	for _, holderID := range holders {
 		c.debugf("[FILES] Trying holder %s for file %s", holderID, path)
 
 		// Get peer info for this holder
@@ -375,15 +375,15 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 	}
 
 	partitionID := c.PartitionManager().CalculatePartitionName(path)
-	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
+	holders := c.GetPartitionHolders(types.PartitionID(partitionID))
 
-	if partitionInfo == nil {
+	if holders == nil {
 		c.debugf("[FILES] No partition info found for %s (partition %s)", path, partitionID)
 		http.Error(w, fmt.Sprintf("File metadata not found: %s (no partition info found for partition %s)", path, partitionID), http.StatusNotFound)
 		return
 	}
 
-	if len(partitionInfo.Holders) == 0 {
+	if len(holders) == 0 {
 		c.debugf("[FILES] No holders registered for partition %s (file %s)", partitionID, path)
 		http.Error(w, fmt.Sprintf("File metadata not found: %s (partition %s has no holders registered)", path, partitionID), http.StatusNotFound)
 		return
@@ -391,10 +391,10 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 
 	peerLookup := c.GetAvailablePeerMap()
 
-	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
+	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, holders)
 
 	var holderErrors []string
-	for _, holderID := range partitionInfo.Holders {
+	for _, holderID := range holders {
 		c.debugf("[FILES] Trying holder %s for HEAD on %s", holderID, path)
 
 		var peer types.NodeData
@@ -712,15 +712,15 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 	types.Assert(!isForwarded, "Cannot forward to external api")
 
 	partitionID := c.PartitionManager().CalculatePartitionName(path)
-	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
+	holders := c.GetPartitionHolders(types.PartitionID(partitionID))
 
-	if partitionInfo == nil {
+	if holders == nil {
 		c.debugf("[FILES] No partition info found for %s (partition %s)", path, partitionID)
 		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition info found for partition %s)", path, partitionID), http.StatusNotFound)
 		return
 	}
 
-	if len(partitionInfo.Holders) == 0 {
+	if len(holders) == 0 {
 		c.debugf("[FILES] No holders registered for partition %s (file %s)", partitionID, path)
 		http.Error(w, fmt.Sprintf("File not found in cluster: %s (partition %s has no holders registered)", path, partitionID), http.StatusNotFound)
 		return
@@ -735,7 +735,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 	)
 
 	now := time.Now()
-	for _, holderID := range partitionInfo.Holders {
+	for _, holderID := range holders {
 		var peer types.NodeData
 		if p, ok := peerLookup[holderID]; ok {
 			peer = p
@@ -782,7 +782,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		return
 	}
 
-	if notFounds == len(partitionInfo.Holders) {
+	if notFounds == len(holders) {
 		http.Error(w, fmt.Sprintf("File not found for deletion: %s", path), http.StatusNotFound)
 		return
 	}

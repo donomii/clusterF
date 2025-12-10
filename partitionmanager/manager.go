@@ -38,7 +38,6 @@ type PartitionManager struct {
 	fileSyncMu      sync.RWMutex
 	fileSyncTrie    *patricia.Trie
 	localPartitions *syncmap.SyncMap[types.PartitionID, bool]
-	localHolderData *syncmap.SyncMap[types.PartitionID, types.HolderData]
 }
 
 type PartitionVersion int64
@@ -50,7 +49,6 @@ func NewPartitionManager(deps *types.App) *PartitionManager {
 		SyncList:        syncmap.NewSyncMap[types.PartitionID, bool](),
 		fileSyncTrie:    patricia.NewTrie(),
 		localPartitions: syncmap.NewSyncMap[types.PartitionID, bool](),
-		localHolderData: syncmap.NewSyncMap[types.PartitionID, types.HolderData](),
 	}
 }
 
@@ -73,7 +71,6 @@ func (pm *PartitionManager) updateLocalPartitionMembership(partitionID types.Par
 		return
 	}
 	if pm.removeLocalPartition(partitionID) {
-		pm.localHolderData.Delete(partitionID)
 		pm.publishLocalPartitions()
 	}
 }
@@ -639,18 +636,18 @@ func (pm *PartitionManager) GetMetadataFromPartition(path string) (types.FileMet
 
 func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadata, error) {
 	partitionID := HashToPartition(path)
-	partition := pm.GetPartitionInfo(partitionID)
-	if partition == nil {
+	holders := pm.deps.Cluster.GetPartitionHolders(partitionID)
+	if holders == nil {
 		return types.FileMetadata{}, fmt.Errorf("partition %s not found for file %s", partitionID, path)
 	}
 
-	if len(partition.Holders) == 0 {
+	if len(holders) == 0 {
 		return types.FileMetadata{}, fmt.Errorf("no holders registered for partition %s", partitionID)
 	}
 
 	peerLookup := pm.deps.Discovery.GetPeerMap()
 
-	orderedPeers := make([]*types.PeerInfo, 0, len(partition.Holders))
+	orderedPeers := make([]*types.PeerInfo, 0, len(holders))
 	seen := make(map[types.NodeID]bool)
 	addPeer := func(nodeID types.NodeID, peer *types.PeerInfo) {
 		if peer == nil {
@@ -670,7 +667,7 @@ func (pm *PartitionManager) GetMetadataFromPeers(path string) (types.FileMetadat
 		seen[nodeID] = true
 	}
 
-	for _, holder := range partition.Holders {
+	for _, holder := range holders {
 		if peer, ok := peerLookup.Load(string(holder)); ok {
 			addPeer(holder, peer)
 			continue
@@ -826,9 +823,6 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			changedLocalPartitions = true
 		}
 
-		pm.localHolderData.Store(partitionID, types.HolderData{
-			File_count: count,
-		})
 		pm.logf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
 	}
 
@@ -852,7 +846,6 @@ func (pm *PartitionManager) removePartitionHolder(partitionID types.PartitionID)
 		return // No-store nodes don't claim to hold partitions
 	}
 
-	pm.localHolderData.Delete(partitionID)
 	pm.updateLocalPartitionMembership(partitionID, false)
 	pm.debugf("[PARTITION] Removed %s as holder for %s (local state only)", pm.deps.NodeID, partitionID)
 }
@@ -870,14 +863,6 @@ func (pm *PartitionManager) isNodeActive(nodeID types.NodeID) bool {
 	}
 
 	return true
-}
-
-// GetPartitionInfo retrieves partition info from CRDT using individual holder keys
-func (pm *PartitionManager) GetPartitionInfo(partitionID types.PartitionID) *types.PartitionInfo {
-	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
-
-	holders := pm.deps.Cluster.GetNodesForPartition(string(partitionID))
-	return pm.buildPartitionInfo(partitionID, holders)
 }
 
 // StoreFileInPartitionStream stores a file using a streaming reader when supported by the filestore.
@@ -936,111 +921,18 @@ func (pm *PartitionManager) StoreFileInPartitionStream(ctx context.Context, path
 	return nil
 }
 
-func (pm *PartitionManager) buildPartitionInfo(partitionID types.PartitionID, holders []types.NodeID) *types.PartitionInfo {
-	if len(holders) == 0 {
-		return nil
-	}
-
-	holderData := make(map[types.NodeID]types.HolderData)
-	for _, holder := range holders {
-		if data, ok := pm.getHolderData(partitionID, holder); ok {
-			holderData[holder] = data
-		}
-	}
-
-	var filtered []types.NodeID
-	checksums := make(map[types.NodeID]string)
-	var totalFiles int
-
-	for _, holder := range holders {
-		if !pm.isNodeActive(holder) {
-			pm.debugf("[PARTITION] Holder %s for partition %s not in active nodes", holder, partitionID)
-			continue
-		}
-		filtered = append(filtered, holder)
-
-		if data, ok := holderData[holder]; ok {
-			if int(data.File_count) > totalFiles {
-				totalFiles = int(data.File_count)
-			}
-			checksums[holder] = data.Checksum
-		}
-	}
-
-	if len(filtered) == 0 {
-		return nil
-	}
-
-	return &types.PartitionInfo{
-		ID:         partitionID,
-		FileCount:  totalFiles,
-		Holders:    filtered,
-		Checksums:  checksums,
-		HolderData: holderData,
-	}
-}
-
-// getHolderData loads per-holder metadata for a partition directly from CRDT.
-func (pm *PartitionManager) getHolderData(partitionID types.PartitionID, holder types.NodeID) (types.HolderData, bool) {
-	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
-
-	key := fmt.Sprintf("partitions/%s/holders/%s", partitionID, holder)
-	dp := pm.deps.Frogpond.GetDataPoint(key)
-	if dp.Deleted || len(dp.Value) == 0 {
-		return types.HolderData{}, false
-	}
-
-	var data types.HolderData
-	if err := json.Unmarshal(dp.Value, &data); err != nil {
-		pm.debugf("[PARTITION] Failed to parse holder data for %s/%s: %v (raw: %s)", partitionID, holder, err, string(dp.Value))
-		return types.HolderData{}, false
-	}
-
-	return data, true
-}
-
 // getAllPartitions returns all known partitions from CRDT using individual holder keys
-func (pm *PartitionManager) getAllPartitions() map[types.PartitionID]*types.PartitionInfo {
+func (pm *PartitionManager) getAllPartitions() []types.PartitionID {
 	types.Assert(pm.hasFrogpond(), "[PARTITION] missing frogpond")
+	types.Assert(pm.deps.Cluster != nil, "[PARTITION] missing cluster")
 
-	holderSets := make(map[types.PartitionID]map[types.NodeID]struct{})
-
-	dataPoints := pm.deps.Frogpond.GetAllMatchingPrefix("partitions/")
-	for _, dp := range dataPoints {
-		if dp.Deleted || len(dp.Value) == 0 {
-			continue
-		}
-
-		parts := strings.Split(string(dp.Key), "/")
-		if len(parts) != 4 || parts[0] != "partitions" || parts[2] != "holders" {
-			continue
-		}
-
-		partitionID := types.PartitionID(parts[1])
-		holderID := types.NodeID(parts[3])
-
-		set, exists := holderSets[partitionID]
-		if !exists {
-			set = make(map[types.NodeID]struct{})
-			holderSets[partitionID] = set
-		}
-		set[holderID] = struct{}{}
+	data := pm.deps.Cluster.GetAllPartitions()
+	out := make([]types.PartitionID, 0, len(data))
+	for partitionID, _ := range data {
+		out = append(out, partitionID)
 	}
+	return out
 
-	result := make(map[types.PartitionID]*types.PartitionInfo)
-	for partitionID, holderSet := range holderSets {
-		holders := make([]types.NodeID, 0, len(holderSet))
-		for holderID := range holderSet {
-			holders = append(holders, holderID)
-		}
-		sort.Slice(holders, func(i, j int) bool { return holders[i] < holders[j] })
-
-		if info := pm.buildPartitionInfo(partitionID, holders); info != nil {
-			result[partitionID] = info
-		}
-	}
-
-	return result
 }
 
 // VerifyStoredFileIntegrity checks the integrity of all stored files by verifying their checksums
@@ -1282,14 +1174,7 @@ func (pm *PartitionManager) checkUnderReplicatedPartitions(ctx context.Context) 
 			return
 		}
 
-		// Get all holder data for this partition
-		partInfo := pm.GetPartitionInfo(partitionID)
-		if partInfo == nil {
-			pm.debugf("[PARTITION] No partition info found for %s", partitionID)
-			continue
-		}
-
-		numHolders := len(partInfo.Holders)
+		numHolders := len(pm.deps.Cluster.GetPartitionHolders(partitionID))
 		if numHolders < pm.replicationFactor() {
 			pm.MarkForSync(partitionID, fmt.Sprintf("Under replicated: have %v, need %v", numHolders, pm.replicationFactor()))
 		} else {
@@ -1314,17 +1199,10 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 
 	pm.debugf("[PARTITION] Checking %d flagged partitions for sync (RF=%d)", len(partitionKeys), pm.replicationFactor())
 
-	ourNodeId := pm.deps.NodeID
-
 	// Find partitions that are under-replicated or need syncing
 	for _, partitionID := range partitionKeys {
 		if ctx.Err() != nil {
 			return "", []types.NodeID{}
-		}
-
-		if flagged, found := pm.SyncList.Load(partitionID); !(found && flagged) {
-			pm.debugf("[PARTITION] Skipping partition %v because it is not flagged for sync", partitionID)
-			continue
 		}
 
 		// Get available peers once check BOTH discovery AND CRDT nodes
@@ -1332,27 +1210,11 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 		//pm.debugf("[PARTITION] Discovery peers: %v", availablePeerIDs.Keys())
 		//pm.debugf("[PARTITION] Total available peer IDs: %v", availablePeerIDs)
 
-		var hasPartition bool
-		info := pm.GetPartitionInfo(partitionID)
-		pm.debugf("[PARTITION] Partition %s has info: %v", partitionID, info)
-		if info == nil {
-			pm.debugf("[PARTITION] No partition info found for %s, so we are the only holder", partitionID)
-			hasPartition = true
-			info = &types.PartitionInfo{
-				ID:         partitionID,
-				FileCount:  0,
-				Holders:    []types.NodeID{ourNodeId},
-				Checksums:  map[types.NodeID]string{},
-				HolderData: map[types.NodeID]types.HolderData{ourNodeId: {File_count: 0, Checksum: ""}},
-			}
-		} else {
-			_, hasPartition = info.HolderData[ourNodeId]
-		}
-
-		if hasPartition {
+		local, ok := pm.localPartitions.Load(partitionID)
+		if ok && local {
 			pm.debugf("[PARTITION] Found partition %v locally", partitionID)
 			// If we have the partition, check if we have enough holders
-			if len(info.Holders) < pm.replicationFactor() {
+			if len(pm.deps.Cluster.GetPartitionHolders(partitionID)) < pm.replicationFactor() {
 				// If we don't, find available holders to sync from
 				// Pick a random peer from the available peers
 				if len(availablePeerIDs.Keys()) > 0 {
@@ -1363,14 +1225,14 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 					pm.logf("[FINDFLAGGED] Found partition %v, but not enough holders, syncing to random peer %v", partitionID, peerID)
 					return partitionID, []types.NodeID{types.NodeID(peerID)}
 				} else {
-					pm.logf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
+					pm.logf("[PARTITION] Need sync, but no available holders for %s (holders: %v, available peers: %v)", partitionID, pm.deps.Cluster.GetPartitionHolders(partitionID), availablePeerIDs.Keys())
 				}
 			} else {
 				// If we have the partition and enough holders, sync to all holders
 
 				// Find available holders to sync from
 				var availableHolders []types.NodeID
-				for _, holderID := range info.Holders {
+				for _, holderID := range pm.deps.Cluster.GetPartitionHolders(partitionID) {
 					_, exists := availablePeerIDs.Load(string(holderID))
 					if holderID != pm.deps.NodeID && exists {
 						availableHolders = append(availableHolders, holderID)
@@ -1382,7 +1244,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 					pm.logf("[FINDFLAGGED] Found partition %v, syncing to available holders %v", partitionID, availableHolders)
 					return partitionID, availableHolders
 				} else {
-					pm.logf("[PARTITION] No online holders for %s (holders: %v, available peers: %v)", partitionID, info.Holders, availablePeerIDs.Keys())
+					pm.logf("[PARTITION] No online holders for %s (holders: %v, available peers: %v)", partitionID, pm.deps.Cluster.GetPartitionHolders(partitionID), availablePeerIDs.Keys())
 				}
 
 			}
@@ -1390,7 +1252,7 @@ func (pm *PartitionManager) findFlaggedPartitionToSyncWithHolders(ctx context.Co
 		} else {
 
 			var availableHolders []types.NodeID
-			for _, holderID := range info.Holders {
+			for _, holderID := range pm.deps.Cluster.GetPartitionHolders(partitionID) {
 				_, exists := availablePeerIDs.Load(string(holderID))
 				if holderID != pm.deps.NodeID && exists {
 					availableHolders = append(availableHolders, holderID)
@@ -1527,15 +1389,15 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 	currentRF := pm.replicationFactor()
 	totalFiles := 0
 
-	for _, info := range allPartitions {
-		if isIn(pm.deps.Cluster.ID(), info.Holders) {
-			localPartitions[string(info.ID)] = true
+	for _, partitionID := range allPartitions {
+		if isIn(pm.deps.Cluster.ID(), pm.deps.Cluster.GetPartitionHolders(partitionID)) {
+			localPartitions[string(partitionID)] = true
 		}
-		if len(info.Holders) < currentRF {
+		if len(pm.deps.Cluster.GetPartitionHolders(partitionID)) < currentRF {
 			underReplicated++
 
 		}
-		totalFiles += info.FileCount
+		totalFiles += 0
 	}
 
 	syncPending := pm.SyncListPendingCount()
@@ -1564,8 +1426,8 @@ func (pm *PartitionManager) ListUnderReplicatedFiles(ctx context.Context) ([]typ
 
 	var result []types.UnderReplicatedPartition
 
-	for _, info := range allPartitions {
-		missing := pm.replicationFactor() - len(info.Holders)
+	for _, partitionID := range allPartitions {
+		missing := pm.replicationFactor() - len(pm.deps.Cluster.GetPartitionHolders(partitionID))
 		if missing <= 0 {
 			continue
 		}
@@ -1573,14 +1435,12 @@ func (pm *PartitionManager) ListUnderReplicatedFiles(ctx context.Context) ([]typ
 			missing = 0
 		}
 
-		holders := append([]types.NodeID(nil), info.Holders...)
+		holders := append([]types.NodeID(nil), pm.deps.Cluster.GetPartitionHolders(partitionID)...)
 		partition := types.UnderReplicatedPartition{
-			PartitionID:       info.ID,
+			PartitionID:       partitionID,
 			Holders:           holders,
 			ReplicationFactor: pm.replicationFactor(),
 			MissingReplicas:   missing,
-			FileCount:         info.FileCount,
-			PartitionCRDT:     info,
 		}
 
 		if pm.deps.Cluster.NoStore() {
@@ -1605,7 +1465,7 @@ func (pm *PartitionManager) ListUnderReplicatedFiles(ctx context.Context) ([]typ
 		}
 
 		var files []types.UnderReplicatedFile
-		err := pm.deps.FileStore.ScanMetadataPartition(ctx, info.ID, func(path string, metadata []byte) error {
+		err := pm.deps.FileStore.ScanMetadataPartition(ctx, partitionID, func(path string, metadata []byte) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -1620,7 +1480,7 @@ func (pm *PartitionManager) ListUnderReplicatedFiles(ctx context.Context) ([]typ
 			}
 
 			files = append(files, types.UnderReplicatedFile{
-				PartitionID:     info.ID,
+				PartitionID:     partitionID,
 				Path:            path,
 				Size:            meta.Size,
 				ModifiedAt:      meta.ModifiedAt,

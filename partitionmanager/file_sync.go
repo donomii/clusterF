@@ -107,12 +107,12 @@ type fileHolderState struct {
 
 func (pm *PartitionManager) SyncFile(ctx context.Context, path string) error {
 	partitionID := HashToPartition(path)
-	partInfo := pm.GetPartitionInfo(partitionID)
-	if partInfo == nil {
+	holders :=pm.deps.Cluster.GetPartitionHolders(partitionID)
+	if holders == nil {
 		return fmt.Errorf("no partition info for %s", partitionID)
 	}
 
-	holders := partInfo.Holders
+	
 	if len(holders) == 0 {
 		return fmt.Errorf("no holders recorded for %s", path)
 	}

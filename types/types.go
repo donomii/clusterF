@@ -46,6 +46,8 @@ type ClusterLike interface {
 	ID() NodeID                                                    // Node id (a string)
 	GetAllNodes() map[NodeID]*NodeData                             // Return a copy of all known nodes
 	GetNodesForPartition(partitionName string) []NodeID            // Get all node that hold the given partition
+	GetPartitionHolders(partitionID PartitionID) []NodeID          // Get holders for a partition using CRDT holder entries
+	GetAllPartitions() map[PartitionID][]NodeID                    // Get all partitions with their holders from CRDT holder entries
 	GetNodeInfo(nodeID NodeID) *NodeData                           // Get info about a specific node
 	GetPartitionSyncPaused() bool                                  // Partition sync activity
 	AppContext() context.Context                                   //Closed when the application shuts down
@@ -75,7 +77,6 @@ type PartitionManagerLike interface {
 	GetMetadataFromPeers(path string) (FileMetadata, error)                                                                // Get file metadata from other nodes
 	CalculatePartitionName(path string) string                                                                             // Calculate partition name for a given path
 	ScanAllFiles(fn func(filePath string, metadata FileMetadata) error) error                                              // Scan all files in all partitions, calling fn for each file
-	GetPartitionInfo(partitionID PartitionID) *PartitionInfo
 	RunReindex(ctx context.Context)
 	MarkForReindex(pId PartitionID, reason string)
 	RemoveNodeFromPartitionWithTimestamp(nodeID NodeID, partitionName string, backdatedTime time.Time) error // Remove a node from a partition holder list with backdated timestamp
@@ -96,14 +97,6 @@ type FileStoreLike interface {
 	ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error
 	ScanMetadataPartition(ctx context.Context, partitionID PartitionID, fn func(path string, metadata []byte) error) error
 	GetAllPartitionStores() ([]PartitionStore, error)
-}
-
-type PartitionInfo struct {
-	ID         PartitionID           `json:"id"`
-	FileCount  int                   `json:"file_count"`
-	Holders    []NodeID              `json:"holders"`
-	Checksums  map[NodeID]string     `json:"checksums"`
-	HolderData map[NodeID]HolderData `json:"holder_data"`
 }
 
 // Handles discovering peers on the network
@@ -274,7 +267,6 @@ type UnderReplicatedPartition struct {
 	Files              []UnderReplicatedFile `json:"files,omitempty"`
 	FilesUnavailable   bool                  `json:"files_unavailable,omitempty"`
 	UnavailableMessage string                `json:"unavailable_message,omitempty"`
-	PartitionCRDT      *PartitionInfo        `json:"partition_crdt,omitempty"`
 }
 
 // Sent to the browser for display
@@ -297,11 +289,6 @@ type TranscodeStatistics struct {
 	MaxSize      int    `json:"max_size"`
 	InProgress   int    `json:"in_progress"`
 	CacheDir     string `json:"cache_dir"`
-}
-
-type HolderData struct {
-	File_count int    `json:"file_count"`
-	Checksum   string `json:"checksum"`
 }
 
 type MetricsLike interface {

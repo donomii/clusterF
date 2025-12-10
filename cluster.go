@@ -1436,15 +1436,15 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 
 	// Get partition info to find which nodes hold this file
 	partitionID := c.PartitionManager().CalculatePartitionName(path)
-	partitionInfo := c.PartitionManager().GetPartitionInfo(types.PartitionID(partitionID))
+	holders := c.GetPartitionHolders(types.PartitionID(partitionID))
 
-	if partitionInfo == nil {
+	if holders == nil {
 		c.debugf("[METADATA_API] No partition info found for %s (partition %s)", path, partitionID)
 		http.Error(w, fmt.Sprintf("File not found in cluster: %s (no partition info found for partition %s)", path, partitionID), http.StatusNotFound)
 		return
 	}
 
-	if len(partitionInfo.Holders) == 0 {
+	if len(holders) == 0 {
 		c.debugf("[METADATA_API] No holders registered for partition %s (file %s)", partitionID, path)
 		http.Error(w, fmt.Sprintf("File not found in cluster: %s (partition %s has no holders registered)", path, partitionID), http.StatusNotFound)
 		return
@@ -1452,11 +1452,11 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 
 	peerLookup := c.GetAvailablePeerMap()
 
-	c.debugf("[METADATA_API] Partition %s for file %s has holders: %v", partitionID, path, partitionInfo.Holders)
+	c.debugf("[METADATA_API] Partition %s for file %s has holders: %v", partitionID, path, holders)
 
 	// Try each holder until we find the metadata
 	var holderErrors []string
-	for _, holderID := range partitionInfo.Holders {
+	for _, holderID := range holders {
 		c.debugf("[METADATA_API] Trying holder %s for file %s", holderID, path)
 
 		// Get peer info for this holder

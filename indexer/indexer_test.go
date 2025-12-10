@@ -34,6 +34,12 @@ func (c *testCluster) DataClient() *http.Client                      { return ni
 func (c *testCluster) ID() types.NodeID                              { return c.id }
 func (c *testCluster) GetAllNodes() map[types.NodeID]*types.NodeData { return nil }
 func (c *testCluster) GetNodesForPartition(string) []types.NodeID    { return nil }
+func (c *testCluster) GetPartitionHolders(types.PartitionID) []types.NodeID {
+	return nil
+}
+func (c *testCluster) GetAllPartitions() map[types.PartitionID][]types.NodeID {
+	return nil
+}
 func (c *testCluster) GetNodeInfo(types.NodeID) *types.NodeData      { return nil }
 func (c *testCluster) GetPartitionSyncPaused() bool                  { return false }
 func (c *testCluster) AppContext() context.Context                   { return context.Background() }
