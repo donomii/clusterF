@@ -379,16 +379,12 @@ func partitionIDFromNumber(num int) (types.PartitionID, bool) {
 // GetNodesForPartition returns nodes that hold a specific partition
 func (c *Cluster) GetNodesForPartition(partitionName string) []types.NodeID {
 	partitionID := types.PartitionID(partitionName)
+	
 	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
 	if holders, ok := c.partitionHolders.Load(partitionID); ok {
 		return append([]types.NodeID(nil), holders...)
 	}
 
-	// Fallback: rebuild once from CRDT if empty or not found yet
-	c.rebuildPartitionHolderMap()
-	if holders, ok := c.partitionHolders.Load(partitionID); ok {
-		return append([]types.NodeID(nil), holders...)
-	}
 	return nil
 }
 

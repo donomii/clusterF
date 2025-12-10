@@ -947,19 +947,11 @@ func (c *Cluster) runPartitionReindex(ctx context.Context) {
 }
 
 func (c *Cluster) runPartitionHolderRefresh(ctx context.Context) {
-	// Build once immediately on startup so early callers have data
-	c.rebuildPartitionHolderMap()
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
 
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			c.rebuildPartitionHolderMap()
-		}
+		c.rebuildPartitionHolderMap()
+		c.debugf("Rebuilt partition holder map")
+		time.Sleep(5 * time.Second)
 	}
 }
 
