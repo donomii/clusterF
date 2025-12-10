@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -370,16 +369,9 @@ func (idx *Indexer) AddFile(path string, metadata types.FileMetadata) {
 
 	if metadata.Deleted {
 		idx.deleteDocLocked(partitionID, effectivePath)
-		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil && idx.logger != nil {
-			idx.logger.Printf("[INDEXER] Failed to update membership for deleted file in %s: %v", partitionID, err)
-		}
 		return
 	}
-
 	idx.upsertDocLocked(partitionID, effectivePath)
-	if err := idx.updatePartitionMembershipLocked(partitionID); err != nil && idx.logger != nil {
-		idx.logger.Printf("[INDEXER] Failed to update membership for upsert file %s: %v", partitionID, err)
-	}
 }
 
 // DeleteFile removes a file from the index
@@ -389,9 +381,6 @@ func (idx *Indexer) DeleteFile(path string) {
 
 	partitionID := idx.partitionForPath(path)
 	idx.deleteDocLocked(partitionID, path)
-	if err := idx.updatePartitionMembershipLocked(partitionID); err != nil && idx.logger != nil {
-		idx.logger.Printf("[INDEXER] Failed to update membership for %s: %v", partitionID, err)
-	}
 }
 
 // FilesForPartition returns the tracked paths for a partition in sorted order.
@@ -403,56 +392,6 @@ func (idx *Indexer) FilesForPartition(partitionID types.PartitionID) []string {
 		return []string{}
 	}
 	return idx.backend.FilesForPartition(partitionID)
-}
-
-// updatePartitionMembershipLocked pushes our holder state for the partition into the CRDT.
-func (idx *Indexer) updatePartitionMembershipLocked(partitionID types.PartitionID) error {
-	holderKey := fmt.Sprintf("partitions/%s/holders/%s", partitionID, idx.deps.Cluster.ID())
-	partitionNumber := idx.partitionNumber(partitionID)
-	pathCount := len(idx.partitionActive[partitionNumber])
-
-	if pathCount == 0 {
-		updates := idx.deps.Frogpond.DeleteDataPoint(holderKey, 30*time.Minute)
-		if len(updates) > 0 {
-			idx.deps.SendUpdatesToPeers(updates)
-		}
-		return nil
-	}
-
-	checksum, err := idx.deps.Cluster.PartitionManager().CalculatePartitionChecksum(idx.deps.Cluster.AppContext(), partitionID)
-	if err != nil {
-		return err
-	}
-	holder := types.HolderData{
-		File_count: pathCount,
-		Checksum:   checksum,
-	}
-
-	payload, err := json.Marshal(holder)
-	if err != nil {
-		return fmt.Errorf("marshal holder data for %s: %w", partitionID, err)
-	}
-
-	updates := idx.deps.Frogpond.SetDataPoint(holderKey, payload)
-	if len(updates) > 0 {
-		idx.deps.SendUpdatesToPeers(updates)
-	}
-	return nil
-}
-
-// publishAllPartitionMembershipLocked reapplies holder claims for every tracked partition.
-func (idx *Indexer) publishAllPartitionMembershipLocked() error {
-	var errs []error
-	if idx.backend == nil {
-		panic("index backend missing")
-	}
-	for _, partitionID := range idx.backend.TrackedPartitions() {
-		idx.logger.Printf("[INDEXER] Updating partition membership for %s", partitionID)
-		if err := idx.updatePartitionMembershipLocked(partitionID); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
 }
 
 // ImportFilestore imports all files from a PartitionManagerLike into the index
@@ -474,12 +413,10 @@ func (idx *Indexer) ImportFilestore(ctx context.Context, pm types.PartitionManag
 		return nil
 	})
 
-
 	if err != nil {
 		idx.logger.Printf("[INDEXER] Import failed after %d files: %v", total, err)
 		return err
 	}
-
 
 	idx.logger.Printf("[INDEXER] Import complete: processed %d files (%d active)", total, active)
 	return nil

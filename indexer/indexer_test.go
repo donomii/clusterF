@@ -86,9 +86,7 @@ func (f *testFileStore) ScanMetadata(string, func(string, []byte) error) error {
 func (f *testFileStore) ScanMetadataPartition(context.Context, types.PartitionID, func(string, []byte) error) error {
 	return nil
 }
-func (f *testFileStore) CalculatePartitionChecksum(context.Context, types.PartitionID) (string, error) {
-	return "checksum", nil
-}
+
 func (f *testFileStore) GetAllPartitionStores() ([]types.PartitionStore, error) { return nil, nil }
 
 func newTestApp(logger *log.Logger) *types.App {
