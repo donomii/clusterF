@@ -180,10 +180,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	}
 
 	if peer.Address == "" {
-		// Remove the requested peer as a holder for this partition.  Backdate the entry by 1 hr
-		pm.removePeerHolder(partitionID, peerID, 1*time.Hour)
-		pm.logf("[PARTITION SYNCPEER] Removed %s as holder for %s because not peer not found", peerID, partitionID)
-
+	
 		availablePeers := make([]string, 0)
 		for _, peer := range pm.getPeers() {
 			availablePeers = append(availablePeers, fmt.Sprintf("%s@%s:%d", peer.NodeID, peer.Address, peer.HTTPPort))
@@ -649,7 +646,7 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 }
 
 func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peerID types.NodeID, backdate time.Duration) {
-	// Membership comes from nodes/<node>/partitions; we cannot rewrite remote state here.
+	// Membership comes from nodePartitions/<node>; we cannot rewrite remote state here.
 	if peerID == pm.deps.NodeID {
 		pm.updateLocalPartitionMembership(partitionID, false)
 		pm.debugf("[PARTITION] Removed local holder entry for %s", partitionID)

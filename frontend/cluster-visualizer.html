@@ -550,66 +550,10 @@
                 
                 nodes = newNodes;
                 
-                // Get partition data from CRDT
-                try {
-                    const frogpondResponse = await fetch('/frogpond/fullstore');
-                    if (!frogpondResponse.ok) {
-                        throw new Error('Frogpond endpoint returned ' + frogpondResponse.status);
-                    }
-                    const frogpondData = await frogpondResponse.json();
-                    
-                    // Extract partition info from frogpond data using holder-based structure
-                    const partitionMap = {};
-                    frogpondData.forEach(dp => {
-                        if (!dp.Deleted && dp.Value && dp.Value.length && dp.Key.startsWith('partitions/')) {
-                            // Parse holder entries: partitions/p12345/holders/node-name
-                            const keyParts = dp.Key.split('/');
-                            if (keyParts.length >= 4 && keyParts[2] === 'holders') {
-                                const partitionID = keyParts[1];
-                                const nodeID = keyParts[3];
-                                
-                                if (!partitionMap[partitionID]) {
-                                    partitionMap[partitionID] = {
-                                        id: partitionID,
-                                        holders: [],
-                                        file_count: 0
-                                    };
-                                }
-                                
-                                try {
-                                    const holderData = JSON.parse(new TextDecoder().decode(new Uint8Array(dp.Value)));
-                                    partitionMap[partitionID].holders.push(nodeID);
-                                    if (holderData.file_count) {
-                                        partitionMap[partitionID].file_count = holderData.file_count;
-                                    }
-                                } catch (e) {
-                                    console.warn('Failed to parse holder data for', dp.Key, ':', e);
-                                    // Still add the holder even if we can't parse the data
-                                    partitionMap[partitionID].holders.push(nodeID);
-                                }
-                            }
-                        }
-                    });
-                    
-                    allPartitions = Object.values(partitionMap).map(p => ({
-                        id: p.id,
-                        holders: p.holders || [],
-                        file_count: p.file_count || 0,
-                        under_replicated: (p.holders || []).length < (partitionStats.replication_factor || stats.replication_factor || 3),
-                        rf_target: partitionStats.replication_factor || stats.replication_factor || 3
-                    }));
-                    
-                    // Sort for consistent display
-                    allPartitions.sort((a, b) => a.id.localeCompare(b.id));
-                    
-                    filterPartitions();
-                    
-                } catch (error) {
-                    console.error('Failed to fetch partition data:', error);
-                    allPartitions = [];
-                    partitions = [];
-                    updatePartitionList();
-                }
+                // Partition CRDT data removed; keep UI empty
+                allPartitions = [];
+                partitions = [];
+                updatePartitionList();
                 
                 // Initialize layout if this is the first time
                 if (nodes.length > 0 && (!nodes[0].x || nodes[0].x === 0)) {

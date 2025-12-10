@@ -94,7 +94,7 @@ type Cluster struct {
 	// Partition system
 	partitionManager *partitionmanager.PartitionManager
 
-	// Partition holder map built from nodes/<node>/partitions entries
+	// Partition holder map built from nodePartitions/<node> entries
 	partitionHolders *syncmap.SyncMap[types.PartitionID, []types.NodeID]
 
 	// File system layer

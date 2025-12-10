@@ -307,12 +307,12 @@ func (c *Cluster) GetAllNodes() map[types.NodeID]*types.NodeData {
 	return allNodes
 }
 
-// rebuildPartitionHolderMap refreshes the in-memory partition->holders map from nodes/*/partitions entries.
+// rebuildPartitionHolderMap refreshes the in-memory partition->holders map from nodePartitions/* entries.
 func (c *Cluster) rebuildPartitionHolderMap() {
 	types.Assert(c.frogpond != nil, "frogpond must be initialized before rebuilding partition holder map")
 	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
 
-	dataPoints := c.frogpond.GetAllMatchingPrefix("nodes/")
+	dataPoints := c.frogpond.GetAllMatchingPrefix("nodePartitions/")
 	type holderSet map[types.NodeID]struct{}
 	next := make(map[types.PartitionID]holderSet)
 	newMap := syncmap.NewSyncMap[types.PartitionID, []types.NodeID]()
@@ -322,7 +322,8 @@ func (c *Cluster) rebuildPartitionHolderMap() {
 			continue
 		}
 		parts := strings.Split(string(dp.Key), "/")
-		if len(parts) != 3 || parts[0] != "nodes" || parts[2] != "partitions" {
+		if len(parts) != 2 || parts[0] != "nodePartitions" {
+			c.debugf("[PARTITION MAP] Ignoring %s", dp.Key)
 			continue
 		}
 
@@ -379,7 +380,7 @@ func partitionIDFromNumber(num int) (types.PartitionID, bool) {
 // GetNodesForPartition returns nodes that hold a specific partition
 func (c *Cluster) GetNodesForPartition(partitionName string) []types.NodeID {
 	partitionID := types.PartitionID(partitionName)
-	
+
 	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
 	if holders, ok := c.partitionHolders.Load(partitionID); ok {
 		return append([]types.NodeID(nil), holders...)

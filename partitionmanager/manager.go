@@ -65,7 +65,7 @@ func (pm *PartitionManager) MarkForReindex(pId types.PartitionID, reason string)
 	pm.logf("[MarkForReindex] Marked partition %v for reindex, because %s", pId, reason)
 }
 
-// updateLocalPartitionMembership toggles this node's local holder state and publishes to nodes/<node>/partitions.
+// updateLocalPartitionMembership toggles this node's local holder state and publishes to nodePartitions/<node>.
 func (pm *PartitionManager) updateLocalPartitionMembership(partitionID types.PartitionID, holds bool) {
 	if holds {
 		if pm.addLocalPartition(partitionID) {
@@ -138,7 +138,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 
 // RemoveNodeFromPartitionWithTimestamp removes a node from a partition holder list with backdated timestamp
 func (pm *PartitionManager) RemoveNodeFromPartitionWithTimestamp(nodeID types.NodeID, partitionName string, backdatedTime time.Time) error {
-	// Membership is driven by nodes/<node>/partitions; only update local state.
+	// Membership is driven by nodePartitions/<node>; only update local state.
 	if nodeID == pm.deps.NodeID {
 		pm.updateLocalPartitionMembership(types.PartitionID(partitionName), false)
 		pm.debugf("[PARTITION] Removed local node %s from partition %s with backdated timestamp %s", nodeID, partitionName, backdatedTime.Format(time.RFC3339))
@@ -228,7 +228,7 @@ func (pm *PartitionManager) publishLocalPartitions() {
 
 	sort.Ints(partitions)
 	payload, _ := json.Marshal(partitions)
-	key := fmt.Sprintf("nodes/%s/partitions", pm.deps.NodeID)
+	key := fmt.Sprintf("nodePartitions/%s", pm.deps.NodeID)
 	updates := pm.deps.Frogpond.SetDataPoint(key, payload)
 	pm.deps.SendUpdatesToPeers(updates)
 }
@@ -1095,13 +1095,6 @@ func (pm *PartitionManager) doPartitionSync(ctx context.Context, partitionID typ
 		}
 		pm.debugf("[PARTITION] Syncing %s from %s (%v of %v)", partitionID, holderID, i+1, len(holders))
 
-		// Find the peer in the nodes crdt
-		nodeData := pm.deps.Cluster.GetNodeInfo(holderID)
-		if nodeData == nil {
-			//If we can't, then remove the peer as a holder, from the crdt
-			pm.removePeerHolder(partitionID, holderID, 30*time.Minute)
-			pm.logf("[PARTITION] Removed %s as holder for %s because not found in CRDT", holderID, partitionID)
-		}
 		err := pm.syncPartitionWithPeer(ctx, partitionID, holderID)
 		if err != nil {
 			pm.logf("[PARTITION] Failed to sync %s from %s: %v", partitionID, holderID, err)
