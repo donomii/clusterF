@@ -39,7 +39,6 @@ type MetricsSnapshot struct {
 	Timers         map[string]TimerStats        `json:"timers"`
 	Runtime        RuntimeStats                 `json:"runtime"`
 	CircuitBreaker types.CircuitBreakerSnapshot `json:"circuit_breaker"`
-	Connection     bool                         `json:"connection"`
 }
 
 // TimerStats contains aggregated timer statistics
@@ -127,7 +126,6 @@ func (mc *MetricsCollector) captureSnapshot() MetricsSnapshot {
 		Timers:         make(map[string]TimerStats),
 		Runtime:        mc.captureRuntimeStats(),
 		CircuitBreaker: mc.app.Cluster.CircuitBreakerStatus(),
-		Connection:     mc.app.Cluster.ConnectedStatus(),
 	}
 
 	// Capture counters

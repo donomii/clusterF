@@ -65,6 +65,21 @@
             font-size: 14px;
         }
 
+        .cluster-connection {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin: 10px 0 18px 0;
+        }
+
+        .cluster-connection-label {
+            color: #cbd5f5;
+            font-size: 14px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
         .metrics-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -211,6 +226,8 @@
         <h1>📈 Cluster Metrics</h1>
         <p>Live metrics collected via CRDT | <a href="/">← Back to Home</a></p>
     </div>
+
+    <div id="clusterConnection" class="cluster-connection"></div>
 
     <div class="controls">
         <button class="btn" id="refreshButton">Refresh Now</button>

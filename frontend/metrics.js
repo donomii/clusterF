@@ -158,6 +158,21 @@ function renderConnectionStatus(container, connected) {
     container.appendChild(pill);
 }
 
+function renderClusterConnection(connected) {
+    const container = document.getElementById('clusterConnection');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+
+    const label = document.createElement('div');
+    label.className = 'cluster-connection-label';
+    label.textContent = 'Cluster connection';
+    container.appendChild(label);
+
+    renderConnectionStatus(container, !!connected);
+}
+
 function renderBreakerBanner(openBreakers) {
     const banner = document.getElementById('breakerBanner');
     if (!banner) {
@@ -186,6 +201,8 @@ function renderSnapshots(data) {
     container.innerHTML = '';
     const openBreakers = [];
 
+    renderClusterConnection(data && data.connected);
+
     if (!data.snapshots || !data.snapshots.length) {
         container.style.display = 'none';
         emptyState.style.display = 'block';
@@ -204,7 +221,6 @@ function renderSnapshots(data) {
         title.textContent = snapshot.node_id || 'Unknown Node';
         card.appendChild(title);
 
-        renderConnectionStatus(card, !!(snapshot.connection && snapshot.connection.connected));
         const ts = document.createElement('div');
         ts.className = 'timestamp';
         ts.textContent = `Last updated ${formatTimestamp(snapshot.timestamp)}`;

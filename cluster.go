@@ -1286,14 +1286,18 @@ func (c *Cluster) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
 }
 
+type metricsAPIResponse struct {
+	GeneratedAt int64                     `json:"generated_at"`
+	Snapshots   []metrics.MetricsSnapshot `json:"snapshots"`
+	Connected   bool                      `json:"connected"`
+}
+
 func (c *Cluster) handleMetricsAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	response := struct {
-		GeneratedAt int64                     `json:"generated_at"`
-		Snapshots   []metrics.MetricsSnapshot `json:"snapshots"`
-	}{
+	response := metricsAPIResponse{
 		GeneratedAt: time.Now().Unix(),
+		Connected:   c.ConnectedStatus(),
 	}
 
 	if c.frogpond == nil {
