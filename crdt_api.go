@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -145,7 +144,7 @@ func (c *Cluster) handleCRDTListAPI(w http.ResponseWriter, r *http.Request) {
 		response.NextAfter = childNames[endIndex-1]
 	}
 
-	log.Printf("CRDT ListAPI: prefix=%q items=%d has_more=%v", prefix, len(items), response.HasMore)
+	c.logger.Printf("CRDT ListAPI: prefix=%q items=%d has_more=%v", prefix, len(items), response.HasMore)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }

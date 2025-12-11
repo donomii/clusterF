@@ -62,6 +62,7 @@ func (pm *PartitionManager) RecordEssentialDiskActivity() {
 
 func (pm *PartitionManager) MarkForReindex(pId types.PartitionID, reason string) {
 	pm.ReindexList.Store(pId, true)
+	pm.addLocalPartition(types.PartitionID(pm.CalculatePartitionName(string(pId))))
 	pm.logf("[MarkForReindex] Marked partition %v for reindex, because %s", pId, reason)
 }
 
@@ -126,6 +127,7 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 		if value {
 			pm.ReindexList.Store(key, false) // Clear the flag before re-indexing, as new items will not necessarily be caught during
 			//pm.deps.Logger.Printf("[REINDEX] Starting reindex of partition %v", key)
+			pm.addLocalPartition(types.PartitionID(pm.CalculatePartitionName(string(key))))
 			pm.updatePartitionMetadata(ctx, key)
 			count = count + 1
 			pm.debugf("Finished reindex of %v", key)
@@ -843,6 +845,7 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 			continue
 		}
 		pm.addLocalPartition(partitionID)
+		pm.updateLocalPartitionMembership(partitionID, true)
 
 		pm.logf("[FULL_REINDEX] Added %s as holder for %s (%d files)", pm.deps.NodeID, partitionID, count)
 	}
