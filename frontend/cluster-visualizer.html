@@ -550,10 +550,61 @@
                 
                 nodes = newNodes;
                 
-                // Partition CRDT data removed; keep UI empty
-                allPartitions = [];
-                partitions = [];
-                updatePartitionList();
+                // Build partition list from nodePartitions/<node> entries (per-node partition arrays)
+                try {
+                    const frogpondResponse = await fetch('/frogpond/fullstore');
+                    if (!frogpondResponse.ok) {
+                        throw new Error('Frogpond endpoint returned ' + frogpondResponse.status);
+                    }
+                    const frogpondData = await frogpondResponse.json();
+
+                    const partitionMap = {};
+                    frogpondData.forEach(dp => {
+                        if (dp.Deleted || !dp.Value || !dp.Value.length || !dp.Key.startsWith('nodePartitions/')) {
+                            return;
+                        }
+
+                        const keyParts = dp.Key.split('/');
+                        if (keyParts.length !== 2) {
+                            return;
+                        }
+                        const nodeID = keyParts[1];
+
+                        try {
+                            const partitionNumbers = JSON.parse(new TextDecoder().decode(new Uint8Array(dp.Value)));
+                            partitionNumbers.forEach(num => {
+                                // Convert numeric partition to zero-padded ID (p00000)
+                                const partitionID = `p${String(num).padStart(5, '0')}`;
+                                if (!partitionMap[partitionID]) {
+                                    partitionMap[partitionID] = {
+                                        id: partitionID,
+                                        holders: [],
+                                        file_count: 0
+                                    };
+                                }
+                                partitionMap[partitionID].holders.push(nodeID);
+                            });
+                        } catch (e) {
+                            console.warn('Failed to parse nodePartitions entry for', dp.Key, ':', e);
+                        }
+                    });
+
+                    allPartitions = Object.values(partitionMap).map(p => ({
+                        id: p.id,
+                        holders: p.holders || [],
+                        file_count: p.file_count || 0,
+                        under_replicated: (p.holders || []).length < (partitionStats.replication_factor || stats.replication_factor || 3),
+                        rf_target: partitionStats.replication_factor || stats.replication_factor || 3
+                    }));
+
+                    allPartitions.sort((a, b) => a.id.localeCompare(b.id));
+                    filterPartitions();
+                } catch (error) {
+                    console.error('Failed to fetch partition data:', error);
+                    allPartitions = [];
+                    partitions = [];
+                    updatePartitionList();
+                }
                 
                 // Initialize layout if this is the first time
                 if (nodes.length > 0 && (!nodes[0].x || nodes[0].x === 0)) {
