@@ -310,6 +310,8 @@ func (c *Cluster) GetAllNodes() map[types.NodeID]*types.NodeData {
 // rebuildPartitionHolderMap refreshes the in-memory partition->holders map from nodePartitions/* entries.
 func (c *Cluster) rebuildPartitionHolderMap() {
 	types.Assert(c.frogpond != nil, "frogpond must be initialized before rebuilding partition holder map")
+	updates := c.frogpond.DeleteAllMatchingPrefix("partitions")
+	c.sendUpdatesToPeers(updates)
 	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
 
 	dataPoints := c.frogpond.GetAllMatchingPrefix("nodePartitions/")

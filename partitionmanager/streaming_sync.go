@@ -645,16 +645,6 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 	return int(sentCount), nil
 }
 
-func (pm *PartitionManager) removePeerHolder(partitionID types.PartitionID, peerID types.NodeID, backdate time.Duration) {
-	// Membership comes from nodePartitions/<node>; we cannot rewrite remote state here.
-	if peerID == pm.deps.NodeID {
-		pm.updateLocalPartitionMembership(partitionID, false)
-		pm.debugf("[PARTITION] Removed local holder entry for %s", partitionID)
-		return
-	}
-	pm.debugf("[PARTITION] Skipping removal of remote holder %s for %s; owner will publish its own partition list", peerID, partitionID)
-}
-
 // shouldUpdateEntry determines if we should update our local copy with the remote entry
 func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bool {
 	pm.RecordEssentialDiskActivity()

@@ -1119,6 +1119,8 @@ func (pm *PartitionManager) PeriodicSyncCheck(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		updates := pm.deps.Frogpond.DeleteAllMatchingPrefix("partitions")
+		pm.deps.SendUpdatesToPeers(updates)
 
 		select {
 		case <-ctx.Done():

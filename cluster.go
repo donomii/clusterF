@@ -770,6 +770,8 @@ func (c *Cluster) deletePartitions(ctx context.Context) {
 	defer ticker.Stop()
 
 	for {
+		updates := c.frogpond.DeleteAllMatchingPrefix("partitions")
+		c.sendUpdatesToPeers(updates)
 		// Only purge expired tombstones; do not remove live partition metadata from the CRDT.
 		c.frogpond.PurgeDeletedDataPoints(time.Now())
 
