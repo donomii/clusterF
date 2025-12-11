@@ -316,10 +316,19 @@ type App struct {
 
 // CircuitBreakerSnapshot captures the current breaker state for a node.
 type CircuitBreakerSnapshot struct {
-	Open   bool   `json:"open"`
-	SetBy  string `json:"set_by"`
-	Target string `json:"target"`
-	Reason string `json:"reason"`
+	Open   bool                                  `json:"open"`
+	SetBy  string                                `json:"set_by"`
+	Target string                                `json:"target"`
+	Reason string                                `json:"reason"`
+	Hosts  map[string]CircuitBreakerHostSnapshot `json:"hosts"`
+}
+
+type CircuitBreakerHostSnapshot struct {
+	Open      bool   `json:"open"`
+	SetBy     string `json:"set_by"`
+	Target    string `json:"target"`
+	Reason    string `json:"reason"`
+	TrippedAt int64  `json:"tripped_at"`
 }
 
 func CollapseToDirectory(relPath, basePath string) string {

@@ -123,7 +123,12 @@ function renderRuntimeStats(container, runtime) {
 
 function renderCircuitBreaker(container, breaker) {
     const state = breaker || {};
-    const open = !!state.open;
+    const hosts = state.hosts || {};
+    const hostEntries = Object.entries(hosts);
+    const openHosts = hostEntries.filter(([, hostState]) => hostState && hostState.open);
+    const fallbackHost = (!openHosts.length && state.open) ? [['', state]] : [];
+    const entries = openHosts.length ? openHosts : fallbackHost;
+    const open = entries.length > 0;
 
     const section = document.createElement('div');
     const title = document.createElement('div');
@@ -139,10 +144,19 @@ function renderCircuitBreaker(container, breaker) {
     const details = document.createElement('div');
     details.className = 'breaker-details';
     if (open) {
-        const reason = state.reason || 'breaker tripped';
-        const setter = state.set_by || 'unknown';
-        const target = state.target || 'unknown target';
-        details.textContent = `Set by ${setter} while calling ${target}. Reason: ${reason}`;
+        const list = document.createElement('ul');
+        list.className = 'breaker-list';
+        for (const [hostKey, hostState] of entries) {
+            const reason = (hostState && hostState.reason) || state.reason || 'breaker tripped';
+            const setter = (hostState && hostState.set_by) || state.set_by || 'unknown';
+            const target = (hostState && hostState.target) || state.target || hostKey || 'unknown target';
+            const label = hostKey ? `${hostKey}: ` : '';
+
+            const item = document.createElement('li');
+            item.textContent = `${label}set by ${setter} while calling ${target}. Reason: ${reason}`;
+            list.appendChild(item);
+        }
+        details.appendChild(list);
     } else {
         details.textContent = 'Ready for outbound machine calls.';
     }
@@ -188,7 +202,8 @@ function renderBreakerBanner(openBreakers) {
     const rows = openBreakers.map(info => {
         const reason = info.reason || 'no reason provided';
         const target = info.target || 'unknown target';
-        return `<li>${info.node}: set by ${info.set_by || info.node} while calling ${target} — ${reason}</li>`;
+        const hostLabel = info.host ? `host ${info.host}` : 'unknown host';
+        return `<li>${info.node} (${hostLabel}): set by ${info.set_by || info.node} while calling ${target} — ${reason}</li>`;
     });
 
     banner.style.display = 'block';
@@ -226,16 +241,23 @@ function renderSnapshots(data) {
         ts.textContent = `Last updated ${formatTimestamp(snapshot.timestamp)}`;
         card.appendChild(ts);
 
-        if (snapshot.circuit_breaker && snapshot.circuit_breaker.open) {
+        const breaker = snapshot.circuit_breaker || {};
+        const hosts = breaker.hosts || {};
+        const hostEntries = Object.entries(hosts);
+        const openHosts = hostEntries.filter(([, hostState]) => hostState && hostState.open);
+        const fallbackHost = (!openHosts.length && breaker.open) ? [['', breaker]] : [];
+        const entries = openHosts.length ? openHosts : fallbackHost;
+        for (const [hostKey, hostState] of entries) {
             openBreakers.push({
                 node: snapshot.node_id || 'unknown',
-                set_by: snapshot.circuit_breaker.set_by,
-                target: snapshot.circuit_breaker.target,
-                reason: snapshot.circuit_breaker.reason,
+                host: hostKey || hostState.target || breaker.target,
+                set_by: (hostState && hostState.set_by) || breaker.set_by,
+                target: (hostState && hostState.target) || breaker.target,
+                reason: (hostState && hostState.reason) || breaker.reason,
             });
         }
 
-        renderCircuitBreaker(card, snapshot.circuit_breaker);
+        renderCircuitBreaker(card, breaker);
         renderRuntimeStats(card, snapshot.runtime);
 
         const countersTitle = document.createElement('div');
