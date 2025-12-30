@@ -679,20 +679,20 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 
-	_, err = c.FileSystem.InsertFileIntoClusterFromFile(r.Context(), path, tempPath, size, checksum, contentType, localModTime)
-	if err != nil {
-		c.debugf("[FILES] Forwarded PUT %s", path)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"path":    path,
-			"size":    size,
-		})
+	nodes, err := c.FileSystem.InsertFileIntoClusterFromFile(r.Context(), path, tempPath, size, checksum, contentType, localModTime)
+	if err != nil && len(nodes) == 0 {
+		message := fmt.Sprintf("Failed to upload %s: %v", path, err)
+		http.Error(w, message, http.StatusInternalServerError)
 		return
 	}
 
-	message := fmt.Sprintf("Failed to upload %s: %s", path, err)
-	http.Error(w, message, http.StatusInternalServerError)
+	c.debugf("[FILES] Stored %s (%d bytes) on %v", path, size, nodes)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"path":    path,
+		"size":    size,
+	})
 }
 
 func parseHeaderTimestamp(value string) (time.Time, error) {

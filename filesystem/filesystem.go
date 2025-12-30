@@ -440,6 +440,19 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 
 // forwardUploadToStorageNodeFromFile forwards file uploads using a file path to avoid buffering entire content.
 func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Context, path string, metadataJSON []byte, contentPath string, size int64, contentType string) ([]types.NodeID, error) {
+	var meta types.FileMetadata
+	if err := json.Unmarshal(metadataJSON, &meta); err != nil {
+		panic("no")
+	}
+	types.Assertf(meta.ModifiedAt.IsZero() == false, "modified time must not be zero when forwarding %v", path)
+	types.Assertf(meta.Checksum != "", "checksum must not be empty when forwarding %v", path)
+	if meta.ContentType != "" {
+		contentType = meta.ContentType
+	}
+	if meta.Size > 0 {
+		size = meta.Size
+	}
+
 	partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
 	nodesForPartition := fs.cluster.GetNodesForPartition(partitionName)
 	desiredReplicas := fs.cluster.ReplicationFactor()
@@ -453,6 +466,14 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Cont
 		for _, nodeData := range targetNodeInfo {
 			targetNodes = append(targetNodes, nodeData.NodeID)
 		}
+	}
+
+	if len(targetNodes) == 0 && !fs.cluster.NoStore() {
+		nodeID, err := fs.StoreFileWithModTimeDirectFromFile(ctx, path, contentPath, size, meta.Checksum, contentType, meta.ModifiedAt)
+		if err != nil {
+			return []types.NodeID{}, err
+		}
+		return []types.NodeID{nodeID}, nil
 	}
 
 	peerMap := fs.cluster.GetAvailablePeerMap()
@@ -479,8 +500,11 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Cont
 		requiredSuccesses = len(targetNodes)
 	}
 
-	attempted, skipped, successes, err, fullySkipped := fs.tryForwardToNodesFromFile(ctx, path, metadataJSON, contentPath, contentType, targetNodes, peerMap, time.Now(), size, nil, requiredSuccesses)
+	attempted, skipped, successes, err, fullySkipped := fs.tryForwardToNodesFromFile(ctx, path, metadataJSON, contentPath, contentType, targetNodes, peerMap, meta.ModifiedAt, size, nil, requiredSuccesses)
 	if err != nil {
+		if len(successes) > 0 {
+			err = nil
+		}
 		return successes, err
 	}
 

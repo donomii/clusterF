@@ -951,7 +951,10 @@ func (c *Cluster) runPartitionReindex(ctx context.Context) {
 func (c *Cluster) runPartitionHolderRefresh(ctx context.Context) {
 
 	for {
-		c.rebuildPartitionHolderMap()
+		if ctx.Err() != nil {
+			return
+		}
+		c.rebuildPartitionHolderMap(ctx)
 		c.debugf("Rebuilt partition holder map")
 		time.Sleep(5 * time.Second)
 	}

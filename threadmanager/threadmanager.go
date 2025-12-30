@@ -67,7 +67,7 @@ func NewThreadManager(nodeID string, logger *log.Logger) *ThreadManager {
 		threads:         syncmap.NewSyncMap[string, *ThreadInfo](),
 		ctx:             ctx,
 		cancel:          cancel,
-		shutdownTimeout: 15 * time.Second, // Default 15s shutdown timeout
+		shutdownTimeout: 12 * time.Second, // Default shutdown timeout tuned for quick cluster teardown
 		shuttingDown:    false,
 		monitorCtx:      monitorCtx,
 		monitorCancel:   monitorCancel,
@@ -177,6 +177,21 @@ func (tm *ThreadManager) checkAndRestartThreads() {
 // SetShutdownTimeout configures how long to wait for threads to shut down
 func (tm *ThreadManager) SetShutdownTimeout(timeout time.Duration) {
 	tm.shutdownTimeout = timeout
+}
+
+func (tm *ThreadManager) waitForThreads(threads map[string]*ThreadInfo, done chan struct{}) {
+	defer close(done)
+
+	var wg sync.WaitGroup
+	for name, info := range threads {
+		wg.Add(1)
+		go func(threadName string, threadInfo *ThreadInfo) {
+			defer wg.Done()
+			<-threadInfo.Done
+			tm.Debugf("Thread '%s' shutdown signal received", threadName)
+		}(name, info)
+	}
+	wg.Wait()
 }
 
 // StartThread starts a managed goroutine with the given name and function
@@ -340,26 +355,17 @@ func (tm *ThreadManager) Shutdown() []string {
 	tm.Debugf("Waiting for %d threads to shutdown: %v",
 		len(threadsToWaitFor), getThreadNames(threadsToWaitFor))
 
-	// Wait for all threads to finish with timeout
 	shutdownComplete := make(chan struct{})
-	go func() {
-		defer close(shutdownComplete)
-		for name, info := range threadsToWaitFor {
-			select {
-			case <-info.Done:
-				tm.Debugf("Thread '%s' shutdown gracefully", name)
-			case <-time.After(tm.shutdownTimeout):
-				tm.Debugf("Thread '%s' shutdown timeout", name)
-			}
-		}
-	}()
+	go tm.waitForThreads(threadsToWaitFor, shutdownComplete)
 
-	// Wait for shutdown to complete or timeout
+	timer := time.NewTimer(tm.shutdownTimeout)
+	defer timer.Stop()
+
 	select {
 	case <-shutdownComplete:
 		tm.Debugf("All threads shutdown completed")
-	case <-time.After(tm.shutdownTimeout + 1*time.Second):
-		tm.Debugf("Shutdown timeout exceeded")
+	case <-timer.C:
+		tm.Debugf("Shutdown timeout exceeded after %v, threads: %v", tm.shutdownTimeout, getThreadNames(threadsToWaitFor))
 	}
 
 	// Wait for monitor to finish

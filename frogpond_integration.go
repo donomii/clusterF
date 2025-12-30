@@ -308,7 +308,7 @@ func (c *Cluster) GetAllNodes() map[types.NodeID]*types.NodeData {
 }
 
 // rebuildPartitionHolderMap refreshes the in-memory partition->holders map from nodePartitions/* entries.
-func (c *Cluster) rebuildPartitionHolderMap() {
+func (c *Cluster) rebuildPartitionHolderMap(ctx context.Context) {
 	types.Assert(c.frogpond != nil, "frogpond must be initialized before rebuilding partition holder map")
 	updates := c.frogpond.DeleteAllMatchingPrefix("partitions")
 	c.sendUpdatesToPeers(updates)
@@ -320,6 +320,9 @@ func (c *Cluster) rebuildPartitionHolderMap() {
 	newMap := syncmap.NewSyncMap[types.PartitionID, []types.NodeID]()
 
 	for _, dp := range dataPoints {
+		if ctx.Err() != nil {
+			return
+		}
 		if dp.Deleted || len(dp.Value) == 0 {
 			continue
 		}
@@ -337,6 +340,9 @@ func (c *Cluster) rebuildPartitionHolderMap() {
 		}
 
 		for _, num := range partitionNumbers {
+			if ctx.Err() != nil {
+				return
+			}
 			pid, ok := partitionIDFromNumber(num)
 			types.Assertf(ok, "Partition number %d is invalid", num)
 			set := next[pid]
@@ -350,6 +356,9 @@ func (c *Cluster) rebuildPartitionHolderMap() {
 
 	// Store updated holders
 	for pid, holderSet := range next {
+		if ctx.Err() != nil {
+			return
+		}
 		holders := make([]types.NodeID, 0, len(holderSet))
 		for nodeID := range holderSet {
 			holders = append(holders, nodeID)

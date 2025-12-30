@@ -297,22 +297,19 @@ func parallelMapWithResults[T, R any](items []T, fn func(T) R) []R {
 }
 
 // parallelMapWithErrors applies a function and collects both results and errors
-func parallelMapWithErrors[T, R any](items []T, fn func(T) (R, error), maxConcurrency int) ([]R, []error) {
+func parallelMapWithErrors[T, R any](items []T, fn func(T) (R, error)) ([]R, []error) {
 	if len(items) == 0 {
 		return nil, nil
 	}
 
 	results := make([]R, len(items))
 	errors := make([]error, len(items))
-	sem := make(chan struct{}, maxConcurrency)
 	var wg sync.WaitGroup
 
 	for i, item := range items {
 		wg.Add(1)
 		go func(i int, item T) {
 			defer wg.Done()
-			sem <- struct{}{}        // Acquire semaphore
-			defer func() { <-sem }() // Release semaphore
 			results[i], errors[i] = fn(item)
 		}(i, item)
 	}

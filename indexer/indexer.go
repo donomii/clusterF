@@ -28,8 +28,9 @@ const (
 )
 
 type indexedSearchEntry struct {
-	path string
-	id   uint64
+	path        string // full path stored in the trie
+	displayPath string // collapsed path used for presenting search results
+	id          uint64
 }
 
 // Indexer maintains an in-memory index of files for fast searching
@@ -100,7 +101,7 @@ func (b *trieBackend) PrefixSearch(prefix string) []indexedSearchEntry {
 			return nil
 		}
 		key := string(path)
-		resultMap[key] = indexedSearchEntry{path: key, id: docID}
+		resultMap[key] = indexedSearchEntry{path: key, displayPath: key, id: docID}
 		return nil
 	})
 
@@ -119,8 +120,17 @@ func (b *trieBackend) PrefixSearchInferDirectories(prefix string) []indexedSearc
 		if !ok {
 			return nil
 		}
-		key := types.CollapseToDirectory(string(path), prefix) //We don't trim the prefix here, we return the full path
-		resultMap[key] = indexedSearchEntry{path: key, id: docID}
+		fullPath := string(path)
+		displayPath := types.CollapseToDirectory(fullPath, prefix) // collapse for presentation
+		if existing, ok := resultMap[displayPath]; ok {
+			// Keep the first full path we saw for metadata lookup
+			if existing.path == "" {
+				existing.path = fullPath
+				resultMap[displayPath] = existing
+			}
+			return nil
+		}
+		resultMap[displayPath] = indexedSearchEntry{path: fullPath, displayPath: displayPath, id: docID}
 		return nil
 	})
 
@@ -322,12 +332,15 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 
 	resultMap := make(map[string]types.SearchResult)
 	for _, entry := range raw {
-		if strings.HasSuffix(entry.path, "/") {
+		displayPath := entry.displayPath
+		types.Assertf(displayPath != "", "displayPath can never be empty for path %v", entry.path)
+
+		if strings.HasSuffix(displayPath, "/") {
 			now := time.Now()
-			sum := sha256.Sum256([]byte(fmt.Sprintf("%v%v", entry.path, now.UnixNano())))
+			sum := sha256.Sum256([]byte(fmt.Sprintf("%v%v", displayPath, now.UnixNano())))
 			meta := types.FileMetadata{
-				Name:        filepath.Base(entry.path),
-				Path:        entry.path,
+				Name:        filepath.Base(displayPath),
+				Path:        displayPath,
 				Size:        0,
 				ContentType: "application/directory",
 				IsDirectory: true,
@@ -335,14 +348,14 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 				CreatedAt:   now,
 				ModifiedAt:  now,
 			}
-			types.AddResultToMap(buildSearchResult(entry.path, meta), resultMap, entry.path, prefix)
+			types.AddResultToMap(buildSearchResult(entry.path, meta), resultMap, displayPath, prefix)
 
 		} else {
 			meta, ok := idx.loadMetadata(entry.path)
 			if !ok || meta.Deleted {
 				continue
 			}
-			types.AddResultToMap(buildSearchResult(entry.path, meta), resultMap, entry.path, prefix)
+			types.AddResultToMap(buildSearchResult(entry.path, meta), resultMap, displayPath, prefix)
 		}
 	}
 
