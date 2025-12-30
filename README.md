@@ -1,4 +1,4 @@
-# 🐸 clusterF
+# 🐸 ClusterF 🐸 
 
 The F stands for frog
 
