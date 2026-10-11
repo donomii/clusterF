@@ -2,7 +2,6 @@
 package webdav
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -112,6 +111,9 @@ func NewClusterFileSystem(fs types.FileSystemLike, clusterDir string) *ClusterFi
 		if len(clusterDir) > 1 && strings.HasSuffix(clusterDir, "/") {
 			clusterDir = clusterDir[:len(clusterDir)-1]
 		}
+		if clusterDir == "/" {
+			clusterDir = ""
+		}
 	}
 
 	return &ClusterFileSystem{
@@ -130,7 +132,7 @@ func (cfs *ClusterFileSystem) clusterPath(name string) string {
 		if name == "/" {
 			return cfs.clusterDir
 		}
-		return cfs.clusterDir + name
+		return path.Join(cfs.clusterDir, name)
 	}
 
 	// No filter - use path as-is
@@ -162,7 +164,7 @@ func (cfs *ClusterFileSystem) shouldServePath(clusterPath string) bool {
 		return true
 	}
 	// With filter - only serve paths within the cluster directory
-	return clusterPath == cfs.clusterDir || strings.HasPrefix(clusterPath, cfs.clusterDir)
+	return cfs.clusterDir == "/" || clusterPath == cfs.clusterDir || strings.HasPrefix(clusterPath, cfs.clusterDir+"/")
 }
 
 // Open opens a file for reading
@@ -177,14 +179,13 @@ func (cfs *ClusterFileSystem) Open(ctx context.Context, name string) (io.ReadClo
 		return nil, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("path not found"))
 	}
 
-	data, _, err := cfs.fs.GetFile(clusterPath) // Is now only local, need getfrompeers here
+	reader, _, err := cfs.fs.GetFileReaderFromCluster(ctx, clusterPath)
 	if err != nil {
 		cfs.debugf("[WEBDAV] Open: GetFile failed: %v", err)
 		return nil, webdav.NewHTTPError(http.StatusNotFound, err)
 	}
 
-	cfs.debugf("[WEBDAV] Open: successfully read %d bytes", len(data))
-	return io.NopCloser(bytes.NewReader(data)), nil
+	return reader, nil
 }
 
 // Stat returns file information
@@ -200,10 +201,13 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 	}
 
 	// First try to get basic metadata
-	metaS, err := cfs.fs.MetadataForPath(clusterPath) //local
+	metaS, err := cfs.fs.MetadataViaAPI(ctx, clusterPath)
 	meta := &metaS
 	if err != nil {
 		cfs.debugf("[WEBDAV] Stat: MetadataForPath failed: %v", err)
+		if !errors.Is(err, types.ErrFileNotFound) {
+			return nil, webdav.NewHTTPError(http.StatusInternalServerError, err)
+		}
 		return cfs.fakeStatIfNotFound(clusterPath)
 	}
 
@@ -224,18 +228,11 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 	}
 
 	// Determine content type
-	contentType := "application/octet-stream"
+	contentType := meta.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
 	if !meta.IsDirectory {
-		// For files, try to get full metadata to get content type
-		if _, fullMeta, err := cfs.fs.GetFile(clusterPath); err == nil {
-			if fullMeta.ContentType != "" {
-				contentType = fullMeta.ContentType
-			}
-			// Also use checksum from full metadata if not available in basic meta
-			if meta.Checksum == "" && fullMeta.Checksum != "" {
-				etag = fmt.Sprintf("\"%s\"", fullMeta.Checksum)
-			}
-		}
 		// Fallback to extension-based detection
 		if contentType == "application/octet-stream" {
 			if ext := path.Ext(name); ext != "" {
@@ -258,31 +255,35 @@ func (cfs *ClusterFileSystem) Stat(ctx context.Context, name string) (*webdav.Fi
 }
 
 func (cfs *ClusterFileSystem) fakeStatIfNotFound(clusterPath string) (*webdav.FileInfo, error) {
-	if !strings.HasSuffix(clusterPath, "/") {
-		return nil, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("path not found"))
-	}
-	// If the path doesn't exist, we can fake a directory if it looks like one
+	// Directories are inferred from their descendants rather than stored as files.
 	dps, err := cfs.fs.ListDirectory(clusterPath)
 	if err != nil {
 		return nil, webdav.NewHTTPError(http.StatusNotFound, err)
 	}
 
-	if len(dps) == 0 {
-		return nil, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("path not found"))
+	isRoot := cfs.webdavPath(clusterPath) == "/"
+	if len(dps) == 0 && !isRoot {
+		return nil, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("%w: %s", types.ErrFileNotFound, clusterPath))
 	}
 
-	if dps != nil {
+	modTime := time.Unix(0, 0)
+	for _, entry := range dps {
+		if entry.ModifiedAt.After(modTime) {
+			modTime = entry.ModifiedAt
+		}
+	}
+	if len(dps) > 0 || isRoot {
 		return &webdav.FileInfo{
-			Path:     clusterPath,
+			Path:     cfs.webdavPath(clusterPath),
 			Size:     0,
-			ModTime:  dps[0].ModifiedAt, //FIXME use the latest modified time from the list
+			ModTime:  modTime,
 			IsDir:    true,
 			MIMEType: "application/directory",
-			ETag:     fmt.Sprintf("%x", dps[0].ModifiedAt.UnixNano()),
+			ETag:     fmt.Sprintf("%x", modTime.UnixNano()),
 		}, nil
 
 	}
-	return nil, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("path not found"))
+	return nil, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("%w: %s", types.ErrFileNotFound, clusterPath))
 }
 
 // ReadDir lists directory contents
@@ -380,7 +381,7 @@ func (cfs *ClusterFileSystem) Create(ctx context.Context, name string) (io.Write
 		return nil, webdav.NewHTTPError(http.StatusForbidden, fmt.Errorf("path not allowed"))
 	}
 
-	if meta, err := cfs.fs.MetadataForPath(clusterPath); err != nil {
+	if meta, err := cfs.fs.MetadataViaAPI(ctx, clusterPath); err != nil {
 		if !errors.Is(err, types.ErrFileNotFound) {
 			return nil, webdav.NewHTTPError(http.StatusInternalServerError, err)
 		}
@@ -412,9 +413,21 @@ func (cfs *ClusterFileSystem) RemoveAll(ctx context.Context, name string) error 
 	}
 
 	// Check if the path exists first
-	_, err := cfs.fs.MetadataForPath(clusterPath)
+	info, err := cfs.Stat(ctx, name)
 	if err != nil {
-		return webdav.NewHTTPError(http.StatusNotFound, err)
+		return err
+	}
+	if info.IsDir {
+		entries, err := cfs.fs.ListDirectory(clusterPath)
+		if err != nil {
+			return webdav.NewHTTPError(http.StatusInternalServerError, err)
+		}
+		for _, entry := range entries {
+			if err := cfs.RemoveAll(ctx, cfs.webdavPath(entry.Path)); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	// Delete the file/directory
@@ -436,8 +449,10 @@ func (cfs *ClusterFileSystem) Mkdir(ctx context.Context, name string) error {
 	}
 
 	// Check if directory already exists
-	if _, err := cfs.fs.MetadataForPath(clusterPath); err == nil {
+	if _, err := cfs.Stat(ctx, name); err == nil {
 		return webdav.NewHTTPError(http.StatusMethodNotAllowed, fmt.Errorf("directory already exists"))
+	} else if !errors.Is(err, types.ErrFileNotFound) {
+		return err
 	}
 
 	// Create the directory
@@ -515,20 +530,23 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 	}
 
 	// Check if source exists
-	srcMeta, err := cfs.fs.MetadataForPath(srcClusterPath)
+	srcMeta, err := cfs.Stat(ctx, src)
 	if err != nil {
-		return false, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("source not found"))
+		return false, err
 	}
 
 	// Check if destination exists
-	_, dstErr := cfs.fs.MetadataForPath(dstClusterPath)
+	_, dstErr := cfs.Stat(ctx, dst)
+	if dstErr != nil && !errors.Is(dstErr, types.ErrFileNotFound) {
+		return false, dstErr
+	}
 	created = dstErr != nil
 
 	if !created && options != nil && options.NoOverwrite {
 		return false, webdav.NewHTTPError(http.StatusPreconditionFailed, fmt.Errorf("destination exists"))
 	}
 
-	if srcMeta.IsDirectory {
+	if srcMeta.IsDir {
 		// Copy directory (simplified - just create empty directory)
 		if err := cfs.fs.CreateDirectory(dstClusterPath); err != nil {
 			return false, webdav.NewHTTPError(http.StatusInternalServerError, err)
@@ -542,7 +560,7 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 			}
 
 			for _, entry := range entries {
-				if !strings.HasPrefix(entry.Path, srcClusterPath+"/") {
+				if !strings.HasPrefix(entry.Path, strings.TrimSuffix(srcClusterPath, "/")+"/") {
 					continue
 				}
 
@@ -552,21 +570,13 @@ func (cfs *ClusterFileSystem) Copy(ctx context.Context, src, dst string, options
 				if entry.ModifiedAt.IsZero() {
 					panic("no")
 				}
-				if entry.IsDirectory {
-					cfs.fs.CreateDirectory(newDstPath)
-				} else {
-					reader, meta, err := cfs.fs.GetFileReader(entry.Path)
-					if err != nil {
-						continue // Skip files that can't be read
-					}
-					if err := cfs.insertFromReader(ctx, newDstPath, reader, meta); err != nil {
-						continue
-					}
+				if _, err := cfs.Copy(ctx, cfs.webdavPath(entry.Path), cfs.webdavPath(newDstPath), options); err != nil {
+					return false, err
 				}
 			}
 		}
 	} else {
-		reader, fullMeta, err := cfs.fs.GetFileReader(srcClusterPath)
+		reader, fullMeta, err := cfs.fs.GetFileReaderFromCluster(ctx, srcClusterPath)
 		if err != nil {
 			return false, webdav.NewHTTPError(http.StatusInternalServerError, err)
 		}
@@ -595,13 +605,16 @@ func (cfs *ClusterFileSystem) Move(ctx context.Context, src, dst string, options
 	}
 
 	// Check if source exists
-	_, err = cfs.fs.MetadataForPath(srcClusterPath)
+	_, err = cfs.Stat(ctx, src)
 	if err != nil {
-		return false, webdav.NewHTTPError(http.StatusNotFound, fmt.Errorf("source not found"))
+		return false, err
 	}
 
 	// Check if destination exists
-	_, dstErr := cfs.fs.MetadataForPath(dstClusterPath)
+	_, dstErr := cfs.Stat(ctx, dst)
+	if dstErr != nil && !errors.Is(dstErr, types.ErrFileNotFound) {
+		return false, dstErr
+	}
 	created = dstErr != nil
 
 	if !created && options != nil && options.NoOverwrite {

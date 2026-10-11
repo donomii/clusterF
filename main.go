@@ -33,7 +33,8 @@ func main() {
 	// Parse command line flags
 	simNodes := flag.Int("sim-nodes", 0, "Run in simulation mode with N nodes")
 	basePort := flag.Int("base-port", 30000, "Base port for simulation nodes")
-	discoveryPort := flag.Int("discovery-port", 9999, "Discovery port for all nodes")
+	discoveryPort := flag.Int("discovery-port", broadcastPortFromEnv(), "Discovery port for all nodes (default 9999; CLUSTER_BCAST_PORT may override)")
+	discoveryMode := flag.String("discovery-mode", discoveryModeFromEnv(), "Peer discovery transport: udp uses LAN broadcasts; local discovers nodes in this process using loopback addresses (default udp; CLUSTER_DISCOVERY_MODE may override)")
 	dataDir := flag.String("data-dir", "", "Base data directory for simulation")
 	nodeID := flag.String("node-id", "", "Node ID (if not specified, will be loaded from or generated for the data directory)")
 	noDesktop := flag.Bool("no-desktop", false, "Do not open the desktop drop window")
@@ -52,6 +53,12 @@ func main() {
 	encryptionKey := flag.String("encryption-key", "", "Encryption key for at-rest encryption (required at init, then at every start)")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
+	if *discoveryMode != "udp" && *discoveryMode != "local" {
+		logInvalidDiscoveryMode(*discoveryMode)
+	}
+	if err := os.Setenv("CLUSTER_DISCOVERY_MODE", *discoveryMode); err != nil {
+		logDiscoveryModeConfigurationFailure(*discoveryMode, err)
+	}
 
 	if *showVersion {
 		fmt.Printf("clusterF %s (commit %s, built %s)\n", version, commit, date)
@@ -87,7 +94,7 @@ func main() {
 			}
 		}
 
-		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *excludeDirs, *webdavDir, *nodeID, *dataDir, *httpPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor, *encryptionKey)
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *excludeDirs, *webdavDir, *nodeID, *dataDir, *httpPort, *discoveryPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor, *encryptionKey)
 	}
 }
 
@@ -227,7 +234,7 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, excludeDirs string, webdavDir string, nodeID string, dataDir string, httpPort int, debug bool, noStore bool, profiling bool, storageMajor string, storageMinor string, encryptionKey string) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, excludeDirs string, webdavDir string, nodeID string, dataDir string, httpPort int, discoveryPort int, debug bool, noStore bool, profiling bool, storageMajor string, storageMinor string, encryptionKey string) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
 		ID:            nodeID,
@@ -237,6 +244,7 @@ func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterD
 		ImportDir:     importDir,
 		ExcludeDirs:   excludeDirs,
 		HTTPDataPort:  httpPort,
+		DiscoveryPort: discoveryPort,
 		NoStore:       noStore,
 		StorageMajor:  storageMajor,
 		StorageMinor:  storageMinor,
@@ -402,6 +410,13 @@ Press Ctrl+C to stop...
 	for {
 		time.Sleep(1 * time.Second)
 	}
+}
+
+func discoveryModeFromEnv() string {
+	if mode := os.Getenv("CLUSTER_DISCOVERY_MODE"); mode != "" {
+		return mode
+	}
+	return "udp"
 }
 
 // CheckSuccessWithTimeout polls a condition function until it returns true or times out.

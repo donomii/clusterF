@@ -1,7 +1,9 @@
 package partitionmanager
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/metrics"
+	"github.com/donomii/clusterF/storagecrypto"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	ensemblekv "github.com/donomii/ensemblekv"
@@ -21,7 +24,7 @@ type FileStore struct {
 	baseDir        string                                 //Holds the partitions directories
 	partitionLocks syncmap.SyncMap[string, *sync.RWMutex] // map[string]*sync.RWMutex - per-partition locks
 	debugLog       bool
-	encryptionKey  []byte // XOR encryption key (nil = no encryption)
+	encryptionKey  []byte // Derived encryption key (nil = no encryption)
 	storageMajor   string // storage format major (ensemble or bolt)
 	storageMinor   string // storage format minor (ensemble or bolt)
 	// Handle caches
@@ -87,34 +90,6 @@ func (fs *FileStore) Close() {
 // SetEncryptionKey sets the encryption key for this FileStore
 func (fs *FileStore) SetEncryptionKey(key []byte) {
 	fs.encryptionKey = key
-}
-
-// xorEncrypt performs XOR encryption/decryption on data
-func (fs *FileStore) xorEncrypt(data []byte) []byte {
-	if len(fs.encryptionKey) == 0 || len(data) == 0 {
-		return data
-	}
-	result := make([]byte, len(data))
-	for i := range data {
-		result[i] = data[i] ^ fs.encryptionKey[i%len(fs.encryptionKey)]
-	}
-	return result
-}
-
-// encrypt encrypts both metadata and content
-func (fs *FileStore) encrypt(metadata, content []byte) ([]byte, []byte) {
-	if len(fs.encryptionKey) == 0 {
-		return metadata, content
-	}
-	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
-}
-
-// decrypt decrypts both metadata and content
-func (fs *FileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
-	if len(fs.encryptionKey) == 0 {
-		return metadata, content
-	}
-	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
 }
 
 func (fs *FileStore) debugf(format string, args ...interface{}) {
@@ -214,10 +189,11 @@ func (fs *FileStore) Get(path string) ([]byte, []byte, bool, error) {
 	storeID := types.ExtractPartitionStoreID(partition)
 
 	start := time.Now()
-	fs.rLockPartition(storeID)
+	partitionLock := fs.getPartitionLock(storeID)
+	partitionLock.RLock()
 	//fs.debugf("Get: acquired read lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.runLockPartition(storeID)
+		partitionLock.RUnlock()
 		fs.debugf("Get: released read lock for partition store %s after %v", storeID, time.Since(start))
 	}()
 
@@ -238,34 +214,20 @@ func (fs *FileStore) Get(path string) ([]byte, []byte, bool, error) {
 		metrics.IncrementGlobalCounter("filestore.get.notfound")
 		return nil, nil, false, fmt.Errorf("file not found in store: %v, %v", metaErr, contentErr)
 	}
+	if metaErr != nil || contentErr != nil {
+		return nil, nil, false, fmt.Errorf("incomplete stored file %s: metadata error=%v, content error=%v", path, metaErr, contentErr)
+	}
 
 	// Decrypt data
-	metadata, content = fs.decrypt(metadata, content)
+	metadata, content, err = decodeStoredPair(fs.encryptionKey, path, metadata, content)
+	if err != nil {
+		return nil, nil, false, err
+	}
 
 	metrics.IncrementGlobalCounter("filestore.get.success")
 	metrics.AddGlobalCounter("filestore.get.metadata_bytes", int64(len(metadata)))
 	metrics.AddGlobalCounter("filestore.get.content_bytes", int64(len(content)))
 	return metadata, content, true, nil
-}
-
-func (fs *FileStore) rLockPartition(partitionStoreID types.PartitionStore) {
-	// := fs.getPartitionLock(partitionStoreID)
-	//lock.RLock()
-}
-
-func (fs *FileStore) runLockPartition(partitionStoreID types.PartitionStore) {
-	//lock := fs.getPartitionLock(partitionStoreID)
-	//lock.RUnlock()
-}
-
-func (fs *FileStore) lockPartition(partitionStoreID types.PartitionStore) {
-	//lock := fs.getPartitionLock(partitionStoreID)
-	//lock.Lock()
-}
-
-func (fs *FileStore) unLockPartition(partitionStoreID types.PartitionStore) {
-	//lock := fs.getPartitionLock(partitionStoreID)
-	//lock.Unlock()
 }
 
 // GetMetadata retrieves only metadata
@@ -277,10 +239,11 @@ func (fs *FileStore) GetMetadata(path string) ([]byte, error) {
 	storeID := types.ExtractPartitionStoreID(partition)
 
 	start := time.Now()
-	fs.rLockPartition(storeID)
+	partitionLock := fs.getPartitionLock(storeID)
+	partitionLock.RLock()
 	//fs.debugf("GetMetadata: acquired read lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.runLockPartition(storeID)
+		partitionLock.RUnlock()
 		fs.debugf("GetMetadata: released read lock for partition store %s after %v", storeID, time.Since(start))
 	}()
 
@@ -296,7 +259,7 @@ func (fs *FileStore) GetMetadata(path string) ([]byte, error) {
 	exists := metadataKV.Exists(keyBytes)
 	if !exists {
 		metrics.IncrementGlobalCounter("filestore.get_metadata.notfound")
-		return nil, fmt.Errorf("not found: %s", path)
+		return nil, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
 	}
 
 	metadata, err := metadataKV.Get(keyBytes)
@@ -306,8 +269,9 @@ func (fs *FileStore) GetMetadata(path string) ([]byte, error) {
 	}
 
 	// Decrypt metadata
-	if len(fs.encryptionKey) > 0 {
-		metadata, _ = fs.decrypt(metadata, nil)
+	metadata, err = storagecrypto.Decode(fs.encryptionKey, "metadata:"+path, metadata)
+	if err != nil {
+		return nil, err
 	}
 
 	metrics.IncrementGlobalCounter("filestore.get_metadata.success")
@@ -323,8 +287,9 @@ func (fs *FileStore) GetContent(path string) ([]byte, error) {
 	partition := types.PartitionIDForPath(path)
 	storeID := types.ExtractPartitionStoreID(partition)
 
-	fs.rLockPartition(storeID)
-	defer fs.runLockPartition(storeID)
+	partitionLock := fs.getPartitionLock(storeID)
+	partitionLock.RLock()
+	defer partitionLock.RUnlock()
 
 	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 	if err != nil {
@@ -340,8 +305,9 @@ func (fs *FileStore) GetContent(path string) ([]byte, error) {
 	}
 
 	// Decrypt content
-	if len(fs.encryptionKey) > 0 {
-		_, content = fs.decrypt(nil, content)
+	content, err = storagecrypto.Decode(fs.encryptionKey, "content:"+path, content)
+	if err != nil {
+		return nil, err
 	}
 
 	metrics.IncrementGlobalCounter("filestore.get_content.success")
@@ -359,11 +325,12 @@ func (fs *FileStore) Put(path string, metadata, content []byte) error {
 
 	fs.debugf("Put: acquiring write lock for partition store %s, path %s", storeID, path)
 	//start := time.Now()
-	fs.lockPartition(storeID)
+	partitionLock := fs.getPartitionLock(storeID)
+	partitionLock.Lock()
 
 	//fs.debugf("Put: acquired write lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.unLockPartition(storeID)
+		partitionLock.Unlock()
 		fs.debugf("Put: released write lock for partition store %s", storeID)
 	}()
 
@@ -377,25 +344,58 @@ func (fs *FileStore) Put(path string, metadata, content []byte) error {
 	keyBytes := encodeStoreKey(partition, path)
 
 	// Encrypt data before storing
-	encMetadata, encContent := fs.encrypt(metadata, content)
+	encMetadata, encContent, err := encodeStoredPair(fs.encryptionKey, path, metadata, content)
+	if err != nil {
+		return err
+	}
 
+	previousMetadata, metadataExisted, err := snapshotKVValue(metadataKV, keyBytes)
+	if err != nil {
+		return err
+	}
+	previousContent, contentExisted, err := snapshotKVValue(contentKV, keyBytes)
+	if err != nil {
+		return err
+	}
 	if err := metadataKV.Put(keyBytes, encMetadata); err != nil {
 		metrics.IncrementGlobalCounter("filestore.put.errors")
-		return fmt.Errorf("failed to store metadata: %v", err)
+		return errors.Join(fmt.Errorf("failed to store metadata for %s: %w", path, err), restoreKVValue(metadataKV, keyBytes, previousMetadata, metadataExisted))
 	}
 	fs.debugf("Wrote file metadata %s to partition %s", path, partition)
 
 	if err := contentKV.Put(keyBytes, encContent); err != nil {
-		// Try to rollback metadata
-		metadataKV.Delete(keyBytes)
+		// Restore both previous values if either backend write failed.
+		metadataErr := restoreKVValue(metadataKV, keyBytes, previousMetadata, metadataExisted)
+		contentErr := restoreKVValue(contentKV, keyBytes, previousContent, contentExisted)
 		metrics.IncrementGlobalCounter("filestore.put.errors")
-		return fmt.Errorf("failed to store content: %v", err)
+		return errors.Join(fmt.Errorf("failed to store content for %s: %w", path, err), metadataErr, contentErr)
 	}
 	fs.debugf("Wrote file %s to partition %s", path, partition)
 
 	metrics.IncrementGlobalCounter("filestore.put.success")
 	metrics.AddGlobalCounter("filestore.put.metadata_bytes", int64(len(metadata)))
 	metrics.AddGlobalCounter("filestore.put.content_bytes", int64(len(content)))
+	return nil
+}
+
+func snapshotKVValue(store ensemblekv.KvLike, key []byte) ([]byte, bool, error) {
+	if !store.Exists(key) {
+		return nil, false, nil
+	}
+	value, err := store.Get(key)
+	return bytes.Clone(value), true, err
+}
+
+func restoreKVValue(store ensemblekv.KvLike, key, value []byte, existed bool) error {
+	var err error
+	if existed {
+		err = store.Put(key, value)
+	} else {
+		err = store.Delete(key)
+	}
+	if err != nil {
+		return fmt.Errorf("restoring previous value for %s: %w", key, err)
+	}
 	return nil
 }
 
@@ -409,11 +409,12 @@ func (fs *FileStore) PutMetadata(path string, metadata []byte) error {
 
 	fs.debugf("PutMetadata: acquiring write lock for partition store %s, path %s", storeID, path)
 	start := time.Now()
-	fs.lockPartition(storeID)
+	partitionLock := fs.getPartitionLock(storeID)
+	partitionLock.Lock()
 
 	fs.debugf("PutMetadata: acquired write lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.unLockPartition(storeID)
+		partitionLock.Unlock()
 		fs.debugf("PutMetadata: released write lock for partition store %s", storeID)
 	}()
 
@@ -427,8 +428,9 @@ func (fs *FileStore) PutMetadata(path string, metadata []byte) error {
 	keyBytes := encodeStoreKey(partition, path)
 
 	// Encrypt metadata
-	if len(fs.encryptionKey) > 0 {
-		metadata, _ = fs.encrypt(metadata, nil)
+	metadata, err = storagecrypto.Encode(fs.encryptionKey, "metadata:"+path, metadata)
+	if err != nil {
+		return err
 	}
 
 	if err := metadataKV.Put(keyBytes, metadata); err != nil {
@@ -452,11 +454,12 @@ func (fs *FileStore) Delete(path string) error {
 
 	fs.debugf("Delete: acquiring write lock for partition store %s, path %s", storeID, path)
 	//start := time.Now()
-	fs.lockPartition(storeID)
+	partitionLock := fs.getPartitionLock(storeID)
+	partitionLock.Lock()
 
 	//fs.debugf("Delete: acquired write lock for partition store %s after %v", storeID, time.Since(start))
 	defer func() {
-		fs.unLockPartition(storeID)
+		partitionLock.Unlock()
 		fs.debugf("Delete: released write lock for partition store %s", storeID)
 	}()
 
@@ -469,9 +472,11 @@ func (fs *FileStore) Delete(path string) error {
 
 	keyBytes := encodeStoreKey(partition, path)
 
-	// Delete from both stores - ignore individual errors
-	metadataKV.Delete(keyBytes)
-	contentKV.Delete(keyBytes)
+	metadataErr := metadataKV.Delete(keyBytes)
+	contentErr := contentKV.Delete(keyBytes)
+	if err := errors.Join(metadataErr, contentErr); err != nil {
+		return fmt.Errorf("deleting stored file %s: %w", path, err)
+	}
 
 	metrics.IncrementGlobalCounter("filestore.delete.success")
 	return nil
@@ -497,12 +502,13 @@ func (fs *FileStore) Scan(pathPrefix string, fn func(path string, metadata, cont
 		metrics.AddGlobalCounter("filestore.scan.partition_attempts", 1)
 		fs.debugf("Scan: acquiring read lock for partition store %s", storeID)
 		start := time.Now()
-		fs.rLockPartition(storeID)
+		partitionLock := fs.getPartitionLock(storeID)
+		partitionLock.RLock()
 
 		metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 		if err != nil {
 			metrics.IncrementGlobalCounter("filestore.scan.partition_errors")
-			fs.runLockPartition(storeID)
+			partitionLock.RUnlock()
 			continue // Skip this partition if it can't be opened
 		}
 
@@ -514,7 +520,8 @@ func (fs *FileStore) Scan(pathPrefix string, fn func(path string, metadata, cont
 		}
 		var entries []entry
 
-		_, mapErr := metadataKV.MapPrefixFunc([]byte(pathPrefix), func(k, v []byte) error {
+		prefix := fmt.Sprintf("partition:%s:file:%s", storeID, pathPrefix)
+		_, mapErr := metadataKV.MapPrefixFunc([]byte(prefix), func(k, v []byte) error {
 			_, filePath, err := decodeStoreKey(k)
 			if err != nil {
 				return err
@@ -538,32 +545,31 @@ func (fs *FileStore) Scan(pathPrefix string, fn func(path string, metadata, cont
 
 		if mapErr != nil {
 			fs.closePartitionStores(metadataKV, contentKV)
-			fs.runLockPartition(storeID)
+			partitionLock.RUnlock()
 			metrics.IncrementGlobalCounter("filestore.scan.errors")
 			return mapErr
 		}
 
 		// Get content for each key and call fn
+		partitionLock.RUnlock()
 		for _, entry := range entries {
-			content, _ := contentKV.Get(entry.keyBytes)
-			contentCopy := make([]byte, len(content))
-			copy(contentCopy, content)
-
-			decMetadata, decContent := fs.decrypt(entry.metadata, contentCopy)
+			decMetadata, decContent, _, err := fs.Get(entry.path)
+			if err != nil {
+				fs.closePartitionStores(metadataKV, contentKV)
+				return err
+			}
 			metrics.AddGlobalCounter("filestore.scan.entries", 1)
 			metrics.AddGlobalCounter("filestore.scan.metadata_bytes", int64(len(decMetadata)))
 			metrics.AddGlobalCounter("filestore.scan.content_bytes", int64(len(decContent)))
 
 			if err := fn(entry.path, decMetadata, decContent); err != nil {
 				fs.closePartitionStores(metadataKV, contentKV)
-				fs.runLockPartition(storeID)
 				metrics.IncrementGlobalCounter("filestore.scan.errors")
 				return err
 			}
 		}
 
 		fs.closePartitionStores(metadataKV, contentKV)
-		fs.runLockPartition(storeID)
 		fs.debugf("Scan: released read lock for partition store %s after %v", storeID, time.Since(start))
 	}
 
@@ -591,12 +597,13 @@ func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metada
 	for _, storeID := range partitions {
 		fs.debugf("ScanMetadata: acquiring read lock for partition store %s", storeID)
 
-		fs.rLockPartition(storeID)
+		partitionLock := fs.getPartitionLock(storeID)
+		partitionLock.RLock()
 
 		metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 		if err != nil {
 			metrics.IncrementGlobalCounter("filestore.scan_metadata.partition_errors")
-			fs.runLockPartition(storeID)
+			partitionLock.RUnlock()
 			continue // Skip this partition if it can't be opened
 		}
 
@@ -606,7 +613,8 @@ func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metada
 		}
 		var entries []entry
 
-		_, mapErr := metadataKV.MapPrefixFunc([]byte(pathPrefix), func(k, v []byte) error {
+		prefix := fmt.Sprintf("partition:%s:file:%s", storeID, pathPrefix)
+		_, mapErr := metadataKV.MapPrefixFunc([]byte(prefix), func(k, v []byte) error {
 			_, filePath, err := decodeStoreKey(k)
 			if err != nil {
 				metrics.IncrementGlobalCounter("filestore.scan_metadata.errors")
@@ -628,30 +636,30 @@ func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metada
 
 		if mapErr != nil {
 			fs.closePartitionStores(metadataKV, contentKV)
-			fs.runLockPartition(storeID)
+			partitionLock.RUnlock()
 			metrics.IncrementGlobalCounter("filestore.scan_metadata.errors")
 			return mapErr
 		}
 
 		// Call fn for each entry
+		partitionLock.RUnlock()
 		for _, entry := range entries {
-			decMetadata := entry.metadata
-			if len(fs.encryptionKey) > 0 {
-				decMetadata = fs.xorEncrypt(decMetadata)
+			decMetadata, err := storagecrypto.Decode(fs.encryptionKey, "metadata:"+entry.path, entry.metadata)
+			if err != nil {
+				fs.closePartitionStores(metadataKV, contentKV)
+				return err
 			}
 			metrics.AddGlobalCounter("filestore.scan_metadata.entries", 1)
 			metrics.AddGlobalCounter("filestore.scan_metadata.bytes", int64(len(decMetadata)))
 
 			if err := fn(entry.path, decMetadata); err != nil {
 				fs.closePartitionStores(metadataKV, contentKV)
-				fs.runLockPartition(storeID)
 				metrics.IncrementGlobalCounter("filestore.scan_metadata.errors")
 				return err
 			}
 		}
 
 		fs.closePartitionStores(metadataKV, contentKV)
-		fs.runLockPartition(storeID)
 		fs.debugf("ScanMetadata: released read lock for partition store %s after %v", storeID, time.Since(start))
 	}
 
@@ -671,11 +679,12 @@ func (fs *FileStore) ScanMetadataPartition(ctx context.Context, partitionID type
 	storeID := types.ExtractPartitionStoreID(partitionID)
 
 	fs.debugf("ScanMetadataPartition: acquiring read lock for partition store %s", storeID)
-	fs.rLockPartition(storeID)
-	defer fs.runLockPartition(storeID)
+	partitionLock := fs.getPartitionLock(storeID)
+	partitionLock.RLock()
 
 	metadataKV, contentKV, err := fs.openPartitionStores(storeID)
 	if err != nil {
+		partitionLock.RUnlock()
 		metrics.IncrementGlobalCounter("filestore.scan_metadata_partition.errors")
 		return err // Skip this partition if it can't be opened
 	}
@@ -687,13 +696,19 @@ func (fs *FileStore) ScanMetadataPartition(ctx context.Context, partitionID type
 	}
 	var entries []entry
 
-	// Use prefix search for the specific partition
-	prefix := fmt.Sprintf("partition:%s:file:", partitionID)
+	// Keys contain the grouped store ID, so filter paths to the requested partition.
+	prefix := fmt.Sprintf("partition:%s:file:", storeID)
 	_, mapErr := metadataKV.MapPrefixFunc([]byte(prefix), func(k, v []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		_, filePath, err := decodeStoreKey(k)
 		if err != nil {
 			metrics.IncrementGlobalCounter("filestore.scan_metadata_partition.errors")
 			return err
+		}
+		if types.PartitionIDForPath(filePath) != partitionID {
+			return nil
 		}
 
 		metaCopy := make([]byte, len(v))
@@ -707,15 +722,20 @@ func (fs *FileStore) ScanMetadataPartition(ctx context.Context, partitionID type
 	})
 
 	if mapErr != nil {
+		partitionLock.RUnlock()
 		metrics.IncrementGlobalCounter("filestore.scan_metadata_partition.errors")
 		return mapErr
 	}
 
 	// Call fn for each entry
+	partitionLock.RUnlock()
 	for _, entry := range entries {
-		decMetadata := entry.metadata
-		if len(fs.encryptionKey) > 0 {
-			decMetadata = fs.xorEncrypt(decMetadata)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		decMetadata, err := storagecrypto.Decode(fs.encryptionKey, "metadata:"+entry.path, entry.metadata)
+		if err != nil {
+			return err
 		}
 		metrics.AddGlobalCounter("filestore.scan_metadata_partition.entries", 1)
 		metrics.AddGlobalCounter("filestore.scan_metadata_partition.bytes", int64(len(decMetadata)))
