@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -22,6 +23,13 @@ type Transcoder struct {
 	maxCacheSize int64 // bytes
 	logger       *log.Logger
 	cacheEntries *syncmap.SyncMap[string, *CacheEntry]
+	inflight     *syncmap.SyncMap[string, *transcodeFlight]
+}
+
+type transcodeFlight struct {
+	done chan struct{}
+	path string
+	err  error
 }
 
 type CacheEntry struct {
@@ -35,6 +43,7 @@ type TranscodeRequest struct {
 	InputPath    string
 	ContentType  string
 	OutputFormat string // "web" for now
+	Checksum     string
 }
 
 func NewTranscoder(cacheDir string, maxCacheSize int64, logger *log.Logger) *Transcoder {
@@ -47,6 +56,7 @@ func NewTranscoder(cacheDir string, maxCacheSize int64, logger *log.Logger) *Tra
 		maxCacheSize: maxCacheSize,
 		logger:       logger,
 		cacheEntries: syncmap.NewSyncMap[string, *CacheEntry](),
+		inflight:     syncmap.NewSyncMap[string, *transcodeFlight](),
 	}
 
 	// Load existing cache entries
@@ -68,10 +78,8 @@ func (t *Transcoder) checkFFmpegAvailable() bool {
 // generateCacheKey creates a unique cache key for the transcode request
 func (t *Transcoder) generateCacheKey(req TranscodeRequest) string {
 	h := sha256.New()
-	h.Write([]byte(req.InputPath))
-	h.Write([]byte(req.ContentType))
-	h.Write([]byte(req.OutputFormat))
-	return fmt.Sprintf("%x", h.Sum(nil))[:16]
+	fmt.Fprintf(h, "%q|%q|%q|%s", req.InputPath, req.ContentType, req.OutputFormat, req.Checksum)
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // getCachedPath returns the filesystem path for a cached transcode
@@ -81,10 +89,55 @@ func (t *Transcoder) getCachedPath(cacheKey string, outputExt string) string {
 
 // TranscodeToWeb transcodes media to web-compatible format with streaming support
 func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, req TranscodeRequest) (string, error) {
-	if !t.checkFFmpegAvailable() {
-		return "", fmt.Errorf("ffmpeg not available")
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
+	// Hash the actual input so replacing a path cannot reuse a previous version's output.
+	tempInput, err := os.CreateTemp(t.cacheDir, "transcode_input_*")
+	if err != nil {
+		return "", fmt.Errorf("create transcode input for %s: %w", req.InputPath, err)
+	}
+	defer os.Remove(tempInput.Name())
+	defer tempInput.Close()
+	checksum := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tempInput, checksum), inputReader); err != nil {
+		return "", fmt.Errorf("read transcode input for %s: %w", req.InputPath, err)
+	}
+	if err := tempInput.Close(); err != nil {
+		return "", fmt.Errorf("close transcode input for %s: %w", req.InputPath, err)
+	}
+	req.Checksum = fmt.Sprintf("%x", checksum.Sum(nil))
+	cacheKey := t.generateCacheKey(req)
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		flight := &transcodeFlight{done: make(chan struct{})}
+		active, loaded := t.inflight.LoadOrStore(cacheKey, flight)
+		if loaded {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-active.done:
+				if errors.Is(active.err, context.Canceled) || errors.Is(active.err, context.DeadlineExceeded) {
+					continue
+				}
+				return active.path, active.err
+			}
+		}
+		defer func() {
+			t.inflight.Delete(cacheKey)
+			close(flight.done)
+		}()
+		flight.path, flight.err = t.transcodeFileToWeb(ctx, tempInput.Name(), req)
+		if ctx.Err() != nil && flight.err != nil {
+			flight.err = ctx.Err()
+		}
+		return flight.path, flight.err
+	}
+}
 
+func (t *Transcoder) transcodeFileToWeb(ctx context.Context, inputPath string, req TranscodeRequest) (string, error) {
 	cacheKey := t.generateCacheKey(req)
 
 	// Determine output format and extension
@@ -123,8 +176,9 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 	entry, exists := t.cacheEntries.Load(cacheKey)
 	if exists && !entry.InProgress {
 		// Update access time
-		entry.AccessTime = time.Now()
-		t.cacheEntries.Store(cacheKey, entry)
+		updated := *entry
+		updated.AccessTime = time.Now()
+		t.cacheEntries.Store(cacheKey, &updated)
 		// Verify file still exists
 		if _, err := os.Stat(outputPath); err == nil {
 			t.logger.Printf("[TRANSCODE] Cache hit for %s", cacheKey)
@@ -133,6 +187,9 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 			// File missing, remove from cache map
 			t.cacheEntries.Delete(cacheKey)
 		}
+	}
+	if !t.checkFFmpegAvailable() {
+		return "", fmt.Errorf("ffmpeg not available for transcoding %s", req.InputPath)
 	}
 
 	entry = &CacheEntry{
@@ -143,38 +200,36 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 	t.cacheEntries.Store(cacheKey, entry)
 
 	// Ensure we clean up on failure
+	completed := false
 	defer func() {
-		entry.InProgress = false
-		t.cacheEntries.Store(cacheKey, entry)
+		if !completed {
+			t.cacheEntries.Delete(cacheKey)
+		}
 	}()
 
 	t.logger.Printf("[TRANSCODE] Starting transcode to %s", outputPath)
 	start := time.Now()
 
-	// Create temporary file for input (ffmpeg needs seekable input for some operations)
-	tempInput, err := os.CreateTemp("", "transcode_input_*")
+	// Publish only completed output; concurrent readers must never see a partial conversion.
+	tempOutput, err := os.CreateTemp(t.cacheDir, "transcode_output_*")
 	if err != nil {
-		return "", fmt.Errorf("failed to create temp input file: %v", err)
+		return "", fmt.Errorf("create transcode output for %s: %w", req.InputPath, err)
 	}
-	defer os.Remove(tempInput.Name())
-	defer tempInput.Close()
-
-	// Copy input to temp file
-	if _, err := io.Copy(tempInput, inputReader); err != nil {
-		return "", fmt.Errorf("failed to copy input data: %v", err)
+	defer os.Remove(tempOutput.Name())
+	if err := tempOutput.Close(); err != nil {
+		return "", err
 	}
-	tempInput.Close()
 
 	// Replace pipe:0 with temp file path
 	for i, arg := range ffmpegArgs {
 		if arg == "pipe:0" {
-			ffmpegArgs[i] = tempInput.Name()
+			ffmpegArgs[i] = inputPath
 			break
 		}
 	}
 
 	// Add output path
-	ffmpegArgs = append(ffmpegArgs, outputPath)
+	ffmpegArgs = append(ffmpegArgs, tempOutput.Name())
 
 	// Run ffmpeg
 	cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
@@ -208,21 +263,26 @@ func (t *Transcoder) TranscodeToWeb(ctx context.Context, inputReader io.Reader, 
 	}()
 
 	if err := cmd.Wait(); err != nil {
-		os.Remove(outputPath) // Clean up partial file
 		return "", fmt.Errorf("ffmpeg failed: %v", err)
+	}
+	if err := os.Rename(tempOutput.Name(), outputPath); err != nil {
+		return "", fmt.Errorf("publish transcode output %s: %w", outputPath, err)
 	}
 
 	duration := time.Since(start)
 
 	// Get file size
 	if stat, err := os.Stat(outputPath); err == nil {
-		entry.Size = stat.Size()
-		t.cacheEntries.Store(cacheKey, entry)
+		finished := *entry
+		finished.Size = stat.Size()
+		finished.InProgress = false
+		t.cacheEntries.Store(cacheKey, &finished)
+		completed = true
 
 		t.logger.Printf("[TRANSCODE] Completed %s in %v (size: %d bytes)",
 			cacheKey, duration, stat.Size())
 	} else {
-		t.logger.Printf("[TRANSCODE] Completed %s in %v", cacheKey, duration)
+		return "", fmt.Errorf("stat transcode output %s: %w", outputPath, err)
 	}
 
 	// Clean up cache if needed
@@ -250,7 +310,7 @@ func (t *Transcoder) scanCacheDir() {
 		}
 
 		cacheKey := strings.TrimSuffix(name, ".mp4")
-		if len(cacheKey) != 16 { // Our cache keys are 16 hex chars
+		if len(cacheKey) != 16 && len(cacheKey) != 64 { // Include earlier cache keys in eviction accounting.
 			continue
 		}
 

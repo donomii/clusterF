@@ -64,6 +64,11 @@ type ClusterLike interface {
 	CircuitBreakerStatus() CircuitBreakerSnapshot
 }
 
+type FileSystemClusterLike interface {
+	ClusterLike
+	GetReadablePeerMap() map[NodeID]NodeData
+}
+
 // The partition manager, everything needed to access partitions and files
 // The FileStore should not be accessed directly, except by partitionManager
 type PartitionManagerLike interface {
@@ -97,6 +102,11 @@ type FileStoreLike interface {
 	ScanMetadata(pathPrefix string, fn func(path string, metadata []byte) error) error
 	ScanMetadataPartition(ctx context.Context, partitionID PartitionID, fn func(path string, metadata []byte) error) error
 	GetAllPartitionStores() ([]PartitionStore, error)
+}
+
+type EncryptedFileStoreLike interface {
+	FileStoreLike
+	SetLegacyEncryptionKey(key []byte) error
 }
 
 // Handles discovering peers on the network
@@ -158,6 +168,7 @@ type FileSystemLike interface {
 	// Additional methods for WebDAV support
 	GetFile(path string) ([]byte, FileMetadata, error)
 	GetFileReader(path string) (io.ReadCloser, FileMetadata, error)
+	GetFileReaderFromCluster(ctx context.Context, path string) (io.ReadCloser, FileMetadata, error)
 	ListDirectory(path string) ([]*FileMetadata, error)
 	InsertFileIntoCluster(ctx context.Context, path string, content []byte, contentType string, modTime time.Time) ([]NodeID, error)
 	InsertFileIntoClusterFromFile(ctx context.Context, path string, contentPath string, size int64, checksum string, contentType string, modTime time.Time) ([]NodeID, error)
@@ -298,6 +309,12 @@ type MetricsLike interface {
 	StoreMetrics()
 }
 
+type StateStore interface {
+	SetDataPoint(string, []byte) []frogpond.DataPoint
+	GetDataPoint(string) frogpond.DataPoint
+	DeleteAllMatchingPrefix(string) []frogpond.DataPoint
+}
+
 type App struct {
 	NodeID                NodeID
 	NoStore               bool
@@ -307,7 +324,7 @@ type App struct {
 	HttpDataClient        *http.Client
 	Discovery             DiscoveryManagerLike
 	Cluster               ClusterLike
-	Frogpond              *frogpond.Node
+	Frogpond              StateStore
 	SendUpdatesToPeers    func([]frogpond.DataPoint)
 	NotifyFileListChanged func()
 	Indexer               IndexerLike

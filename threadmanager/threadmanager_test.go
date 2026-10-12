@@ -5,9 +5,41 @@ import (
 	"context"
 	"log"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestOneShotRunAllowsManualRestart(t *testing.T) {
+	tm := NewThreadManager("manual-restart", log.New(os.Stdout, "[TEST] ", 0))
+	defer tm.Shutdown()
+	waitForCancellation := func(ctx context.Context) { <-ctx.Done() }
+	if err := tm.StartThreadOnce("worker", waitForCancellation); err != nil {
+		t.Fatal(err)
+	}
+	if err := tm.StopThread("worker", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	tm.checkAndRestartThreads()
+	if tm.IsThreadRunning("worker") {
+		t.Fatal("one-shot worker restarted automatically")
+	}
+	if err := tm.StartThreadOnce("worker", waitForCancellation); err != nil {
+		t.Fatalf("manual restart failed: %v", err)
+	}
+	status := tm.GetThreadStatus()["worker"]
+	if !status.IsRunning || status.RestartCount != 1 {
+		t.Fatalf("expected running second generation, got %+v", status)
+	}
+}
+
+func TestStartAfterShutdownIsRejected(t *testing.T) {
+	tm := NewThreadManager("closed-manager", log.New(os.Stdout, "[TEST] ", 0))
+	tm.Shutdown()
+	if err := tm.StartThreadOnce("late-worker", func(context.Context) {}); err == nil {
+		t.Fatal("expected start after shutdown to return an error")
+	}
+}
 
 func TestThreadManager_AutoRestart(t *testing.T) {
 	// Create a test logger that discards output
@@ -16,14 +48,14 @@ func TestThreadManager_AutoRestart(t *testing.T) {
 	defer tm.Shutdown()
 
 	// Track how many times the function has been called
-	callCount := 0
+	var callCount atomic.Int64
 
 	// Function that exits after being called twice
 	testFunc := func(ctx context.Context) {
-		callCount++
-		t.Logf("Test function called (count: %d)", callCount)
+		count := callCount.Add(1)
+		t.Logf("Test function called (count: %d)", count)
 
-		if callCount <= 2 {
+		if count <= 2 {
 			// Exit early to trigger restart
 			t.Logf("Test function exiting early to test restart")
 			return
@@ -107,12 +139,12 @@ func TestThreadManager_NonRestartableThread(t *testing.T) {
 	tm := NewThreadManager("test-node", logger)
 	defer tm.Shutdown()
 
-	callCount := 0
+	var callCount atomic.Int64
 
 	// Function that exits after one call
 	exitFunc := func(ctx context.Context) {
-		callCount++
-		t.Logf("Non-restartable function called (count: %d)", callCount)
+		count := callCount.Add(1)
+		t.Logf("Non-restartable function called (count: %d)", count)
 		// Exit immediately
 	}
 
@@ -126,8 +158,8 @@ func TestThreadManager_NonRestartableThread(t *testing.T) {
 	time.Sleep(12 * time.Second)
 
 	// Check that the function was only called once
-	if callCount != 1 {
-		t.Errorf("Expected function to be called exactly once, got %d", callCount)
+	if count := callCount.Load(); count != 1 {
+		t.Errorf("Expected function to be called exactly once, got %d", count)
 	}
 
 	// Check thread status
@@ -153,22 +185,22 @@ func TestThreadManager_ThreadWithCleanup(t *testing.T) {
 	tm := NewThreadManager("test-node", logger)
 	defer tm.Shutdown()
 
-	cleanupCount := 0
+	var cleanupCount atomic.Int64
 
 	// Cleanup function
 	cleanup := func() {
-		cleanupCount++
-		t.Logf("Cleanup function called (count: %d)", cleanupCount)
+		count := cleanupCount.Add(1)
+		t.Logf("Cleanup function called (count: %d)", count)
 	}
 
-	callCount := 0
+	var callCount atomic.Int64
 
 	// Function that exits after being called twice
 	testFunc := func(ctx context.Context) {
-		callCount++
-		t.Logf("Function with cleanup called (count: %d)", callCount)
+		count := callCount.Add(1)
+		t.Logf("Function with cleanup called (count: %d)", count)
 
-		if callCount <= 1 {
+		if count <= 1 {
 			// Exit early to trigger restart and cleanup
 			return
 		}
@@ -187,11 +219,11 @@ func TestThreadManager_ThreadWithCleanup(t *testing.T) {
 	time.Sleep(8 * time.Second)
 
 	// Cleanup should have been called at least once (from the first exit)
-	if cleanupCount < 1 {
-		t.Errorf("Expected cleanup to be called at least once, got %d", cleanupCount)
+	if count := cleanupCount.Load(); count < 1 {
+		t.Errorf("Expected cleanup to be called at least once, got %d", count)
 	}
 
-	t.Logf("Cleanup function called %d times", cleanupCount)
+	t.Logf("Cleanup function called %d times", cleanupCount.Load())
 }
 
 /* FIXME - this test currently fails

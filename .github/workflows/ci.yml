@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        go: ["1.22.x", "1.23.x"]
+        go: ["1.25.x"]
 
     steps:
       - name: Checkout
@@ -29,6 +29,16 @@ jobs:
         run: |
           go env
 
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
       - name: Build (CGO disabled for headless build)
         env:
           CGO_ENABLED: 0
@@ -36,20 +46,32 @@ jobs:
           go build ./...
 
       - name: Test (Full)
-        if: runner.os != 'macOS'
         env:
           CGO_ENABLED: 0
+          CLUSTER_DISCOVERY_MODE: local
+          CLUSTERF_SANDBOX: 0
         run: |
           go test ./...
+          go -C frontend test ./...
+          go -C syncmap test ./...
 
-      - name: Test (Sandbox-safe)
+      - name: Test concurrent storage and coordination
+        env:
+          CGO_ENABLED: 1
+          CLUSTER_DISCOVERY_MODE: local
+          CLUSTERF_SANDBOX: 0
+        run: |
+          go test -race ./clusterstate ./discovery ./partitionmanager ./storagecrypto ./threadmanager ./filesync ./filesystem ./webdav
+          go test -race transcoder.go transcoder_test.go
+
+      - name: Test cluster regressions with race detector (macOS WebKit)
         if: runner.os == 'macOS'
         env:
-          CGO_ENABLED: 0
-          CLUSTERF_SANDBOX: 1
-          GOCACHE: ${{ github.workspace }}/.gocache
+          CGO_ENABLED: 1
+          CLUSTER_DISCOVERY_MODE: local
+          CLUSTERF_SANDBOX: 0
         run: |
-          go test ./...
+          go test -race -run 'TestReview|TestEncryptedStartup|TestStorageEncryption|TestLegacy|TestNewEncrypted|TestTranscode|TestConcurrentTranscode|TestOldTranscodeCache' .
 
       # Optional benchmarks (disabled by default). Enable with workflow_dispatch input or env in future.
       # - name: Benchmarks

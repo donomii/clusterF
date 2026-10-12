@@ -62,10 +62,7 @@ func TestBuildPeerFileURL(t *testing.T) {
 }
 
 func TestBuildPeerFileURLRequiresPeer(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic when address is empty, path /foo, port 8080")
-		}
-	}()
-	_, _ = urlutil.BuildFilesURL("", 8080, "/foo")
+	if result, err := urlutil.BuildFilesURL("", 8080, "/foo"); err == nil || result != "" {
+		t.Fatalf("expected no URL and an error for empty address, path /foo, port 8080; got %q, %v", result, err)
+	}
 }

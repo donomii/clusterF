@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,6 +51,9 @@ func (pm *PartitionManager) drainFileSyncQueue() []string {
 		paths = append(paths, string(prefix))
 		return nil
 	})
+	for _, path := range paths {
+		pm.fileSyncTrie.Delete(patricia.Prefix(path))
+	}
 
 	sort.Strings(paths)
 	return paths
@@ -86,12 +90,15 @@ func (pm *PartitionManager) processFileSyncQueue(ctx context.Context) {
 		return
 	}
 
-	for _, path := range paths {
+	for index, path := range paths {
 		if ctx.Err() != nil {
+			pm.fileSyncMu.Lock()
+			for _, pending := range paths[index:] {
+				pm.fileSyncTrie.Set(patricia.Prefix(pending), struct{}{})
+			}
+			pm.fileSyncMu.Unlock()
 			return
 		}
-		pm.fileSyncTrie.Delete(patricia.Prefix(path))
-
 		if err := pm.SyncFile(ctx, path); err != nil {
 			pm.logf("[FILE SYNC] Failed to sync %s: %v", path, err)
 			pm.MarkFileForSync(path, fmt.Sprintf("retry after error: %v", err))
@@ -108,12 +115,12 @@ type fileHolderState struct {
 func (pm *PartitionManager) SyncFile(ctx context.Context, path string) error {
 	partitionID := HashToPartition(path)
 	holders := pm.deps.Cluster.GetPartitionHolders(partitionID)
-	if holders == nil {
-		return fmt.Errorf("no partition info for %s", partitionID)
+	hasLocal := false
+	for _, holder := range holders {
+		hasLocal = hasLocal || holder == pm.deps.NodeID
 	}
-
-	if len(holders) == 0 {
-		return fmt.Errorf("no holders recorded for %s", path)
+	if !hasLocal {
+		holders = append(append([]types.NodeID(nil), holders...), pm.deps.NodeID)
 	}
 
 	states := make([]fileHolderState, 0, len(holders))
@@ -122,23 +129,26 @@ func (pm *PartitionManager) SyncFile(ctx context.Context, path string) error {
 			return ctx.Err()
 		}
 
-		peerInfo := pm.getPeer(holder)
-		if peerInfo == nil {
-			pm.debugf("[FILE SYNC] No peer info for %s", holder)
-			continue
-		}
-
-		meta, err := pm.fetchMetadataFromPeer(peerInfo, path)
-
-		if err != nil {
-			pm.debugf("[FILE SYNC] Failed to fetch metadata for %s from %s: %v", path, holder, err)
+		var meta types.FileMetadata
+		var err error
+		if holder == pm.deps.NodeID {
+			var encoded []byte
+			encoded, err = pm.deps.FileStore.GetMetadata(path)
+			if err == nil {
+				err = json.Unmarshal(encoded, &meta)
+			}
 		} else {
-			states = append(states, fileHolderState{
-				holder: holder,
-				meta:   meta,
-				err:    err,
-			})
+			peerInfo := pm.getPeer(holder)
+			if peerInfo == nil {
+				err = fmt.Errorf("peer %s not found while synchronizing %s", holder, path)
+			} else {
+				meta, err = pm.fetchMetadataFromPeer(peerInfo, path)
+			}
 		}
+		if err == nil && (meta.Path != path || meta.ModifiedAt.IsZero()) {
+			err = fmt.Errorf("invalid metadata from holder %s for %s: path=%q, modified=%s", holder, path, meta.Path, meta.ModifiedAt)
+		}
+		states = append(states, fileHolderState{holder: holder, meta: meta, err: err})
 	}
 
 	bestIdx := -1
@@ -158,7 +168,9 @@ func (pm *PartitionManager) SyncFile(ctx context.Context, path string) error {
 	best := states[bestIdx]
 	types.Assertf(best.meta.Path != "", "best.meta.Path can never be empty")
 	types.Assertf(!best.meta.ModifiedAt.IsZero(), "metadata for %s missing ModifiedAt timestamp", path)
-	types.Assertf(!(best.meta.Deleted && best.meta.Checksum == ""), "metadata for %s missing checksum", path)
+	if !best.meta.Deleted && best.meta.Checksum == "" {
+		return fmt.Errorf("metadata for %s from %s is missing its checksum", path, best.holder)
+	}
 
 	var tempPath string
 	var size int64
@@ -170,27 +182,31 @@ func (pm *PartitionManager) SyncFile(ctx context.Context, path string) error {
 		}
 
 	}
-	types.Assertf(tempPath != "", "no temp path for %s", path)
 	defer func() {
-
-		os.Remove(tempPath)
-
+		if tempPath != "" {
+			os.Remove(tempPath)
+		}
 	}()
 
+	var updateErrors []error
 	for _, state := range states {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if sameMetadataVersion(state.meta, best.meta) {
+		if state.err != nil && !errors.Is(state.err, types.ErrFileNotFound) && !errors.Is(state.err, os.ErrNotExist) {
+			updateErrors = append(updateErrors, state.err)
+			continue
+		}
+		if state.err == nil && sameMetadataVersion(state.meta, best.meta) {
 			continue
 		}
 
 		if err := pm.applyFileUpdateFromTemp(ctx, state.holder, best.meta, tempPath, size); err != nil {
-			pm.debugf("[FILE SYNC] Failed to update %s on %s: %v", path, state.holder, err)
+			updateErrors = append(updateErrors, fmt.Errorf("updating %s on holder %s: %w", path, state.holder, err))
 		}
 	}
 
-	return nil
+	return errors.Join(updateErrors...)
 }
 
 func metadataIsNewer(candidate, current types.FileMetadata) bool {
@@ -201,12 +217,14 @@ func metadataIsNewer(candidate, current types.FileMetadata) bool {
 		return true
 	}
 	if candidate.ModifiedAt.Equal(current.ModifiedAt) {
-		types.Assertf(candidate.Checksum != "" && current.Checksum != "", "checksum must be set when comparing metadata versions for %s", candidate.Path)
+		if candidate.Deleted != current.Deleted {
+			return candidate.Deleted
+		}
+		if candidate.Deleted {
+			return false
+		}
 		if candidate.Checksum != current.Checksum {
 			return candidate.Checksum > current.Checksum
-		}
-		if candidate.Deleted && !current.Deleted {
-			return true
 		}
 	}
 	return false
@@ -222,10 +240,28 @@ func sameMetadataVersion(a, b types.FileMetadata) bool {
 	if a.Deleted != b.Deleted {
 		return false
 	}
+	if a.Deleted {
+		return true
+	}
 	return a.Checksum == b.Checksum
 }
 
 func (pm *PartitionManager) applyFileUpdateFromTemp(ctx context.Context, holder types.NodeID, meta types.FileMetadata, tempPath string, size int64) error {
+	if holder == pm.deps.NodeID {
+		if meta.Deleted {
+			return pm.storeEntryMetadata(PartitionSyncEntry{Path: meta.Path, Metadata: meta})
+		}
+		encoded, err := json.Marshal(meta)
+		if err != nil {
+			return err
+		}
+		file, err := os.Open(tempPath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		return pm.StoreFileInPartitionStream(ctx, meta.Path, encoded, file, size)
+	}
 
 	peer := pm.getPeer(holder)
 	if peer == nil {
@@ -269,7 +305,7 @@ func (pm *PartitionManager) pushFileToPeerFromFile(ctx context.Context, peer *ty
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
 		httpclient.WithHeader("X-Forwarded-From", string(pm.deps.NodeID)),
 		httpclient.WithHeader("X-ClusterF-Metadata", encodedMeta),
-		httpclient.WithHeader("X-ClusterF-Modified-At", meta.ModifiedAt.Format(time.RFC3339)),
+		httpclient.WithHeader("X-ClusterF-Modified-At", meta.ModifiedAt.Format(time.RFC3339Nano)),
 		httpclient.WithHeader("Content-Type", meta.ContentType),
 	)
 	if err != nil {
@@ -298,7 +334,7 @@ func (pm *PartitionManager) pushDeleteToPeer(ctx context.Context, peer *types.Pe
 
 	_, _, status, err := httpclient.SimpleDelete(ctx, pm.httpClient(), fileURL,
 		httpclient.WithHeader("X-ClusterF-Internal", "1"),
-		httpclient.WithHeader("X-ClusterF-Modified-At", modified.Format(time.RFC3339)),
+		httpclient.WithHeader("X-ClusterF-Modified-At", modified.Format(time.RFC3339Nano)),
 	)
 	if err != nil {
 		pm.tripCircuitBreaker(target, err)
@@ -313,32 +349,48 @@ func (pm *PartitionManager) pushDeleteToPeer(ctx context.Context, peer *types.Pe
 }
 
 func (pm *PartitionManager) fetchFileToTemp(ctx context.Context, holder types.NodeID, path string, expectedChecksum string) (string, int64, error) {
+	var reader io.ReadCloser
+	var err error
+	if holder == pm.deps.NodeID {
+		reader, _, err = pm.GetFileAndMetaFromPartitionStream(path)
+	} else {
+		peer := pm.getPeer(holder)
+		if peer == nil {
+			return "", 0, fmt.Errorf("peer %s not found while fetching %s", holder, path)
+		}
+		reader, err = pm.fetchFileStreamFromPeer(ctx, peer, path)
+	}
+	if err != nil {
+		return "", 0, err
+	}
+	defer reader.Close()
+	return copyVerifiedFile(reader, path, expectedChecksum)
+}
+
+func copyVerifiedFile(reader io.Reader, path, expectedChecksum string) (tempPath string, size int64, resultErr error) {
 	tmp, err := os.CreateTemp("", "clusterf-sync-*")
 	if err != nil {
 		return "", 0, err
 	}
 	defer func() {
-		if err != nil {
+		tmp.Close()
+		if resultErr != nil {
 			os.Remove(tmp.Name())
 		}
 	}()
-
 	hasher := sha256.New()
 
-	peer := pm.getPeer(holder)
-	types.Assertf(peer != nil, "peer %v not found", holder)
-
-	reader, err := pm.fetchFileStreamFromPeer(ctx, peer, path)
-	if err != nil {
-		return "", 0, err
-	}
-	defer reader.Close()
-
 	n64, err := io.Copy(io.MultiWriter(tmp, hasher), reader)
-	types.Assertf(err == nil, "failed to copy file %s: %v", path, err)
-
-	closeErr := tmp.Close()
-	types.Assertf(closeErr == nil, "failed to close temp file for %s: %v", path, closeErr)
+	if err != nil {
+		return "", 0, fmt.Errorf("copying %s: %w", path, err)
+	}
+	actualChecksum := fmt.Sprintf("%x", hasher.Sum(nil))
+	if expectedChecksum == "" || actualChecksum != expectedChecksum {
+		return "", 0, fmt.Errorf("checksum mismatch for %s: expected %s, received %s", path, expectedChecksum, actualChecksum)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", 0, fmt.Errorf("closing verified content for %s: %w", path, err)
+	}
 
 	return tmp.Name(), n64, nil
 }

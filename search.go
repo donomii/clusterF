@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -40,6 +41,12 @@ func (c *Cluster) performLocalSearch(req SearchRequest) []types.SearchResult {
 
 	// Use indexer for fast prefix search
 	results := c.indexer.PrefixSearch(req.Query)
+	localID := c.ID()
+	for i := range results {
+		if !slices.Contains(results[i].Holders, localID) {
+			results[i].Holders = append(results[i].Holders, localID)
+		}
+	}
 
 	c.debugf("[SEARCH] Found %d local results for query: %s in %v seconds", len(results), req.Query, time.Now().Sub(start).Seconds())
 
