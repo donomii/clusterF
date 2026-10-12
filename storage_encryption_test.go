@@ -14,7 +14,7 @@ import (
 	"github.com/donomii/clusterF/storagecrypto"
 )
 
-func TestEncryptedStartupRejectsLegacyBeforeWrites(t *testing.T) {
+func TestEncryptedStartupRejectsInvalidLegacyBeforeWrites(t *testing.T) {
 	base := t.TempDir()
 	directory := filepath.Join(base, "legacy-node")
 	if err := os.Mkdir(directory, 0700); err != nil {
@@ -34,8 +34,8 @@ func TestEncryptedStartupRejectsLegacyBeforeWrites(t *testing.T) {
 		defer func() { rejection = fmt.Sprint(recover()) }()
 		NewCluster(ClusterOpts{ID: "legacy-node", DataDir: base, StorageMajor: "rawfile", EncryptionKey: "password", Logger: log.New(io.Discard, "", 0)})
 	}()
-	if !strings.Contains(rejection, "legacy") {
-		t.Fatalf("legacy repository was not rejected: %s", rejection)
+	if !strings.Contains(rejection, "invalid legacy encryption verification") {
+		t.Fatalf("invalid legacy verification value was not rejected: %s", rejection)
 	}
 	entries, err := os.ReadDir(directory)
 	if err != nil || len(entries) != 1 || entries[0].Name() != "settings.json" {
@@ -53,16 +53,30 @@ func TestStorageEncryptionRequiresOriginalModeAndPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	existing := &StorageSettings{Encryption: settings}
-	_, key, err := prepareStorageEncryption(ClusterOpts{EncryptionKey: "correct password"}, existing)
-	if err != nil || !bytes.Equal(key, expectedKey) {
+	encryption, err := prepareStorageEncryption(ClusterOpts{EncryptionKey: "correct password"}, existing)
+	if err != nil || !bytes.Equal(encryption.key, expectedKey) {
 		t.Fatalf("correct password rejected: %v", err)
 	}
 	for _, password := range []string{"", "incorrect password"} {
-		if _, _, err := prepareStorageEncryption(ClusterOpts{EncryptionKey: password}, existing); err == nil {
+		if _, err := prepareStorageEncryption(ClusterOpts{EncryptionKey: password}, existing); err == nil {
 			t.Fatal("missing or incorrect password accepted")
 		}
 	}
-	if _, _, err := prepareStorageEncryption(ClusterOpts{EncryptionKey: "new password"}, &StorageSettings{}); err == nil {
+	if _, err := prepareStorageEncryption(ClusterOpts{EncryptionKey: "new password"}, &StorageSettings{}); err == nil {
 		t.Fatal("encryption enabled on an existing plaintext repository")
+	}
+}
+
+func TestStorageEncryptionRejectsInvalidModesAndMixedMarkers(t *testing.T) {
+	for _, mode := range []string{"unknown", encryptionModeLegacy, encryptionModeAuthenticated} {
+		_, err := prepareStorageEncryption(ClusterOpts{DataDir: t.TempDir(), EncryptionMode: mode}, nil)
+		if err == nil {
+			t.Fatalf("accepted encryption mode %q without a password", mode)
+		}
+	}
+	settings := &StorageSettings{EncryptedTestPhrase: "00", Encryption: &storagecrypto.Settings{}}
+	_, err := prepareStorageEncryption(ClusterOpts{EncryptionKey: "password"}, settings)
+	if err == nil || !strings.Contains(err.Error(), "both legacy and authenticated") {
+		t.Fatalf("ambiguous encryption markers were not rejected: %v", err)
 	}
 }

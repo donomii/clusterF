@@ -104,6 +104,11 @@ type FileStoreLike interface {
 	GetAllPartitionStores() ([]PartitionStore, error)
 }
 
+type EncryptedFileStoreLike interface {
+	FileStoreLike
+	SetLegacyEncryptionKey(key []byte) error
+}
+
 // Handles discovering peers on the network
 type DiscoveryManagerLike interface {
 

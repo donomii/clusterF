@@ -2,6 +2,8 @@ package storagecrypto
 
 import (
 	"bytes"
+	"encoding/hex"
+	"io"
 	"testing"
 )
 
@@ -70,5 +72,64 @@ func TestAuthenticatedStreamRejectsSplicedVersions(t *testing.T) {
 	}
 	if _, err := Decode(key, "content:/file", []byte("legacy encrypted content")); err == nil {
 		t.Fatal("legacy data accepted as authenticated ciphertext")
+	}
+}
+
+func TestLegacyCodecFixture(t *testing.T) {
+	key := []byte("legacy-password")
+	plain := []byte("existing file bytes")
+	fixture, err := hex.DecodeString("091d0e121710431741151a1b0a520615110212")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := LegacyEncode(key, plain)
+	if err != nil || !bytes.Equal(encoded, fixture) {
+		t.Fatalf("legacy encoding changed: bytes=%x, error=%v", encoded, err)
+	}
+	decoded, err := LegacyDecode(key, fixture)
+	if err != nil || !bytes.Equal(decoded, plain) {
+		t.Fatalf("legacy fixture unreadable: bytes=%q, error=%v", decoded, err)
+	}
+	if _, err := LegacyEncode(nil, plain); err == nil {
+		t.Fatal("empty legacy key accepted")
+	}
+}
+
+func TestLegacyStreamingOffsets(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	encodedBlock, err := hex.DecodeString("b0b1b2b3b4b5b6b7b8b9e1e2e3e4e5e6b0b1b2b3b4b5b6b7b8b9e1e2e3e4e5e6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := bytes.Repeat([]byte{0x80}, 3*chunkSize+17)
+	expected := bytes.Repeat(encodedBlock, len(plain)/len(encodedBlock)+1)[:len(plain)]
+	source := io.MultiReader(bytes.NewReader(plain[:3]), bytes.NewReader(plain[3:65537]), bytes.NewReader(plain[65537:]))
+	var encoded bytes.Buffer
+	written, err := LegacyEncrypt(&encoded, source, key)
+	if err != nil || written != int64(len(plain)) || !bytes.Equal(encoded.Bytes(), expected) {
+		t.Fatalf("legacy stream encoding changed: written=%d, bytes match=%t, error=%v", written, bytes.Equal(encoded.Bytes(), expected), err)
+	}
+	reader, err := LegacyReader(io.NopCloser(bytes.NewReader(expected)), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var decoded bytes.Buffer
+	buffer := make([]byte, 19)
+	for {
+		count, err := reader.Read(buffer)
+		decoded.Write(buffer[:count])
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !bytes.Equal(decoded.Bytes(), plain) {
+		t.Fatal("legacy read offset changed across reads")
+	}
+	if _, err := Decode(key, "content:/legacy.bin", expected); err == nil {
+		t.Fatal("authenticated decoder accepted legacy bytes with a 32-byte key")
 	}
 }

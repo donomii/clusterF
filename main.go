@@ -51,6 +51,7 @@ func main() {
 	storageMajor := flag.String("storage-major", "mmapsingle", "Storage format major (ensemble or bolt or sqlite or rawfile)")
 	storageMinor := flag.String("storage-minor", "", "Storage format minor (bolt or sqlite or rawfile)")
 	encryptionKey := flag.String("encryption-key", "", "Encryption key for at-rest encryption (required at init, then at every start)")
+	encryptionMode := flag.String("encryption-mode", encryptionModeAuto, "Encryption format: auto preserves existing repositories and uses authenticated encryption for new ones; legacy selects the old format; authenticated selects AES-256-GCM (requires --encryption-key)")
 	showVersion := flag.Bool("version", false, "Print version information and exit")
 	flag.Parse()
 	if *discoveryMode != "udp" && *discoveryMode != "local" {
@@ -66,7 +67,7 @@ func main() {
 	}
 
 	if *simNodes > 0 {
-		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir, *profiling)
+		runSimulation(*simNodes, *basePort, *discoveryPort, *dataDir, *profiling, *encryptionKey, *encryptionMode)
 	} else {
 		// Validate export options
 		if *exportDir != "" && *clusterDir == "" {
@@ -94,7 +95,7 @@ func main() {
 			}
 		}
 
-		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *excludeDirs, *webdavDir, *nodeID, *dataDir, *httpPort, *discoveryPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor, *encryptionKey)
+		runSingleNode(*noDesktop, *mountPoint, *exportDir, *clusterDir, *importDir, *excludeDirs, *webdavDir, *nodeID, *dataDir, *httpPort, *discoveryPort, *debug, *noStore, *profiling, *storageMajor, *storageMinor, *encryptionKey, *encryptionMode)
 	}
 }
 
@@ -120,7 +121,7 @@ func hasGraphicsEnvironment() bool {
 }
 
 // runSimulation starts multiple nodes in simulation mode
-func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir string, profiling bool) {
+func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir string, profiling bool, encryptionKey string, encryptionMode string) {
 	log.Printf("🐸 Starting cluster simulation with %d nodes...", nodeCount)
 
 	if baseDataDir == "" {
@@ -149,10 +150,12 @@ func runSimulation(nodeCount int, basePort int, discoveryPort int, baseDataDir s
 				nodeDataDir := filepath.Join(baseDataDir, nodeID)
 
 				node := NewCluster(ClusterOpts{
-					ID:            nodeID,
-					DataDir:       nodeDataDir,
-					HTTPDataPort:  basePort + index,
-					DiscoveryPort: discoveryPort,
+					ID:             nodeID,
+					DataDir:        nodeDataDir,
+					HTTPDataPort:   basePort + index,
+					DiscoveryPort:  discoveryPort,
+					EncryptionKey:  encryptionKey,
+					EncryptionMode: encryptionMode,
 				})
 
 				// Set fast discovery timings for simulation
@@ -234,22 +237,23 @@ func stopNodes(nodes []*Cluster) {
 }
 
 // runSingleNode runs the original single-node mode
-func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, excludeDirs string, webdavDir string, nodeID string, dataDir string, httpPort int, discoveryPort int, debug bool, noStore bool, profiling bool, storageMajor string, storageMinor string, encryptionKey string) {
+func runSingleNode(noDesktop bool, mountPoint string, exportDir string, clusterDir string, importDir string, excludeDirs string, webdavDir string, nodeID string, dataDir string, httpPort int, discoveryPort int, debug bool, noStore bool, profiling bool, storageMajor string, storageMinor string, encryptionKey string, encryptionMode string) {
 	// Create a new cluster node with default settings
 	cluster := NewCluster(ClusterOpts{
-		ID:            nodeID,
-		DataDir:       dataDir,
-		ExportDir:     exportDir,
-		ClusterDir:    clusterDir,
-		ImportDir:     importDir,
-		ExcludeDirs:   excludeDirs,
-		HTTPDataPort:  httpPort,
-		DiscoveryPort: discoveryPort,
-		NoStore:       noStore,
-		StorageMajor:  storageMajor,
-		StorageMinor:  storageMinor,
-		EncryptionKey: encryptionKey,
-		Debug:         debug,
+		ID:             nodeID,
+		DataDir:        dataDir,
+		ExportDir:      exportDir,
+		ClusterDir:     clusterDir,
+		ImportDir:      importDir,
+		ExcludeDirs:    excludeDirs,
+		HTTPDataPort:   httpPort,
+		DiscoveryPort:  discoveryPort,
+		NoStore:        noStore,
+		StorageMajor:   storageMajor,
+		StorageMinor:   storageMinor,
+		EncryptionKey:  encryptionKey,
+		EncryptionMode: encryptionMode,
+		Debug:          debug,
 	})
 
 	// Wait for interrupt signal

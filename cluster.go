@@ -216,18 +216,19 @@ type ClusterOpts struct {
 	UDPListenPort int
 	HTTPDataPort  int
 
-	DiscoveryPort int
-	BroadcastIP   net.IP
-	Logger        *log.Logger //  if not provided, will use log.New(os.Stderr, "", log.Lstd)
-	ExportDir     string      // if set, mirror files to this directory for OS sharing
-	ClusterDir    string      // if set, only export files with this path prefix
-	ImportDir     string      // if set, import files from this directory to the cluster
-	ExcludeDirs   string      // comma-separated list of directory names to exclude during import
-	NoStore       bool        // if true, don't store partitions locally (client mode)
-	StorageMajor  string      // storage format major (ensemble or bolt)
-	StorageMinor  string      // storage format minor (ensemble or bolt)
-	EncryptionKey string      // encryption key for at-rest encryption
-	Debug         bool        // Enable debugging for all modules in the cluster
+	DiscoveryPort  int
+	BroadcastIP    net.IP
+	Logger         *log.Logger //  if not provided, will use log.New(os.Stderr, "", log.Lstd)
+	ExportDir      string      // if set, mirror files to this directory for OS sharing
+	ClusterDir     string      // if set, only export files with this path prefix
+	ImportDir      string      // if set, import files from this directory to the cluster
+	ExcludeDirs    string      // comma-separated list of directory names to exclude during import
+	NoStore        bool        // if true, don't store partitions locally (client mode)
+	StorageMajor   string      // storage format major (ensemble or bolt)
+	StorageMinor   string      // storage format minor (ensemble or bolt)
+	EncryptionKey  string      // encryption key for at-rest encryption
+	EncryptionMode string      // auto preserves existing formats; legacy or authenticated selects an explicit format
+	Debug          bool        // Enable debugging for all modules in the cluster
 }
 
 func NewCluster(opts ClusterOpts) *Cluster {
@@ -353,7 +354,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		}
 	}
 
-	encryptionSettings, encryptionKey, err := prepareStorageEncryption(opts, existingSettings)
+	encryption, err := prepareStorageEncryption(opts, existingSettings)
 	if err != nil {
 		panic(fmt.Sprintf("Cannot open repository %s: %v", opts.DataDir, err))
 	}
@@ -433,12 +434,13 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	// Persist encryption parameters before opening stores that can write encrypted data.
 	if existingSettings == nil {
 		newSettings := StorageSettings{
-			Program:      "clusterF",
-			URL:          "https://github.com/donomii/clusterF",
-			StorageMajor: opts.StorageMajor,
-			StorageMinor: opts.StorageMinor,
-			Version:      version,
-			Encryption:   encryptionSettings,
+			Program:             "clusterF",
+			URL:                 "https://github.com/donomii/clusterF",
+			StorageMajor:        opts.StorageMajor,
+			StorageMinor:        opts.StorageMinor,
+			Version:             version,
+			Encryption:          encryption.settings,
+			EncryptedTestPhrase: encryption.legacyTestPhrase,
 		}
 		if err := saveStorageSettings(opts.DataDir, newSettings); err != nil {
 			panic(fmt.Sprintf("Failed to save storage settings for %s: %v", opts.DataDir, err))
@@ -449,7 +451,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Loaded CRDT state from KV\n")
 
 	// Initialize file store based on storage major selection
-	var fileStore types.FileStoreLike
+	var fileStore types.EncryptedFileStoreLike
 	switch opts.StorageMajor {
 	case "rawfile":
 		c.logger.Print("Chose direct file store")
@@ -459,7 +461,13 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		fileStore = partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug, opts.StorageMajor, opts.StorageMinor)
 	}
 
-	fileStore.SetEncryptionKey(encryptionKey)
+	if encryption.legacyTestPhrase != "" {
+		if err := fileStore.SetLegacyEncryptionKey(encryption.key); err != nil {
+			panic(fmt.Sprintf("Cannot configure legacy encryption for repository %s: %v", opts.DataDir, err))
+		}
+	} else {
+		fileStore.SetEncryptionKey(encryption.key)
+	}
 
 	// Initialize partition manager
 	deps := &types.App{

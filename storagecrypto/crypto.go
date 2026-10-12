@@ -162,7 +162,7 @@ func Reader(source io.ReadCloser, key []byte, context string) (io.ReadCloser, er
 		return nil, fmt.Errorf("reading encrypted %s header: %w", context, err)
 	}
 	if string(header[:len(magic)]) != magic {
-		return nil, fmt.Errorf("unsupported encryption format for %s; legacy encryption requires explicit migration", context)
+		return nil, fmt.Errorf("expected authenticated encryption format for %s", context)
 	}
 	return &decryptReader{source: source, aead: aead, streamID: header[len(magic):], context: context}, nil
 }

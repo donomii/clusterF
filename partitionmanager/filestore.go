@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/metrics"
-	"github.com/donomii/clusterF/storagecrypto"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/types"
 	ensemblekv "github.com/donomii/ensemblekv"
@@ -21,12 +20,13 @@ import (
 
 // FileStore provides atomic access to file metadata and content with per-partition locking
 type FileStore struct {
-	baseDir        string                                 //Holds the partitions directories
-	partitionLocks syncmap.SyncMap[string, *sync.RWMutex] // map[string]*sync.RWMutex - per-partition locks
-	debugLog       bool
-	encryptionKey  []byte // Derived encryption key (nil = no encryption)
-	storageMajor   string // storage format major (ensemble or bolt)
-	storageMinor   string // storage format minor (ensemble or bolt)
+	baseDir          string                                 //Holds the partitions directories
+	partitionLocks   syncmap.SyncMap[string, *sync.RWMutex] // map[string]*sync.RWMutex - per-partition locks
+	debugLog         bool
+	encryptionKey    []byte // Derived key or legacy password bytes (nil = no encryption)
+	legacyEncryption bool
+	storageMajor     string // storage format major (ensemble or bolt)
+	storageMinor     string // storage format minor (ensemble or bolt)
 	// Handle caches
 	metadataHandles sync.Map   // map[string]ensemblekv.KvLike - cached metadata handles
 	contentHandles  sync.Map   // map[string]ensemblekv.KvLike - cached content handles
@@ -89,7 +89,17 @@ func (fs *FileStore) Close() {
 
 // SetEncryptionKey sets the encryption key for this FileStore
 func (fs *FileStore) SetEncryptionKey(key []byte) {
-	fs.encryptionKey = key
+	fs.encryptionKey = bytes.Clone(key)
+	fs.legacyEncryption = false
+}
+
+func (fs *FileStore) SetLegacyEncryptionKey(key []byte) error {
+	if len(key) == 0 {
+		return fmt.Errorf("legacy encryption key must not be empty")
+	}
+	fs.encryptionKey = bytes.Clone(key)
+	fs.legacyEncryption = true
+	return nil
 }
 
 func (fs *FileStore) debugf(format string, args ...interface{}) {
@@ -219,7 +229,7 @@ func (fs *FileStore) Get(path string) ([]byte, []byte, bool, error) {
 	}
 
 	// Decrypt data
-	metadata, content, err = decodeStoredPair(fs.encryptionKey, path, metadata, content)
+	metadata, content, err = decodeStoredPair(fs.encryptionKey, fs.legacyEncryption, path, metadata, content)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -269,7 +279,7 @@ func (fs *FileStore) GetMetadata(path string) ([]byte, error) {
 	}
 
 	// Decrypt metadata
-	metadata, err = storagecrypto.Decode(fs.encryptionKey, "metadata:"+path, metadata)
+	metadata, err = decodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +315,7 @@ func (fs *FileStore) GetContent(path string) ([]byte, error) {
 	}
 
 	// Decrypt content
-	content, err = storagecrypto.Decode(fs.encryptionKey, "content:"+path, content)
+	content, err = decodeStored(fs.encryptionKey, fs.legacyEncryption, "content:"+path, content)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +354,7 @@ func (fs *FileStore) Put(path string, metadata, content []byte) error {
 	keyBytes := encodeStoreKey(partition, path)
 
 	// Encrypt data before storing
-	encMetadata, encContent, err := encodeStoredPair(fs.encryptionKey, path, metadata, content)
+	encMetadata, encContent, err := encodeStoredPair(fs.encryptionKey, fs.legacyEncryption, path, metadata, content)
 	if err != nil {
 		return err
 	}
@@ -428,7 +438,7 @@ func (fs *FileStore) PutMetadata(path string, metadata []byte) error {
 	keyBytes := encodeStoreKey(partition, path)
 
 	// Encrypt metadata
-	metadata, err = storagecrypto.Encode(fs.encryptionKey, "metadata:"+path, metadata)
+	metadata, err = encodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, metadata)
 	if err != nil {
 		return err
 	}
@@ -644,7 +654,7 @@ func (fs *FileStore) ScanMetadata(pathPrefix string, fn func(path string, metada
 		// Call fn for each entry
 		partitionLock.RUnlock()
 		for _, entry := range entries {
-			decMetadata, err := storagecrypto.Decode(fs.encryptionKey, "metadata:"+entry.path, entry.metadata)
+			decMetadata, err := decodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+entry.path, entry.metadata)
 			if err != nil {
 				fs.closePartitionStores(metadataKV, contentKV)
 				return err
@@ -733,7 +743,7 @@ func (fs *FileStore) ScanMetadataPartition(ctx context.Context, partitionID type
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		decMetadata, err := storagecrypto.Decode(fs.encryptionKey, "metadata:"+entry.path, entry.metadata)
+		decMetadata, err := decodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+entry.path, entry.metadata)
 		if err != nil {
 			return err
 		}

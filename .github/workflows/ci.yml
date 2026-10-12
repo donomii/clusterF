@@ -71,7 +71,7 @@ jobs:
           CLUSTER_DISCOVERY_MODE: local
           CLUSTERF_SANDBOX: 0
         run: |
-          go test -race -run 'TestReview|TestEncryptedStartup|TestStorageEncryption|TestTranscode|TestConcurrentTranscode|TestOldTranscodeCache' .
+          go test -race -run 'TestReview|TestEncryptedStartup|TestStorageEncryption|TestLegacy|TestNewEncrypted|TestTranscode|TestConcurrentTranscode|TestOldTranscodeCache' .
 
       # Optional benchmarks (disabled by default). Enable with workflow_dispatch input or env in future.
       # - name: Benchmarks

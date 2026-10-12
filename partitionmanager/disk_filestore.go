@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/donomii/clusterF/metrics"
-	"github.com/donomii/clusterF/storagecrypto"
 	"github.com/donomii/clusterF/types"
 )
 
@@ -30,9 +29,10 @@ type DiskFileStore struct {
 	controlDir  string // Holds per-partition control files (timestamps, etc)
 	transferDir string // Holds temp upload files before atomic moves
 
-	mu             sync.RWMutex
-	encryptionKey  []byte // Derived encryption key (nil = no encryption)
-	timestampStore *PartitionTimestampStore
+	mu               sync.RWMutex
+	encryptionKey    []byte // Derived key or legacy password bytes (nil = no encryption)
+	legacyEncryption bool
+	timestampStore   *PartitionTimestampStore
 }
 
 // NewDiskFileStore creates a new disk-backed filestore rooted at baseDir.
@@ -63,7 +63,17 @@ func (fs *DiskFileStore) Close() {
 
 // SetEncryptionKey configures the derived encryption key before storage is used.
 func (fs *DiskFileStore) SetEncryptionKey(key []byte) {
-	fs.encryptionKey = key
+	fs.encryptionKey = bytes.Clone(key)
+	fs.legacyEncryption = false
+}
+
+func (fs *DiskFileStore) SetLegacyEncryptionKey(key []byte) error {
+	if len(key) == 0 {
+		return fmt.Errorf("legacy encryption key must not be empty")
+	}
+	fs.encryptionKey = bytes.Clone(key)
+	fs.legacyEncryption = true
+	return nil
 }
 
 func (fs *DiskFileStore) partitionTimestampPath(partitionID types.PartitionID, filename string) (string, error) {
@@ -137,7 +147,7 @@ func (fs *DiskFileStore) Get(path string) ([]byte, []byte, bool, error) {
 		return nil, nil, false, contentErr
 	}
 
-	metadata, content, err = decodeStoredPair(fs.encryptionKey, path, metadata, content)
+	metadata, content, err = decodeStoredPair(fs.encryptionKey, fs.legacyEncryption, path, metadata, content)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -169,7 +179,7 @@ func (fs *DiskFileStore) GetMetadata(path string) ([]byte, error) {
 		metrics.IncrementGlobalCounter("disk_filestore.get_metadata.errors")
 		return nil, readErr
 	}
-	metadata, err := storagecrypto.Decode(fs.encryptionKey, "metadata:"+path, data)
+	metadata, err := decodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, data)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +209,7 @@ func (fs *DiskFileStore) GetContent(path string) ([]byte, error) {
 		metrics.IncrementGlobalCounter("disk_filestore.get_content.errors")
 		return nil, readErr
 	}
-	content, err := storagecrypto.Decode(fs.encryptionKey, "content:"+path, data)
+	content, err := decodeStored(fs.encryptionKey, fs.legacyEncryption, "content:"+path, data)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +236,7 @@ func (fs *DiskFileStore) openContent(path string) (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	reader, err := storagecrypto.Reader(file, fs.encryptionKey, "content:"+path)
+	reader, err := storedReader(file, fs.encryptionKey, fs.legacyEncryption, "content:"+path)
 	if err != nil {
 		file.Close()
 		return nil, err
@@ -245,7 +255,7 @@ func (fs *DiskFileStore) GetStream(path string) ([]byte, io.ReadCloser, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	metadata, err := storagecrypto.Decode(fs.encryptionKey, "metadata:"+path, encoded)
+	metadata, err := decodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, encoded)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -328,7 +338,7 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 	}
 	defer file.Close()
 
-	written, err := storagecrypto.Encrypt(file, content, fs.encryptionKey, "content:"+path)
+	written, err := encryptStored(file, content, fs.encryptionKey, fs.legacyEncryption, "content:"+path)
 	if err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
 		return err
@@ -345,7 +355,7 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 	if err := file.Close(); err != nil {
 		return err
 	}
-	encMetadata, err := storagecrypto.Encode(fs.encryptionKey, "metadata:"+path, metadata)
+	encMetadata, err := encodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, metadata)
 	if err != nil {
 		return err
 	}
@@ -396,7 +406,7 @@ func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
 		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
 		return err
 	}
-	encMetadata, err := storagecrypto.Encode(fs.encryptionKey, "metadata:"+path, metadata)
+	encMetadata, err := encodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, metadata)
 	if err != nil {
 		return err
 	}
