@@ -4,12 +4,16 @@ package filesync
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/donomii/clusterF/syncmap"
@@ -264,13 +268,25 @@ func (e *Syncer) startWatcher(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return
-			case ev := <-w.Events:
+			case ev, open := <-w.Events:
+				if !open {
+					return
+				}
 				if e.shouldIgnore(ev.Name) {
 					continue
 				}
 				// Normalize path and map to cluster path
 				clusterPath, ok := e.clusterPathFor(ev.Name)
 				if !ok {
+					continue
+				}
+				if ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+					if e.isWatchedDir(ev.Name) {
+						e.removeWatchRecursive(ev.Name)
+					}
+					if err := e.removeClusterPath(ctx, clusterPath); err != nil {
+						e.logWatchFailure("delete", clusterPath, err)
+					}
 					continue
 				}
 
@@ -287,15 +303,24 @@ func (e *Syncer) startWatcher(ctx context.Context) error {
 							// ignore if already exists
 						}
 						_ = e.addWatchRecursive(ev.Name)
+						if err := e.importPath(ctx, ev.Name); err != nil {
+							e.logWatchFailure("import directory", clusterPath, err)
+						}
 						continue
 					}
 				}
 
 				// Handle file changes
-				if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename) != 0 {
+				if ev.Op&(fsnotify.Create|fsnotify.Write) != 0 {
 					if !isDir(ev.Name) {
 						st, statErr := os.Stat(ev.Name)
 						if statErr != nil {
+							e.logWatchFailure("stat", ev.Name, statErr)
+							continue
+						}
+						data, err := os.ReadFile(ev.Name)
+						if err != nil {
+							e.logWatchFailure("read", ev.Name, err)
 							continue
 						}
 						lookupCtx := ctx
@@ -303,38 +328,51 @@ func (e *Syncer) startWatcher(ctx context.Context) error {
 							lookupCtx = context.Background()
 						}
 						if meta, err2 := e.fs.MetadataViaAPI(lookupCtx, clusterPath); err2 == nil {
-							if metadataMatches(meta, st.Size(), st.ModTime()) {
+							if metadataMatches(meta, data, st.ModTime()) {
 								continue
 							}
+						} else if !errors.Is(err2, types.ErrFileNotFound) {
+							e.logWatchFailure("read cluster metadata", clusterPath, err2)
+							continue
 						}
-						data, err := os.ReadFile(ev.Name)
-						if err == nil {
-							ct := contentTypeFromExt(ev.Name)
-							modT := st.ModTime()
-							if _, err := e.fs.InsertFileIntoCluster(ctx, clusterPath, data, ct, modT); err != nil {
-								e.logger.Printf("[EXPORT] StoreFile error for %s: %v", clusterPath, err)
-							}
+						ct := contentTypeFromExt(ev.Name)
+						modT := st.ModTime()
+						if _, err := e.fs.InsertFileIntoCluster(ctx, clusterPath, data, ct, modT); err != nil {
+							e.logWatchFailure("upload", clusterPath, err)
 						}
 						continue
 					}
 				}
-				if ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-					if e.isWatchedDir(ev.Name) {
-						e.removeWatchRecursive(ev.Name)
-					}
-					// delete from cluster (best-effort)
-					if err := e.fs.DeleteFile(ctx, clusterPath); err != nil {
-						// directories might be non-empty; ignore errors
-					}
-					continue
+			case err, open := <-w.Errors:
+				if !open {
+					return
 				}
-			case err := <-w.Errors:
 				if err != nil {
 					e.logger.Printf("[EXPORT] watcher error: %v", err)
 				}
 			}
 		}
 	}()
+	return nil
+}
+
+func (e *Syncer) removeClusterPath(ctx context.Context, clusterPath string) error {
+	_, err := e.fs.MetadataViaAPI(ctx, clusterPath)
+	if err == nil {
+		return e.fs.DeleteFile(ctx, clusterPath)
+	}
+	if !errors.Is(err, types.ErrFileNotFound) {
+		return err
+	}
+	entries, err := e.fs.ListDirectory(clusterPath)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := e.removeClusterPath(ctx, entry.Path); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -433,12 +471,16 @@ func (e *Syncer) clusterPathFor(full string) (string, bool) {
 }
 
 func (e *Syncer) importAll(ctx context.Context) error {
-	return filepath.WalkDir(e.exportDir, func(p string, d fs.DirEntry, err error) error {
+	return e.importPath(ctx, e.exportDir)
+}
+
+func (e *Syncer) importPath(ctx context.Context, localPath string) error {
+	return filepath.WalkDir(localPath, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
-			return nil
+			return err
 		}
 		clusterPath, ok := e.clusterPathFor(p)
 		if !ok {
@@ -459,49 +501,46 @@ func (e *Syncer) importAll(ctx context.Context) error {
 			if meta, err := e.fs.MetadataViaAPI(lookupCtx, clusterPath); err == nil && meta.IsDirectory {
 				return nil
 			}
-			_ = e.fs.CreateDirectory(clusterPath)
-			return nil
+			return e.fs.CreateDirectory(clusterPath)
 		}
 		// file
 		st, err := os.Stat(p)
 		if err != nil {
-			return nil
+			return err
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
 		}
 		lookupCtx := ctx
 		if lookupCtx == nil {
 			lookupCtx = context.Background()
 		}
 		if meta, err := e.fs.MetadataViaAPI(lookupCtx, clusterPath); err == nil {
-			if metadataMatches(meta, st.Size(), st.ModTime()) {
+			if metadataMatches(meta, data, st.ModTime()) {
 				return nil
 			}
-		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return nil
+		} else if !errors.Is(err, types.ErrFileNotFound) {
+			return err
 		}
 		ct := contentTypeFromExt(p)
-		_, _ = e.fs.InsertFileIntoCluster(ctx, clusterPath, data, ct, st.ModTime())
-		return nil
+		_, err = e.fs.InsertFileIntoCluster(ctx, clusterPath, data, ct, st.ModTime())
+		return err
 	})
 }
 
-func metadataMatches(meta types.FileMetadata, size int64, modTime time.Time) bool {
+func metadataMatches(meta types.FileMetadata, data []byte, modTime time.Time) bool {
 	if meta.IsDirectory {
 		return false
 	}
-	if meta.Size != size {
+	if meta.Size != int64(len(data)) {
 		return false
 	}
 	if meta.ModifiedAt.IsZero() {
 		panic("no")
 	}
-	diff := meta.ModifiedAt.Sub(modTime)
-	if diff < 0 {
-		diff = -diff
-	}
-
-	return diff.Milliseconds() < 1000
+	checksum := sha256.Sum256(data)
+	return meta.ModifiedAt.Equal(modTime) && meta.Checksum == hex.EncodeToString(checksum[:])
 }
 
 func (e *Syncer) markIgnore(full string) {
@@ -573,13 +612,15 @@ func (e *Syncer) performImport(ctx context.Context) error {
 // importFromDir walks importDir and uploads files to cluster
 func (e *Syncer) importFromDir(ctx context.Context) error {
 	var throttle = make(chan struct{}, 50) // limit concurrency
-	var errors []error
-	filepath.WalkDir(e.importDir, func(p string, d fs.DirEntry, err error) error {
+	var uploadErrors []error
+	var errorMu sync.Mutex
+	var uploads sync.WaitGroup
+	walkErr := filepath.WalkDir(e.importDir, func(p string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
-			return nil
+			return err
 		}
 
 		// Check if this path should be excluded
@@ -604,25 +645,30 @@ func (e *Syncer) importFromDir(ctx context.Context) error {
 		// Handle file
 		st, err := os.Stat(p)
 		if err != nil {
-			return nil
+			return err
 		}
 
-		throttle <- struct{}{}
+		select {
+		case throttle <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		uploads.Add(1)
 
 		go func() {
+			defer uploads.Done()
 			err := uploadSyncfile(ctx, e, p, clusterPath, st, throttle)
 			if err != nil {
-				errors = append(errors, err)
+				errorMu.Lock()
+				uploadErrors = append(uploadErrors, err)
+				errorMu.Unlock()
 			}
 
 		}()
 		return nil
 	})
-	if len(errors) > 0 {
-		// Combine all errors into a single error
-		return fmt.Errorf("failed to upload %d files: %v", len(errors), errors)
-	}
-	return nil
+	uploads.Wait()
+	return errors.Join(append(uploadErrors, walkErr)...)
 }
 
 func (e *Syncer) insertWithRetry(ctx context.Context, clusterPath string, data []byte, contentType string, modTime time.Time) ([]types.NodeID, error) {
@@ -633,7 +679,11 @@ func (e *Syncer) insertWithRetry(ctx context.Context, clusterPath string, data [
 			return targetNodes, nil
 		}
 
-		time.Sleep(backoff)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
 
 		if backoff = backoff * 2; backoff > 32*time.Second {
 			backoff = 30 * time.Second
@@ -660,23 +710,23 @@ func uploadSyncfile(ctx context.Context, e *Syncer, p, clusterPath string, st fs
 
 	// Check if file already exists with same content (via external API)
 
-	upToDate, metadata, err := e.fs.ClusterHasUpToDateFile(clusterPath, st.ModTime(), st.Size())
+	data, err := os.ReadFile(p)
 	if err != nil {
-		// Problem retrieving it, we should probably try to insert it anyway
+		return err
+	}
+	metadata, err := e.fs.MetadataViaAPI(ctx, clusterPath)
+	if err != nil {
+		if !errors.Is(err, types.ErrFileNotFound) {
+			return fmt.Errorf("read cluster metadata for importing %s: %w", clusterPath, err)
+		}
 	} else {
-		if upToDate {
+		if metadataMatches(metadata, data, st.ModTime()) {
 			e.logger.Printf("[IMPORT] Skipping synchronised file %s", clusterPath)
 			return nil
 		} else {
 			e.logger.Printf(`[IMPORT] Updating existing file "%s" in cluster: %+v, local size: %v, local time %v`, clusterPath, metadata, st.Size(), st.ModTime())
 
 		}
-	}
-
-	// Read and upload file
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return err
 	}
 
 	ct := contentTypeFromExt(p)

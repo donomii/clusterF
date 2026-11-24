@@ -62,7 +62,6 @@ func (pm *PartitionManager) RecordEssentialDiskActivity() {
 
 func (pm *PartitionManager) MarkForReindex(pId types.PartitionID, reason string) {
 	pm.ReindexList.Store(pId, true)
-	pm.addLocalPartition(types.PartitionID(pm.CalculatePartitionName(string(pId))))
 	pm.logf("[MarkForReindex] Marked partition %v for reindex, because %s", pId, reason)
 }
 
@@ -127,7 +126,6 @@ func (pm *PartitionManager) RunReindex(ctx context.Context) {
 		if value {
 			pm.ReindexList.Store(key, false) // Clear the flag before re-indexing, as new items will not necessarily be caught during
 			//pm.deps.Logger.Printf("[REINDEX] Starting reindex of partition %v", key)
-			pm.addLocalPartition(types.PartitionID(pm.CalculatePartitionName(string(key))))
 			pm.updatePartitionMetadata(ctx, key)
 			count = count + 1
 			pm.debugf("Finished reindex of %v", key)
@@ -237,7 +235,10 @@ func (pm *PartitionManager) publishLocalPartitions() {
 
 func (pm *PartitionManager) recordPartitionTimestamp(partitionID types.PartitionID, filename string, ts time.Time) {
 	fs, ok := pm.deps.FileStore.(*DiskFileStore)
-	types.Assertf(ok, "for the moment, only DiskFileStore is supported, but this is: %T", pm.deps.FileStore)
+	if !ok {
+		// Grouped KV stores are rescanned directly without per-partition timestamp files.
+		return
+	}
 
 	if partitionID == "" {
 		panic(fmt.Sprintf("partition id cannot be nil for recordPartitionTimestamp"))
@@ -502,6 +503,9 @@ func (pm *PartitionManager) fetchMetadataFromPeer(peer *types.PeerInfo, filename
 	}
 
 	if status != http.StatusOK {
+		if status == http.StatusNotFound {
+			return types.FileMetadata{}, fmt.Errorf("%w: peer %s has no metadata for %s", types.ErrFileNotFound, peer.NodeID, filename)
+		}
 		if len(body) > 0 {
 			errStatus := fmt.Errorf("peer %s returned %d for metadata %s via %s: %s", peer.NodeID, status, filename, metadataURL, string(body))
 			return types.FileMetadata{}, errStatus
@@ -581,33 +585,31 @@ func (pm *PartitionManager) GetFileAndMetaFromPartitionStream(path string) (io.R
 	}
 
 	type streamFS interface {
-		GetContentStream(path string) (io.ReadCloser, error)
-		GetMetadata(path string) ([]byte, error)
+		GetStream(path string) ([]byte, io.ReadCloser, error)
 	}
 
 	if store, ok := pm.deps.FileStore.(streamFS); ok {
-		metaBytes, err := store.GetMetadata(path)
+		metaBytes, reader, err := store.GetStream(path)
 		if err != nil {
 			return nil, types.FileMetadata{}, err
 		}
 
 		var metadata types.FileMetadata
 		if err := json.Unmarshal(metaBytes, &metadata); err != nil {
+			reader.Close()
 			return nil, types.FileMetadata{}, pm.errorf(metaBytes, "corrupt file metadata")
 		}
 		if metadata.Deleted {
+			reader.Close()
 			return nil, types.FileMetadata{}, pm.localFileNotFound(path, HashToPartition(path), "file is marked as deleted (tombstone present)")
 		}
 		if metadata.Checksum == "" {
-			panic("no")
+			reader.Close()
+			return nil, types.FileMetadata{}, fmt.Errorf("metadata for %s is missing its checksum", path)
 		}
 		if metadata.ModifiedAt.IsZero() {
-			panic("no")
-		}
-
-		reader, err := store.GetContentStream(path)
-		if err != nil {
-			return nil, types.FileMetadata{}, err
+			reader.Close()
+			return nil, types.FileMetadata{}, fmt.Errorf("metadata for %s is missing its modified time", path)
 		}
 
 		return reader, metadata, nil
@@ -757,12 +759,13 @@ func (pm *PartitionManager) DeleteFileFromPartitionWithTimestamp(ctx context.Con
 
 	// Mark as deleted in metadata and set modTime
 	metadata.Deleted = true
+	metadata.Path = path
 	metadata.DeletedAt = modTime
 	metadata.ModifiedAt = modTime
 
 	// Store tombstone metadata and delete content
 	tombstoneJSON, _ := json.Marshal(metadata)
-	if err := pm.deps.FileStore.PutMetadata(path, tombstoneJSON); err != nil {
+	if err := pm.deps.FileStore.Put(path, tombstoneJSON, []byte{}); err != nil {
 		return err
 	}
 
@@ -800,27 +803,26 @@ func (pm *PartitionManager) updatePartitionMetadata(ctx context.Context, StartPa
 	pm.debugf("[PARTITION] Starting updatePartitionMetadata for partition %s", StartPartitionID)
 
 	// Should use FileStore to do this in a partition store aware way
-	pm.deps.FileStore.ScanMetadataPartition(ctx, StartPartitionID, func(path string, metadata []byte) error {
+	err := pm.deps.FileStore.ScanMetadataPartition(ctx, StartPartitionID, func(path string, metadata []byte) error {
 		partitionID := types.PartitionIDForPath(path)
 		if ctx.Err() != nil {
-			panic(fmt.Sprintf("Context closed in updatePartitionMetadata: %v after %v seconds", ctx.Err(), time.Since(start)))
+			return ctx.Err()
 		}
 
 		var parsedMetadata types.FileMetadata
 		if err := json.Unmarshal(metadata, &parsedMetadata); err != nil {
-			pm.errorf(metadata, "corrupt metadata for partition: "+string(partitionID)+" path: "+path)
-			// Parse error count as existing file
-			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
-			return nil
+			return fmt.Errorf("invalid metadata in partition %s for %s: %w", partitionID, path, err)
 		}
-		// Check if file is marked as deleted
-		if !parsedMetadata.Deleted {
-			// File is not deleted, count it
-			partitionsCount[partitionID] = partitionsCount[partitionID] + 1
-		}
+		// Tombstones must remain discoverable so disconnected replicas can learn deletions.
+		partitionsCount[partitionID] = partitionsCount[partitionID] + 1
 
 		return nil
 	})
+	if err != nil {
+		pm.ReindexList.Store(StartPartitionID, true)
+		pm.logPartitionReindexFailure(StartPartitionID, err)
+		return
+	}
 
 	numPartitions := len(partitionsCount)
 	if numPartitions == 0 {
@@ -1414,7 +1416,9 @@ func (pm *PartitionManager) GetPartitionStats() types.PartitionStatistics {
 			underReplicated++
 
 		}
-		totalFiles += 0
+		if pm.deps.Indexer != nil {
+			totalFiles += len(pm.deps.Indexer.FilesForPartition(partitionID))
+		}
 	}
 
 	syncPending := pm.SyncListPendingCount()

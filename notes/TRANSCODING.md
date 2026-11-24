@@ -54,15 +54,16 @@ Returns cache usage, entry count, and performance metrics.
 
 1. **Client attempts playback** of original file
 2. **On error**, automatically requests transcoded version
-3. **Server checks cache** for existing transcoded file
-4. **If not cached**, ffmpeg transcodes on-demand
-5. **Cached file served** with HTTP range support for seeking
-6. **LRU cleanup** removes old files when cache limit reached
+3. **Server reads the source** through the cluster and hashes its bytes to identify the exact file version
+4. **Server checks the cache** using the path, source checksum, content type, and output format; concurrent requests share one conversion
+5. **If not cached**, ffmpeg transcodes into a temporary file and publishes the completed output
+6. **Cached file served** with HTTP range support for seeking
+7. **LRU cleanup** removes old files when cache limit reached, including entries created by earlier versions
 
 ## Performance
 
 - **First access**: Transcoding takes time (shows "Transcoding..." notification)
-- **Subsequent access**: Instant playback from cache
+- **Subsequent access**: The source is read to verify its version, then the cached conversion is reused
 - **Seeking support**: Fragmented MP4 headers allow immediate seeking
 - **Cache efficiency**: 1GB cache holds ~100-200 transcoded videos
 

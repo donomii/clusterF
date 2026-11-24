@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/donomii/clusterF/clusterstate"
 	"github.com/donomii/clusterF/discovery"
 	"github.com/donomii/clusterF/filesync"
 	"github.com/donomii/clusterF/filesystem"
@@ -32,6 +32,7 @@ import (
 	"github.com/donomii/clusterF/indexer"
 	"github.com/donomii/clusterF/metrics"
 	"github.com/donomii/clusterF/partitionmanager"
+	"github.com/donomii/clusterF/storagecrypto"
 	"github.com/donomii/clusterF/syncmap"
 	"github.com/donomii/clusterF/threadmanager"
 	"github.com/donomii/clusterF/types"
@@ -89,13 +90,15 @@ type Cluster struct {
 	threadManager    *threadmanager.ThreadManager // Holds long running subsystems
 
 	// CRDT coordination layer
-	frogpond *frogpond.Node
+	frogpond *clusterstate.Node
 
 	// Partition system
 	partitionManager *partitionmanager.PartitionManager
 
 	// Partition holder map built from nodePartitions/<node> entries
-	partitionHolders *syncmap.SyncMap[types.PartitionID, []types.NodeID]
+	partitionHolders   *syncmap.SyncMap[types.PartitionID, []types.NodeID]
+	partitionHoldersMu sync.RWMutex
+	partitionRebuildMu sync.Mutex
 
 	// File system layer
 	FileSystem *filesystem.ClusterFileSystem // Presentation layer for the cluster
@@ -110,9 +113,10 @@ type Cluster struct {
 	metricsCollector *metrics.MetricsCollector
 
 	// Server shutdown
-	ctx    context.Context
-	cancel context.CancelFunc
-	server *http.Server
+	ctx       context.Context
+	cancel    context.CancelFunc
+	server    *http.Server
+	httpReady chan error
 
 	// Profiling
 	profilingActive bool
@@ -167,12 +171,13 @@ func (c *Cluster) ReplicationFactor() int {
 }
 
 type StorageSettings struct {
-	Program             string `json:"program"`
-	URL                 string `json:"url"`
-	StorageMajor        string `json:"storage_major"`
-	StorageMinor        string `json:"storage_minor"`
-	Version             string `json:"version"`
-	EncryptedTestPhrase string `json:"encrypted_test_phrase,omitempty"`
+	Program             string                  `json:"program"`
+	URL                 string                  `json:"url"`
+	StorageMajor        string                  `json:"storage_major"`
+	StorageMinor        string                  `json:"storage_minor"`
+	Version             string                  `json:"version"`
+	EncryptedTestPhrase string                  `json:"encrypted_test_phrase,omitempty"`
+	Encryption          *storagecrypto.Settings `json:"encryption,omitempty"`
 }
 
 // loadStorageSettings loads storage settings from settings.json in the data directory
@@ -211,18 +216,19 @@ type ClusterOpts struct {
 	UDPListenPort int
 	HTTPDataPort  int
 
-	DiscoveryPort int
-	BroadcastIP   net.IP
-	Logger        *log.Logger //  if not provided, will use log.New(os.Stderr, "", log.Lstd)
-	ExportDir     string      // if set, mirror files to this directory for OS sharing
-	ClusterDir    string      // if set, only export files with this path prefix
-	ImportDir     string      // if set, import files from this directory to the cluster
-	ExcludeDirs   string      // comma-separated list of directory names to exclude during import
-	NoStore       bool        // if true, don't store partitions locally (client mode)
-	StorageMajor  string      // storage format major (ensemble or bolt)
-	StorageMinor  string      // storage format minor (ensemble or bolt)
-	EncryptionKey string      // encryption key for at-rest encryption
-	Debug         bool        // Enable debugging for all modules in the cluster
+	DiscoveryPort  int
+	BroadcastIP    net.IP
+	Logger         *log.Logger //  if not provided, will use log.New(os.Stderr, "", log.Lstd)
+	ExportDir      string      // if set, mirror files to this directory for OS sharing
+	ClusterDir     string      // if set, only export files with this path prefix
+	ImportDir      string      // if set, import files from this directory to the cluster
+	ExcludeDirs    string      // comma-separated list of directory names to exclude during import
+	NoStore        bool        // if true, don't store partitions locally (client mode)
+	StorageMajor   string      // storage format major (ensemble or bolt)
+	StorageMinor   string      // storage format minor (ensemble or bolt)
+	EncryptionKey  string      // encryption key for at-rest encryption
+	EncryptionMode string      // auto preserves existing formats; legacy or authenticated selects an explicit format
+	Debug          bool        // Enable debugging for all modules in the cluster
 }
 
 func NewCluster(opts ClusterOpts) *Cluster {
@@ -290,6 +296,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		partitionHolders:     syncmap.NewSyncMap[types.PartitionID, []types.NodeID](),
 		ctx:                  ctx,
 		cancel:               cancel,
+		httpReady:            make(chan error, 1),
 		Debug:                opts.Debug,
 		internalCallThrottle: make(chan struct{}, 1),
 		externalCallThrottle: make(chan struct{}, 1),
@@ -345,6 +352,11 @@ func NewCluster(opts ClusterOpts) *Cluster {
 			}
 			opts.StorageMinor = existingSettings.StorageMinor
 		}
+	}
+
+	encryption, err := prepareStorageEncryption(opts, existingSettings)
+	if err != nil {
+		panic(fmt.Sprintf("Cannot open repository %s: %v", opts.DataDir, err))
 	}
 
 	// Ensure the data directory exists immediately
@@ -416,20 +428,22 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Initialized discovery manager\n")
 
 	// Initialize frogpond CRDT node
-	c.frogpond = frogpond.NewNode()
+	c.frogpond = clusterstate.NewNode()
 	c.debugf("Initialized frogpond node\n")
 
-	// Save settings only after successful KV store initialization
+	// Persist encryption parameters before opening stores that can write encrypted data.
 	if existingSettings == nil {
 		newSettings := StorageSettings{
-			Program:      "clusterF",
-			URL:          "https://github.com/donomii/clusterF",
-			StorageMajor: opts.StorageMajor,
-			StorageMinor: opts.StorageMinor,
-			Version:      version,
+			Program:             "clusterF",
+			URL:                 "https://github.com/donomii/clusterF",
+			StorageMajor:        opts.StorageMajor,
+			StorageMinor:        opts.StorageMinor,
+			Version:             version,
+			Encryption:          encryption.settings,
+			EncryptedTestPhrase: encryption.legacyTestPhrase,
 		}
 		if err := saveStorageSettings(opts.DataDir, newSettings); err != nil {
-			c.Logger().Printf("[WARNING] Failed to save storage settings: %v", err)
+			panic(fmt.Sprintf("Failed to save storage settings for %s: %v", opts.DataDir, err))
 		}
 	}
 	// Load CRDT state from KV (if any) before applying defaults
@@ -437,7 +451,7 @@ func NewCluster(opts ClusterOpts) *Cluster {
 	c.debugf("Loaded CRDT state from KV\n")
 
 	// Initialize file store based on storage major selection
-	var fileStore types.FileStoreLike
+	var fileStore types.EncryptedFileStoreLike
 	switch opts.StorageMajor {
 	case "rawfile":
 		c.logger.Print("Chose direct file store")
@@ -447,36 +461,12 @@ func NewCluster(opts ClusterOpts) *Cluster {
 		fileStore = partitionmanager.NewFileStore(filepath.Join(opts.DataDir, "partitions"), c.Debug, opts.StorageMajor, opts.StorageMinor)
 	}
 
-	// Handle encryption if key provided
-	if opts.EncryptionKey != "" {
-		encKey := []byte(opts.EncryptionKey)
-		fileStore.SetEncryptionKey(encKey)
-
-		// Check if this is a new repository
-		if existingSettings == nil || existingSettings.EncryptedTestPhrase == "" {
-			// New repository - encrypt and store test phrase
-			testPhrase := "clusterF-encryption-test"
-			encryptedTest := xorEncryptString(testPhrase, encKey)
-			newSettings := StorageSettings{
-				Program:             "clusterF",
-				URL:                 "https://github.com/donomii/clusterF",
-				StorageMajor:        opts.StorageMajor,
-				StorageMinor:        opts.StorageMinor,
-				Version:             version,
-				EncryptedTestPhrase: encryptedTest,
-			}
-			if err := saveStorageSettings(opts.DataDir, newSettings); err != nil {
-				c.Logger().Fatalf("Failed to save encryption settings: %v", err)
-			}
-		} else {
-			// Existing repository - verify key
-			if err := verifyEncryptionKey(existingSettings.EncryptedTestPhrase, encKey); err != nil {
-				panic(fmt.Sprintf("Encryption key verification failed: %v", err))
-			}
+	if encryption.legacyTestPhrase != "" {
+		if err := fileStore.SetLegacyEncryptionKey(encryption.key); err != nil {
+			panic(fmt.Sprintf("Cannot configure legacy encryption for repository %s: %v", opts.DataDir, err))
 		}
-	} else if existingSettings != nil && existingSettings.EncryptedTestPhrase != "" {
-		// Repository was created with encryption but no key provided
-		panic("This repository requires an encryption key (use --encryption-key)")
+	} else {
+		fileStore.SetEncryptionKey(encryption.key)
 	}
 
 	// Initialize partition manager
@@ -672,32 +662,6 @@ func broadcastPortFromEnv() int {
 	return DefaultBroadcastPort
 }
 
-// xorEncryptString performs XOR encryption on a string and returns hex-encoded result
-// If input looks like hex, it decodes it first (for decryption)
-func xorEncryptString(data string, key []byte) string {
-	if len(key) == 0 || len(data) == 0 {
-		return data
-	}
-
-	// Check if input is hex-encoded (all hex chars and even length)
-	dataBytes := []byte(data)
-	if decoded, err := hex.DecodeString(data); err == nil {
-		// Input was hex, use decoded bytes
-		dataBytes = decoded
-	}
-
-	result := make([]byte, len(dataBytes))
-	for i := range dataBytes {
-		result[i] = dataBytes[i] ^ key[i%len(key)]
-	}
-
-	// If original input was hex, return string; otherwise return hex
-	if _, err := hex.DecodeString(data); err == nil {
-		return string(result)
-	}
-	return hex.EncodeToString(result)
-}
-
 // Get data for peer
 func (c *Cluster) LoadPeer(id types.NodeID) (*types.PeerInfo, bool) {
 	// First try peerAddrs (from Discovery)
@@ -721,16 +685,6 @@ func (c *Cluster) LoadPeer(id types.NodeID) (*types.PeerInfo, bool) {
 		}, true
 	}
 	return nil, false
-}
-
-// verifyEncryptionKey verifies that the provided key can decrypt the test phrase
-func verifyEncryptionKey(encryptedTestPhrase string, key []byte) error {
-	testPhrase := "clusterF-encryption-test"
-	decryptedTest := xorEncryptString(encryptedTestPhrase, key)
-	if decryptedTest != testPhrase {
-		return fmt.Errorf("Encryption key verification failed - wrong key or corrupted settings")
-	}
-	return nil
 }
 
 // loadNodeIDFromDataDir checks for existing node IDs in the data directory and errors if multiple found
@@ -772,8 +726,6 @@ func (c *Cluster) deletePartitions(ctx context.Context) {
 	for {
 		updates := c.frogpond.DeleteAllMatchingPrefix("partitions")
 		c.sendUpdatesToPeers(updates)
-		// Only purge expired tombstones; do not remove live partition metadata from the CRDT.
-		c.frogpond.PurgeDeletedDataPoints(time.Now())
 
 		select {
 		case <-ctx.Done():
@@ -788,6 +740,12 @@ func (c *Cluster) deletePartitions(ctx context.Context) {
 
 func (c *Cluster) Start() {
 	c.Logger().Printf("Starting node %s (HTTP:%d)", c.NodeId, c.HTTPDataPort)
+	if err := c.threadManager.StartThread("http-server", c.startHTTPServer); err != nil {
+		c.panicf("Cannot start HTTP server for node %s: %v", c.NodeId, err)
+	}
+	if err := <-c.httpReady; err != nil {
+		c.panicf("Cannot bind HTTP server for node %s: %v", c.NodeId, err)
+	}
 
 	c.threadManager.StartThreadOnce("update-partition-metadata", func(ctx context.Context) { c.initialPartitionMetadataUpdate(c.AppContext()) })
 	// Start all threads using ThreadManager
@@ -800,7 +758,6 @@ func (c *Cluster) Start() {
 	c.threadManager.StartThread("node-pruning", c.periodicNodePruning)
 	c.threadManager.StartThread("discovery-manager", c.runDiscoveryManager)
 	c.threadManager.StartThread("peer-fullstore-sync", c.runPeerFullStoreSync)
-	c.threadManager.StartThread("http-server", c.startHTTPServer)
 	c.threadManager.StartThread("partition-reindex", c.runPartitionReindex)
 	c.threadManager.StartThread("restart-monitor", c.runRestartMonitor)
 	c.threadManager.StartThread("under-replicated-monitor", c.partitionManager.RunUnderReplicatedMonitor)
@@ -840,20 +797,12 @@ func (c *Cluster) runDiscoveryManager(ctx context.Context) {
 
 func (c *Cluster) runPeerFullStoreSync(ctx context.Context) {
 
-	knownPeers := make(map[types.NodeID]bool)
-
 	checkPeers := func() {
 		for _, peer := range c.discoveryManager.GetPeers() {
 			if ctx.Err() != nil {
 				return
 			}
-			peerID := types.NodeID(peer.NodeID)
-			if seen := knownPeers[peerID]; seen {
-				continue
-			}
-			if c.requestFullStoreFromPeer(peer) {
-				knownPeers[peerID] = true
-			}
+			c.requestFullStoreFromPeer(peer)
 		}
 	}
 
@@ -937,7 +886,7 @@ func (c *Cluster) runPartitionReindex(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if time.Since(lastUpdate) > time.Duration(c.partitionReIndexInterval)*time.Second {
+			if time.Since(lastUpdate) > c.partitionReIndexInterval {
 				c.logger.Printf("Started RunReindex\n")
 				pm.RunReindex(ctx)
 				c.logger.Printf("Finished RunReindex\n")
@@ -1077,6 +1026,8 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 		if err == nil {
 			// Successfully bound to port
 			c.HTTPDataPort = port // Update the actual port being used
+			c.discoveryManager.UpdateNodeInfo(string(c.NodeId), port)
+			c.updateNodeMetadata()
 			break
 		}
 
@@ -1089,6 +1040,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 
 	if err != nil {
 		c.debugf("Failed to find available port after %d attempts: %v", maxAttempts, err)
+		c.signalHTTPReady(err)
 		return
 	}
 
@@ -1193,6 +1145,7 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 	go func() {
 		serverDone <- server.Serve(listener)
 	}()
+	c.signalHTTPReady(nil)
 
 	// Wait for context cancellation or server error
 	select {
@@ -1211,6 +1164,13 @@ func (c *Cluster) startHTTPServer(ctx context.Context) {
 			c.Logger().Printf("HTTP server error: %v", err)
 			c.debugf("HTTP server error: %v", err)
 		}
+	}
+}
+
+func (c *Cluster) signalHTTPReady(err error) {
+	select {
+	case c.httpReady <- err:
+	default:
 	}
 }
 
@@ -1417,7 +1377,6 @@ func (c *Cluster) handleIntegrityCheck(w http.ResponseWriter, r *http.Request) {
 
 // handleMetadataAPI handles external metadata requests by calling internal handler
 func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
-	c.circuitBreaker.Reset()
 	path := strings.TrimPrefix(r.URL.Path, "/api/metadata")
 	if path == "" {
 		path = "/"
@@ -1449,7 +1408,7 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	peerLookup := c.GetAvailablePeerMap()
+	peerLookup := c.GetReadablePeerMap()
 
 	c.debugf("[METADATA_API] Partition %s for file %s has holders: %v", partitionID, path, holders)
 
@@ -1478,8 +1437,8 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := c.CheckCircuitBreaker(metadataURL); err != nil {
-			http.Error(w, fmt.Sprintf("circuit breaker open for %s: %v", metadataURL, err), http.StatusServiceUnavailable)
-			return
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: %v", holderID, err))
+			continue
 		}
 
 		body, headers, status, err := httpclient.SimpleGet(r.Context(), c.HttpDataClient, metadataURL,
@@ -1495,6 +1454,15 @@ func (c *Cluster) handleMetadataAPI(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if status == http.StatusOK {
+			var metadata types.FileMetadata
+			if err := json.Unmarshal(body, &metadata); err != nil {
+				holderErrors = append(holderErrors, fmt.Sprintf("%s: invalid metadata: %v", holderID, err))
+				continue
+			}
+			if metadata.Deleted {
+				holderErrors = append(holderErrors, fmt.Sprintf("%s: file deleted", holderID))
+				continue
+			}
 			c.debugf("[METADATA_API] Found metadata for %s on holder %s", path, peer.NodeID)
 
 			// Copy all headers from peer response
@@ -1545,14 +1513,19 @@ func (c *Cluster) handleInternalMetadataAPI(w http.ResponseWriter, r *http.Reque
 	c.debugf("[INTERNAL_METADATA_API] GET request for path: %s", path)
 
 	// Only check local storage, never forward to peers
-	metadata, err := c.FileSystem.GetMetadata(path)
+	encoded, err := c.app.FileStore.GetMetadata(path)
 	if err != nil {
 		c.debugf("[INTERNAL_METADATA_API] Not found locally: %v", path)
-		if errors.Is(err, types.ErrFileNotFound) {
+		if errors.Is(err, types.ErrFileNotFound) || errors.Is(err, os.ErrNotExist) {
 			http.Error(w, "Metadata not found", http.StatusNotFound)
 			return
 		}
 		http.Error(w, fmt.Sprintf("Failed to retrieve metadata: %v", err), http.StatusInternalServerError)
+		return
+	}
+	var metadata types.FileMetadata
+	if err := json.Unmarshal(encoded, &metadata); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid stored metadata for %s: %v", path, err), http.StatusInternalServerError)
 		return
 	}
 
@@ -1570,7 +1543,7 @@ func (c *Cluster) initializeClusterSettings() {
 	data := c.frogpond.GetDataPoint("cluster/replication_factor")
 	if data.Deleted || len(data.Value) == 0 {
 		rfJSON, _ := json.Marshal(DefaultRF)
-		updates := c.frogpond.SetDataPoint("cluster/replication_factor", rfJSON)
+		updates := c.frogpond.SetDefaultDataPoint("cluster/replication_factor", rfJSON)
 		c.sendUpdatesToPeers(updates)
 		c.Logger().Printf("[INIT] Set default replication factor to %d", DefaultRF)
 	}
@@ -1579,7 +1552,7 @@ func (c *Cluster) initializeClusterSettings() {
 	data = c.frogpond.GetDataPoint("cluster/partition_sync_interval_seconds")
 	if data.Deleted || len(data.Value) == 0 {
 		intervalJSON, _ := json.Marshal(types.DefaultPartitionSyncIntervalSeconds)
-		updates := c.frogpond.SetDataPoint("cluster/partition_sync_interval_seconds", intervalJSON)
+		updates := c.frogpond.SetDefaultDataPoint("cluster/partition_sync_interval_seconds", intervalJSON)
 		c.sendUpdatesToPeers(updates)
 		c.Logger().Printf("[INIT] Set default partition sync interval to %d seconds", types.DefaultPartitionSyncIntervalSeconds)
 	}
@@ -1756,7 +1729,6 @@ func (c *Cluster) handleClusterRestart(w http.ResponseWriter, r *http.Request) {
 // requestFullStoreFromPeer requests the complete frogpond store from a specific peer
 // Returns true on success, false on failure
 func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
-	c.circuitBreaker.Reset()
 	if c.AppContext().Err() != nil {
 		return false
 	}
@@ -1771,7 +1743,7 @@ func (c *Cluster) requestFullStoreFromPeer(peer *types.PeerInfo) bool {
 		return false
 	}
 
-	body, _, status, err := httpclient.SimpleGet(c.AppContext(), c.HttpDataClient, fullStoreURL)
+	body, _, status, err := httpclient.SimpleGet(c.AppContext(), c.httpClient, fullStoreURL)
 	if err != nil {
 		if isNetworkTransportError(err) {
 			c.TripCircuitBreaker(fullStoreURL, err)

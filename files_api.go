@@ -187,8 +187,8 @@ func (c *Cluster) handleFileGetInternal(w http.ResponseWriter, r *http.Request, 
 		w.Header().Set("Content-Type", ct)
 	}
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
-	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
-	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339))
+	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339Nano))
+	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339Nano))
 	if metadata.Checksum != "" {
 		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
 		w.Header().Set("ETag", fmt.Sprintf("\"%s\"", metadata.Checksum))
@@ -228,7 +228,7 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 	}
 
 	// Get peer info for all holders
-	peerLookup := c.GetAvailablePeerMap()
+	peerLookup := c.GetReadablePeerMap()
 
 	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, holders)
 
@@ -258,8 +258,8 @@ func (c *Cluster) handleFileGet(w http.ResponseWriter, r *http.Request, path str
 		}
 
 		if err := c.CheckCircuitBreaker(fileURL); err != nil {
-			http.Error(w, fmt.Sprintf("circuit breaker open for %s: %v", fileURL, err), http.StatusServiceUnavailable)
-			return
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: %v", holderID, err))
+			continue
 		}
 
 		options := []httpclient.RequestOption{
@@ -335,8 +335,8 @@ func (c *Cluster) writeHeadResponse(w http.ResponseWriter, metadata types.FileMe
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", metadata.Size))
-	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339))
-	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339))
+	w.Header().Set("X-ClusterF-Created-At", metadata.CreatedAt.Format(time.RFC3339Nano))
+	w.Header().Set("X-ClusterF-Modified-At", metadata.ModifiedAt.Format(time.RFC3339Nano))
 	w.Header().Set("X-ClusterF-Is-Directory", "false")
 	if metadata.Checksum != "" {
 		w.Header().Set("X-ClusterF-Checksum", metadata.Checksum)
@@ -391,7 +391,7 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 		return
 	}
 
-	peerLookup := c.GetAvailablePeerMap()
+	peerLookup := c.GetReadablePeerMap()
 
 	c.debugf("[FILES] Partition %s for file %s has holders: %v", partitionID, path, holders)
 
@@ -417,8 +417,8 @@ func (c *Cluster) handleFileHead(w http.ResponseWriter, r *http.Request, path st
 		}
 
 		if err := c.CheckCircuitBreaker(fileURL); err != nil {
-			http.Error(w, fmt.Sprintf("circuit breaker open for %s: %v", fileURL, err), http.StatusServiceUnavailable)
-			return
+			holderErrors = append(holderErrors, fmt.Sprintf("%s: %v", holderID, err))
+			continue
 		}
 
 		headers, status, err := httpclient.SimpleHead(r.Context(), c.HttpDataClient, fileURL,
@@ -515,7 +515,6 @@ func (c *Cluster) handleFilePutInternal(w http.ResponseWriter, r *http.Request, 
 		}
 
 		if metadata.ModifiedAt.IsZero() {
-			panic("no")
 			http.Error(w, fmt.Sprintf("ModifiedAt timestamp is zero in forwarded metadata for %s", path), http.StatusBadRequest)
 			return
 		}
@@ -653,7 +652,6 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	// Debug: log all file uploads with no-store status
 	if c.NoStore() {
 		c.Logger().Printf("[FILES] NO-STORE node received PUT for %s (forwarded=%v)", path, r.Header.Get("X-Forwarded-From") != "")
-		panic("fuck you")
 	}
 
 	tempPath, size, checksum, err := bufferRequestBodyToFile(r.Body)
@@ -680,7 +678,7 @@ func (c *Cluster) handleFilePut(w http.ResponseWriter, r *http.Request, path str
 	}
 
 	nodes, err := c.FileSystem.InsertFileIntoClusterFromFile(r.Context(), path, tempPath, size, checksum, contentType, localModTime)
-	if err != nil && len(nodes) == 0 {
+	if err != nil {
 		message := fmt.Sprintf("Failed to upload %s: %v", path, err)
 		http.Error(w, message, http.StatusInternalServerError)
 		return
@@ -730,7 +728,7 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		return
 	}
 
-	peerLookup := c.GetAvailablePeerMap()
+	peerLookup := c.GetReadablePeerMap()
 
 	var (
 		successful bool
@@ -749,16 +747,19 @@ func (c *Cluster) handleFileDelete(w http.ResponseWriter, r *http.Request, path 
 		}
 
 		deleteURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
-		types.Assertf(err != nil, "%s: URL build failed: %v", peer.NodeID, err)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: URL build failed: %v", peer.NodeID, err))
+			continue
+		}
 
 		if err := c.CheckCircuitBreaker(deleteURL); err != nil {
-			http.Error(w, fmt.Sprintf("circuit breaker open for %s: %v", deleteURL, err), http.StatusServiceUnavailable)
-			return
+			errors = append(errors, fmt.Sprintf("%s: %v", holderID, err))
+			continue
 		}
 
 		body, _, status, err := httpclient.SimpleDelete(r.Context(), c.HttpDataClient, deleteURL,
 			httpclient.WithHeader("X-ClusterF-Internal", "1"),
-			httpclient.WithHeader("X-ClusterF-Modified-At", now.Format(time.RFC3339)),
+			httpclient.WithHeader("X-ClusterF-Modified-At", now.Format(time.RFC3339Nano)),
 		)
 		if err != nil {
 			if isNetworkTransportError(err) {

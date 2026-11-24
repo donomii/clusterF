@@ -36,12 +36,12 @@ const (
 
 // ClusterFileSystem provides a file system interface over the cluster
 type ClusterFileSystem struct {
-	cluster types.ClusterLike
+	cluster types.FileSystemClusterLike
 	Debug   bool
 }
 
 // NewClusterFileSystem creates a new distributed file system
-func NewClusterFileSystem(cluster types.ClusterLike, debug bool) *ClusterFileSystem {
+func NewClusterFileSystem(cluster types.FileSystemClusterLike, debug bool) *ClusterFileSystem {
 	return &ClusterFileSystem{
 		cluster: cluster,
 		Debug:   debug,
@@ -154,7 +154,7 @@ func (fs *ClusterFileSystem) InsertFileIntoCluster(ctx context.Context, path str
 	metadataJSON, _ := json.Marshal(metadata)
 	// For no-store clients, forward uploads to storage nodes
 
-	return fs.forwardUploadToStorageNode(path, metadataJSON, content, contentType)
+	return fs.forwardUploadToStorageNode(ctx, path, metadataJSON, content, contentType)
 
 }
 
@@ -260,7 +260,7 @@ func (fs *ClusterFileSystem) StoreFileWithModTimeDirectFromFile(ctx context.Cont
 }
 
 // forwardUploadToStorageNode forwards file uploads from no-store clients to storage nodes
-func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSON []byte, content []byte, contentType string) ([]types.NodeID, error) {
+func (fs *ClusterFileSystem) forwardUploadToStorageNode(ctx context.Context, path string, metadataJSON []byte, content []byte, contentType string) ([]types.NodeID, error) {
 	// Calculate partition name for this file
 	partitionName := fs.cluster.PartitionManager().CalculatePartitionName(path)
 
@@ -306,7 +306,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 	}
 
 	// Get discovery peers to match nodeIDs to addresses
-	peerMap := fs.cluster.GetAvailablePeerMap()
+	peerMap := fs.cluster.GetReadablePeerMap()
 
 	modTime, size, metaErr := decodeForwardedMetadata(metadataJSON)
 
@@ -344,7 +344,7 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNode(path string, metadataJSO
 		batch := append([]types.NodeID(nil), pending[:batchSize]...)
 		pending = pending[batchSize:]
 
-		attemptedBatch, _, successes, err, allSkipped := fs.tryForwardToNodes(context.Background(), path, metadataJSON, content, contentType, batch, peerMap, modTime, size, metaErr)
+		attemptedBatch, _, successes, err, allSkipped := fs.tryForwardToNodes(ctx, path, metadataJSON, content, contentType, batch, peerMap, modTime, size, metaErr)
 
 		successMap := make(map[types.NodeID]bool, len(successes))
 		// Record which peers actually accepted this batch so we do not queue them again.
@@ -459,11 +459,21 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Cont
 	types.Assertf(desiredReplicas > 0, "desiredReplicas must be greater than 0")
 
 	targetNodes := make([]types.NodeID, 0)
+	seen := make(map[types.NodeID]bool)
 	if len(nodesForPartition) > 0 {
-		targetNodes = nodesForPartition
+		for _, nodeID := range nodesForPartition {
+			if !seen[nodeID] {
+				seen[nodeID] = true
+				targetNodes = append(targetNodes, nodeID)
+			}
+		}
 	} else {
 		targetNodeInfo := fs.cluster.GetAvailablePeerList()
 		for _, nodeData := range targetNodeInfo {
+			if len(targetNodes) >= desiredReplicas {
+				break
+			}
+			seen[nodeData.NodeID] = true
 			targetNodes = append(targetNodes, nodeData.NodeID)
 		}
 	}
@@ -476,14 +486,14 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Cont
 		return []types.NodeID{nodeID}, nil
 	}
 
-	peerMap := fs.cluster.GetAvailablePeerMap()
+	peerMap := fs.cluster.GetReadablePeerMap()
 
 	// Gather extra storage candidates to fill replication if existing holders are missing.
 	if len(targetNodes) < desiredReplicas {
 		allNodes := fs.cluster.GetAvailablePeerList()
 		for _, nodeInfo := range allNodes {
-			if nodeInfo.IsStorage {
-
+			if nodeInfo.IsStorage && !seen[nodeInfo.NodeID] {
+				seen[nodeInfo.NodeID] = true
 				targetNodes = append(targetNodes, nodeInfo.NodeID)
 			}
 			if len(targetNodes) >= desiredReplicas {
@@ -500,27 +510,9 @@ func (fs *ClusterFileSystem) forwardUploadToStorageNodeFromFile(ctx context.Cont
 		requiredSuccesses = len(targetNodes)
 	}
 
-	attempted, skipped, successes, err, fullySkipped := fs.tryForwardToNodesFromFile(ctx, path, metadataJSON, contentPath, contentType, targetNodes, peerMap, meta.ModifiedAt, size, nil, requiredSuccesses)
-	if err != nil {
-		if len(successes) > 0 {
-			err = nil
-		}
-		return successes, err
-	}
-
-	if fullySkipped && len(successes) == 0 {
-		return successes, fmt.Errorf("all uploads skipped or failed for %s", path)
-	}
-
-	successOrder := make([]types.NodeID, 0, len(attempted))
-	for _, id := range targetNodes {
-		if attempted[id] {
-			successOrder = append(successOrder, types.NodeID(id))
-		}
-	}
-
+	attempted, skipped, successes, err, _ := fs.tryForwardToNodesFromFile(ctx, path, metadataJSON, contentPath, contentType, targetNodes, peerMap, meta.ModifiedAt, size, nil, requiredSuccesses)
 	fs.debugf("[FILES] forwardUploadToStorageNodeFromFile attempted %d, skipped %d, successes %d", len(attempted), skipped, len(successes))
-	return successOrder, nil
+	return successes, err
 }
 
 func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string, metadataJSON []byte, content []byte, contentType string, targets []types.NodeID, peerMap map[types.NodeID]types.NodeData, modTime time.Time, size int64, metaErr error) (map[types.NodeID]bool, int, []types.NodeID, error, bool) {
@@ -538,6 +530,7 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 	skipped := 0
 	attempted := make(map[types.NodeID]bool, len(targets))
 	metaHeader := base64.StdEncoding.EncodeToString(metadataJSON)
+	checksum := calculateChecksum(content)
 
 	results := make(chan forwardResult, len(targets))
 	var wg sync.WaitGroup
@@ -549,6 +542,11 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 		wg.Add(1)
 		go func(nodeID types.NodeID) {
 			defer wg.Done()
+			if nodeID == fs.cluster.ID() && !fs.cluster.NoStore() {
+				_, err := fs.StoreFileWithModTimeDirect(ctx, path, content, contentType, modTime)
+				results <- forwardResult{node: nodeID, err: err}
+				return
+			}
 
 			peer, ok := peerMap[nodeID]
 			if !ok {
@@ -571,7 +569,7 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 
 			// Skip redundant uploads when we already know the peer has a fresh copy.
 			if metaErr == nil {
-				upToDate, err := fs.PeerHasUpToDateFile(peer, path, modTime, size)
+				upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size, checksum)
 				if err == nil && upToDate {
 					fs.debugf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
 					results <- forwardResult{node: types.NodeID(nodeID), skipped: true}
@@ -628,7 +626,6 @@ func (fs *ClusterFileSystem) tryForwardToNodes(ctx context.Context, path string,
 	for res := range results {
 		if res.skipped {
 			skipped++
-			continue
 		}
 		if res.err != nil {
 			errorMessages = append(errorMessages, res.err.Error())
@@ -669,6 +666,10 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 	skipped := 0
 	attempted := make(map[types.NodeID]bool, len(targets))
 	metaHeader := base64.StdEncoding.EncodeToString(metadataJSON)
+	var metadata types.FileMetadata
+	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
+		return attempted, 0, nil, fmt.Errorf("invalid upload metadata for %s: %w", path, err), false
+	}
 
 	results := make(chan forwardResult, len(targets))
 	var wg sync.WaitGroup
@@ -679,6 +680,11 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 		wg.Add(1)
 		go func(nodeID types.NodeID) {
 			defer wg.Done()
+			if nodeID == fs.cluster.ID() && !fs.cluster.NoStore() {
+				_, err := fs.StoreFileWithModTimeDirectFromFile(ctx, path, contentPath, size, metadata.Checksum, contentType, modTime)
+				results <- forwardResult{node: nodeID, err: err}
+				return
+			}
 
 			peer, ok := peerMap[nodeID]
 			if !ok {
@@ -697,7 +703,7 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 			}
 
 			if metaErr == nil {
-				upToDate, err := fs.PeerHasUpToDateFile(peer, path, modTime, size)
+				upToDate, err := fs.peerHasUpToDateFile(peer, path, modTime, size, metadata.Checksum)
 				if err == nil && upToDate {
 					fs.debugf("[FILES] Peer %s already has %s (mod >= %s); skipping forward", peer.NodeID, path, modTime.Format(time.RFC3339))
 					results <- forwardResult{node: types.NodeID(nodeID), skipped: true}
@@ -741,6 +747,10 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 				return
 			}
 			respBody, err := resp.ReadAllAndClose()
+			if err != nil {
+				results <- forwardResult{node: nodeID, err: fmt.Errorf("read upload response for %s from %s: %w", path, nodeID, err)}
+				return
+			}
 			status := http.StatusInternalServerError
 			if resp != nil && resp.Response != nil {
 				status = resp.StatusCode
@@ -768,7 +778,6 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 	for res := range results {
 		if res.skipped {
 			skipped++
-			continue
 		}
 		if res.err != nil {
 			errorMessages = append(errorMessages, res.err.Error())
@@ -777,17 +786,9 @@ func (fs *ClusterFileSystem) tryForwardToNodesFromFile(ctx context.Context, path
 		successes = append(successes, res.node)
 	}
 
-	if len(successes) > 0 {
-		var combinedErr error
-		if len(errorMessages) > 0 {
-			combinedErr = errors.New(strings.Join(errorMessages, "; "))
-		}
-		return attempted, skipped, successes, combinedErr, skipped == len(targets)
-	}
-
-	if len(errorMessages) > 0 {
-		combinedErr := errors.New(strings.Join(errorMessages, "; "))
-		return attempted, skipped, successes, combinedErr, false
+	if len(successes) < requiredSuccesses {
+		err := fmt.Errorf("upload %s requires %d replicas, stored on %d: %s", path, requiredSuccesses, len(successes), strings.Join(errorMessages, "; "))
+		return attempted, skipped, successes, err, skipped == len(targets)
 	}
 
 	return attempted, skipped, successes, nil, skipped == len(targets)
@@ -854,14 +855,32 @@ func (fs *ClusterFileSystem) ListDirectory(path string) ([]*types.FileMetadata, 
 
 // DeleteFile removes a file from the cluster
 func (fs *ClusterFileSystem) DeleteFile(ctx context.Context, path string) error {
-	return fs.DeleteFileWithTimestamp(ctx, path, time.Now())
+	portSource, ok := fs.cluster.(interface{ HTTPPort() int })
+	if !ok {
+		return fmt.Errorf("cluster does not expose HTTPPort for deleting %s", path)
+	}
+	deleteURL, err := urlutil.BuildFilesURL("127.0.0.1", portSource.HTTPPort(), path)
+	if err != nil {
+		return err
+	}
+	body, _, status, err := httpclient.SimpleDelete(ctx, fs.cluster.DataClient(), deleteURL)
+	if err != nil {
+		return fmt.Errorf("delete cluster file %s: %w", path, err)
+	}
+	if status == http.StatusNotFound {
+		return fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
+	}
+	if status != http.StatusOK && status != http.StatusNoContent {
+		return fmt.Errorf("delete cluster file %s: HTTP %d: %s", path, status, body)
+	}
+	return nil
 }
 
 // DeleteFileWithTimestamp removes a file from the cluster with explicit timestamp
 func (fs *ClusterFileSystem) DeleteFileWithTimestamp(ctx context.Context, path string, modTime time.Time) error {
 	// Delete from partition system
 	if err := fs.cluster.PartitionManager().DeleteFileFromPartitionWithTimestamp(ctx, path, modTime); err != nil {
-		return fmt.Errorf("failed to delete file: %v", err)
+		return fmt.Errorf("failed to delete file: %w", err)
 	}
 
 	return nil
@@ -967,6 +986,10 @@ func (fs *ClusterFileSystem) CreateDirectoryWithModTime(path string, modTime tim
 }
 
 func (fs *ClusterFileSystem) PeerHasUpToDateFile(peer types.NodeData, path string, modTime time.Time, size int64) (bool, error) {
+	return fs.peerHasUpToDateFile(peer, path, modTime, size, "")
+}
+
+func (fs *ClusterFileSystem) peerHasUpToDateFile(peer types.NodeData, path string, modTime time.Time, size int64, checksum string) (bool, error) {
 	fileURL, err := urlutil.BuildInternalFilesURL(peer.Address, peer.HTTPPort, path)
 	if err != nil {
 		return false, err
@@ -1001,7 +1024,7 @@ func (fs *ClusterFileSystem) PeerHasUpToDateFile(peer types.NodeData, path strin
 			}
 		}
 		if !remoteMod.IsZero() && !remoteMod.Before(modTime) {
-			if remoteSize == size {
+			if remoteSize == size && (checksum == "" || headers.Get("X-ClusterF-Checksum") == checksum) {
 				return true, nil
 			}
 		}
@@ -1070,12 +1093,7 @@ func metadataMatches(meta types.FileMetadata, size int64, modTime time.Time) boo
 	if meta.ModifiedAt.IsZero() {
 		panic("no")
 	}
-	diff := meta.ModifiedAt.Sub(modTime)
-	if diff < 0 {
-		diff = -diff
-	}
-
-	return diff.Milliseconds() < 1000
+	return meta.ModifiedAt.Equal(modTime)
 }
 
 func isTransportError(err error) bool {

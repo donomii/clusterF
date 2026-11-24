@@ -7,6 +7,7 @@ import (
 	"log"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/donomii/clusterF/syncmap"
@@ -20,7 +21,7 @@ type ThreadInfo struct {
 	Context       context.Context
 	Cancel        context.CancelFunc
 	Done          chan struct{}
-	IsRunning     bool
+	IsRunning     atomic.Bool
 	Function      func(ctx context.Context) // Store the function for restart
 	Cleanup       func()                    // Optional cleanup function
 	ShouldRestart bool                      // Whether to restart on unexpected exit
@@ -33,8 +34,9 @@ type ThreadManager struct {
 	threads         *syncmap.SyncMap[string, *ThreadInfo]
 	ctx             context.Context
 	cancel          context.CancelFunc
-	shutdownTimeout time.Duration
-	shuttingDown    bool // Flag to prevent restarts during shutdown
+	shutdownTimeout atomic.Int64
+	shuttingDown    atomic.Bool // Flag to prevent restarts during shutdown
+	registryMu      sync.Mutex
 	monitorCtx      context.Context
 	monitorCancel   context.CancelFunc
 	wg              sync.WaitGroup // For monitoring goroutine
@@ -62,16 +64,15 @@ func NewThreadManager(nodeID string, logger *log.Logger) *ThreadManager {
 	}
 
 	tm := &ThreadManager{
-		nodeID:          nodeID,
-		logger:          logger,
-		threads:         syncmap.NewSyncMap[string, *ThreadInfo](),
-		ctx:             ctx,
-		cancel:          cancel,
-		shutdownTimeout: 12 * time.Second, // Default shutdown timeout tuned for quick cluster teardown
-		shuttingDown:    false,
-		monitorCtx:      monitorCtx,
-		monitorCancel:   monitorCancel,
+		nodeID:        nodeID,
+		logger:        logger,
+		threads:       syncmap.NewSyncMap[string, *ThreadInfo](),
+		ctx:           ctx,
+		cancel:        cancel,
+		monitorCtx:    monitorCtx,
+		monitorCancel: monitorCancel,
 	}
+	tm.shutdownTimeout.Store(int64(12 * time.Second)) // Default shutdown timeout tuned for quick cluster teardown
 
 	// Start the monitoring goroutine
 	tm.wg.Add(1)
@@ -95,10 +96,7 @@ func (tm *ThreadManager) runThread(threadInfo *ThreadInfo) {
 		}
 
 		// Mark thread as finished
-		if info, exists := tm.threads.Load(threadInfo.Name); exists {
-			info.IsRunning = false
-			tm.threads.Store(threadInfo.Name, info)
-		}
+		threadInfo.IsRunning.Store(false)
 
 		close(threadInfo.Done)
 		tm.Debugf("Thread '%s' stopped (restart count: %d)", threadInfo.Name, threadInfo.RestartCount)
@@ -128,13 +126,13 @@ func (tm *ThreadManager) monitorThreads() {
 // checkAndRestartThreads checks for dead threads and restarts them if needed
 func (tm *ThreadManager) checkAndRestartThreads() {
 	// Don't restart threads if we're shutting down
-	if tm.shuttingDown {
+	if tm.shuttingDown.Load() {
 		return
 	}
 
 	tm.threads.Range(func(name string, threadInfo *ThreadInfo) bool {
 		// Skip if thread is still running
-		if threadInfo.IsRunning {
+		if threadInfo.IsRunning.Load() {
 			return true
 		}
 
@@ -153,19 +151,20 @@ func (tm *ThreadManager) checkAndRestartThreads() {
 			newCtx, newCancel := context.WithCancel(tm.ctx)
 			newDone := make(chan struct{})
 
-			// Update thread info
-			threadInfo.Context = newCtx
-			threadInfo.Cancel = newCancel
-			threadInfo.Done = newDone
-			threadInfo.IsRunning = true
-			threadInfo.StartTime = time.Now()
-			threadInfo.RestartCount++
-
-			// Store updated thread info
-			tm.threads.Store(name, threadInfo)
+			// Each run owns its completion channel and immutable generation metadata.
+			next := &ThreadInfo{
+				Name: name, StartTime: time.Now(), RestartCount: threadInfo.RestartCount + 1,
+				Context: newCtx, Cancel: newCancel, Done: newDone,
+				Function: threadInfo.Function, Cleanup: threadInfo.Cleanup, ShouldRestart: threadInfo.ShouldRestart,
+			}
+			next.IsRunning.Store(true)
+			if !tm.replaceThread(name, threadInfo, next) {
+				newCancel()
+				return true
+			}
 
 			// Restart the thread
-			go tm.runThread(threadInfo)
+			go tm.runThread(next)
 
 		default:
 			// Thread is still running or hasn't signaled completion yet
@@ -176,7 +175,24 @@ func (tm *ThreadManager) checkAndRestartThreads() {
 
 // SetShutdownTimeout configures how long to wait for threads to shut down
 func (tm *ThreadManager) SetShutdownTimeout(timeout time.Duration) {
-	tm.shutdownTimeout = timeout
+	tm.shutdownTimeout.Store(int64(timeout))
+}
+
+func (tm *ThreadManager) replaceThread(name string, previous, next *ThreadInfo) bool {
+	tm.registryMu.Lock()
+	defer tm.registryMu.Unlock()
+	current, exists := tm.threads.Load(name)
+	if tm.shuttingDown.Load() || (exists && current != previous) {
+		return false
+	}
+	tm.threads.Store(name, next)
+	return true
+}
+
+func (tm *ThreadManager) beginShutdown() {
+	tm.registryMu.Lock()
+	defer tm.registryMu.Unlock()
+	tm.shuttingDown.Store(true)
 }
 
 func (tm *ThreadManager) waitForThreads(threads map[string]*ThreadInfo, done chan struct{}) {
@@ -207,7 +223,8 @@ func (tm *ThreadManager) StartThreadOnce(name string, fn func(ctx context.Contex
 // StartThreadWithRestart starts a managed goroutine with restart control
 func (tm *ThreadManager) StartThreadWithRestart(name string, fn func(ctx context.Context), shouldRestart bool, cleanup func()) error {
 	// Check if thread with this name already exists and is running
-	if existing, exists := tm.threads.Load(name); exists && existing.IsRunning {
+	existing, exists := tm.threads.Load(name)
+	if exists && existing.IsRunning.Load() {
 		panicf("thread '%s' is already running", name)
 	}
 
@@ -222,18 +239,21 @@ func (tm *ThreadManager) StartThreadWithRestart(name string, fn func(ctx context
 		Context:       threadCtx,
 		Cancel:        threadCancel,
 		Done:          done,
-		IsRunning:     true,
 		Function:      fn,
 		Cleanup:       cleanup,
 		ShouldRestart: shouldRestart,
 	}
+	threadInfo.IsRunning.Store(true)
 
 	// If this is a restart, increment the restart count
-	if existing, exists := tm.threads.Load(name); exists {
+	if exists {
 		threadInfo.RestartCount = existing.RestartCount + 1
 	}
 
-	tm.threads.Store(name, threadInfo)
+	if !tm.replaceThread(name, existing, threadInfo) {
+		threadCancel()
+		return fmt.Errorf("cannot start thread %q: manager is shutting down or another run was registered", name)
+	}
 	tm.Debugf("Starting thread '%s' (restart count: %d)", name, threadInfo.RestartCount)
 
 	// Start the goroutine
@@ -257,7 +277,7 @@ func (tm *ThreadManager) StopThread(name string, timeout time.Duration) error {
 		return fmt.Errorf("thread '%s' not found", name)
 	}
 
-	if !threadInfo.IsRunning {
+	if !threadInfo.IsRunning.Load() {
 		return nil // Already stopped
 	}
 
@@ -283,7 +303,7 @@ func (tm *ThreadManager) GetThreadStatus() map[string]ThreadStatus {
 	tm.threads.Range(func(name string, info *ThreadInfo) bool {
 		status[name] = ThreadStatus{
 			Name:          info.Name,
-			IsRunning:     info.IsRunning,
+			IsRunning:     info.IsRunning.Load(),
 			StartTime:     info.StartTime,
 			Uptime:        time.Since(info.StartTime),
 			RestartCount:  info.RestartCount,
@@ -308,7 +328,7 @@ type ThreadStatus struct {
 func (tm *ThreadManager) ListRunningThreads() []string {
 	var running []string
 	tm.threads.Range(func(name string, info *ThreadInfo) bool {
-		if info.IsRunning {
+		if info.IsRunning.Load() {
 			running = append(running, name)
 		}
 		return true
@@ -319,7 +339,7 @@ func (tm *ThreadManager) ListRunningThreads() []string {
 // IsThreadRunning checks if a specific thread is running
 func (tm *ThreadManager) IsThreadRunning(name string) bool {
 	if info, exists := tm.threads.Load(name); exists {
-		return info.IsRunning
+		return info.IsRunning.Load()
 	}
 	return false
 }
@@ -329,14 +349,14 @@ func (tm *ThreadManager) Shutdown() []string {
 	tm.Debugf("ThreadManager for node %s initiating shutdown", tm.nodeID)
 
 	// Set shutdown flag to prevent restarts
-	tm.shuttingDown = true
+	tm.beginShutdown()
 
 	// Stop the monitoring goroutine
 	tm.monitorCancel()
 
 	threadsToWaitFor := make(map[string]*ThreadInfo)
 	tm.threads.Range(func(name string, info *ThreadInfo) bool {
-		if info.IsRunning {
+		if info.IsRunning.Load() {
 			threadsToWaitFor[name] = info
 		}
 		return true
@@ -358,14 +378,15 @@ func (tm *ThreadManager) Shutdown() []string {
 	shutdownComplete := make(chan struct{})
 	go tm.waitForThreads(threadsToWaitFor, shutdownComplete)
 
-	timer := time.NewTimer(tm.shutdownTimeout)
+	shutdownTimeout := time.Duration(tm.shutdownTimeout.Load())
+	timer := time.NewTimer(shutdownTimeout)
 	defer timer.Stop()
 
 	select {
 	case <-shutdownComplete:
 		tm.Debugf("All threads shutdown completed")
 	case <-timer.C:
-		tm.Debugf("Shutdown timeout exceeded after %v, threads: %v", tm.shutdownTimeout, getThreadNames(threadsToWaitFor))
+		tm.Debugf("Shutdown timeout exceeded after %v, threads: %v", shutdownTimeout, getThreadNames(threadsToWaitFor))
 	}
 
 	// Wait for monitor to finish
@@ -374,7 +395,7 @@ func (tm *ThreadManager) Shutdown() []string {
 	// Check which threads failed to stop
 	var failedThreads []string
 	tm.threads.Range(func(name string, info *ThreadInfo) bool {
-		if info.IsRunning {
+		if info.IsRunning.Load() {
 			failedThreads = append(failedThreads, name)
 			tm.Debugf("ThreadManager for node %s failed to shutdown, thread '%s' will not quit", tm.nodeID, name)
 		}
@@ -393,15 +414,14 @@ func (tm *ThreadManager) Shutdown() []string {
 
 // ForceShutdown forcefully terminates all threads (use with caution)
 func (tm *ThreadManager) ForceShutdown() {
+	tm.beginShutdown()
 	tm.logger.Printf("FORCE SHUTDOWN: ThreadManager for node %s", tm.nodeID)
 
 	// Cancel all thread contexts
 	tm.threads.Range(func(name string, info *ThreadInfo) bool {
-		if info.IsRunning {
+		if info.IsRunning.Load() {
 			tm.logger.Printf("Force stopping thread '%s'", name)
 			info.Cancel()
-			info.IsRunning = false
-			tm.threads.Store(name, info)
 		}
 		return true
 	})
@@ -421,7 +441,7 @@ func (tm *ThreadManager) WaitForThread(name string, timeout time.Duration) error
 		return fmt.Errorf("thread '%s' not found", name)
 	}
 
-	if !threadInfo.IsRunning {
+	if !threadInfo.IsRunning.Load() {
 		return nil // Already stopped
 	}
 
@@ -441,7 +461,7 @@ func (tm *ThreadManager) GetStats() ThreadManagerStats {
 	}
 
 	tm.threads.Range(func(name string, info *ThreadInfo) bool {
-		if info.IsRunning {
+		if info.IsRunning.Load() {
 			stats.RunningThreads++
 		} else {
 			stats.StoppedThreads++
@@ -475,7 +495,7 @@ type ThreadManagerOption func(*ThreadManager)
 // WithShutdownTimeout sets the shutdown timeout
 func WithShutdownTimeout(timeout time.Duration) ThreadManagerOption {
 	return func(tm *ThreadManager) {
-		tm.shutdownTimeout = timeout
+		tm.SetShutdownTimeout(timeout)
 	}
 }
 

@@ -54,13 +54,14 @@ func (c *Cluster) handleTranscodeAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the original file
-	fileData, contentType, err := c.FileSystem.GetFileWithContentType(decodedPath)
+	fileData, metadata, err := c.FileSystem.GetFileReaderFromCluster(r.Context(), decodedPath)
 	if err != nil {
 		c.Logger().Printf("[TRANSCODE_API] Failed to get file %s: %v", decodedPath, err)
 		http.Error(w, fmt.Sprintf("File not found for transcoding: %s", decodedPath), http.StatusNotFound)
 		return
 	}
 	defer fileData.Close()
+	contentType := metadata.ContentType
 
 	// Check if file needs transcoding
 	if !needsTranscoding(contentType, filepath.Base(decodedPath)) {

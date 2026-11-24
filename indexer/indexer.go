@@ -332,6 +332,13 @@ func (idx *Indexer) PrefixSearch(prefix string) []types.SearchResult {
 
 	resultMap := make(map[string]types.SearchResult)
 	for _, entry := range raw {
+		if entry.path == prefix {
+			meta, ok := idx.loadMetadata(entry.path)
+			if ok && !meta.Deleted {
+				resultMap[entry.path] = buildSearchResult(entry.path, meta)
+			}
+			continue
+		}
 		displayPath := entry.displayPath
 		types.Assertf(displayPath != "", "displayPath can never be empty for path %v", entry.path)
 

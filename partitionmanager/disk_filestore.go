@@ -1,6 +1,7 @@
 package partitionmanager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/donomii/clusterF/metrics"
@@ -27,8 +29,10 @@ type DiskFileStore struct {
 	controlDir  string // Holds per-partition control files (timestamps, etc)
 	transferDir string // Holds temp upload files before atomic moves
 
-	encryptionKey  []byte // XOR encryption key (nil = no encryption)
-	timestampStore *PartitionTimestampStore
+	mu               sync.RWMutex
+	encryptionKey    []byte // Derived key or legacy password bytes (nil = no encryption)
+	legacyEncryption bool
+	timestampStore   *PartitionTimestampStore
 }
 
 // NewDiskFileStore creates a new disk-backed filestore rooted at baseDir.
@@ -57,76 +61,19 @@ func (fs *DiskFileStore) Close() {
 	fs.timestampStore.Close()
 }
 
-// SetEncryptionKey configures the XOR encryption key.
+// SetEncryptionKey configures the derived encryption key before storage is used.
 func (fs *DiskFileStore) SetEncryptionKey(key []byte) {
-	fs.encryptionKey = key
+	fs.encryptionKey = bytes.Clone(key)
+	fs.legacyEncryption = false
 }
 
-// xorEncrypt performs XOR encryption/decryption on data.
-func (fs *DiskFileStore) xorEncrypt(data []byte) []byte {
-	if len(fs.encryptionKey) == 0 || len(data) == 0 {
-		return data
+func (fs *DiskFileStore) SetLegacyEncryptionKey(key []byte) error {
+	if len(key) == 0 {
+		return fmt.Errorf("legacy encryption key must not be empty")
 	}
-	result := make([]byte, len(data))
-	for i := range data {
-		result[i] = data[i] ^ fs.encryptionKey[i%len(fs.encryptionKey)]
-	}
-	return result
-}
-
-type xorWriter struct {
-	w   io.Writer
-	key []byte
-	pos *int64
-}
-
-func (x *xorWriter) Write(p []byte) (int, error) {
-	if len(x.key) == 0 {
-		return x.w.Write(p)
-	}
-	buf := make([]byte, len(p))
-	start := *x.pos
-	for i := range p {
-		buf[i] = p[i] ^ x.key[(int(start)+i)%len(x.key)]
-	}
-	n, err := x.w.Write(buf)
-	*x.pos += int64(n)
-	return n, err
-}
-
-type xorReader struct {
-	r   io.ReadCloser
-	key []byte
-	pos int64
-}
-
-func (x *xorReader) Read(p []byte) (int, error) {
-	n, err := x.r.Read(p)
-	if n > 0 && len(x.key) > 0 {
-		for i := 0; i < n; i++ {
-			p[i] = p[i] ^ x.key[(int(x.pos)+i)%len(x.key)]
-		}
-		x.pos += int64(n)
-	}
-	return n, err
-}
-
-func (x *xorReader) Close() error {
-	return x.r.Close()
-}
-
-func (fs *DiskFileStore) encrypt(metadata, content []byte) ([]byte, []byte) {
-	if len(fs.encryptionKey) == 0 {
-		return metadata, content
-	}
-	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
-}
-
-func (fs *DiskFileStore) decrypt(metadata, content []byte) ([]byte, []byte) {
-	if len(fs.encryptionKey) == 0 {
-		return metadata, content
-	}
-	return fs.xorEncrypt(metadata), fs.xorEncrypt(content)
+	fs.encryptionKey = bytes.Clone(key)
+	fs.legacyEncryption = true
+	return nil
 }
 
 func (fs *DiskFileStore) partitionTimestampPath(partitionID types.PartitionID, filename string) (string, error) {
@@ -167,6 +114,8 @@ func (fs *DiskFileStore) recordPartitionUpdateTimestamp(path string, ts time.Tim
 
 // Get loads both metadata and content for a path.
 func (fs *DiskFileStore) Get(path string) ([]byte, []byte, bool, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
 	defer metrics.FinishGlobalTimer("disk_filestore.get", metrics.StartGlobalTimer("disk_filestore.get"))
 	metrics.IncrementGlobalCounter("disk_filestore.get.calls")
 
@@ -186,19 +135,22 @@ func (fs *DiskFileStore) Get(path string) ([]byte, []byte, bool, error) {
 
 	if errors.Is(metaErr, os.ErrNotExist) && errors.Is(contentErr, os.ErrNotExist) {
 		metrics.IncrementGlobalCounter("disk_filestore.get.notfound")
-		return nil, nil, false, fmt.Errorf("not found: %s", path)
+		return nil, nil, false, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
 	}
 
-	if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
+	if metaErr != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
 		return nil, nil, false, metaErr
 	}
-	if contentErr != nil && !errors.Is(contentErr, os.ErrNotExist) {
+	if contentErr != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.get.errors")
 		return nil, nil, false, contentErr
 	}
 
-	metadata, content = fs.decrypt(metadata, content)
+	metadata, content, err = decodeStoredPair(fs.encryptionKey, fs.legacyEncryption, path, metadata, content)
+	if err != nil {
+		return nil, nil, false, err
+	}
 	metrics.IncrementGlobalCounter("disk_filestore.get.success")
 	metrics.AddGlobalCounter("disk_filestore.get.metadata_bytes", int64(len(metadata)))
 	metrics.AddGlobalCounter("disk_filestore.get.content_bytes", int64(len(content)))
@@ -208,6 +160,8 @@ func (fs *DiskFileStore) Get(path string) ([]byte, []byte, bool, error) {
 
 // GetMetadata loads only metadata for a path.
 func (fs *DiskFileStore) GetMetadata(path string) ([]byte, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
 	defer metrics.FinishGlobalTimer("disk_filestore.get_metadata", metrics.StartGlobalTimer("disk_filestore.get_metadata"))
 	metrics.IncrementGlobalCounter("disk_filestore.get_metadata.calls")
 
@@ -220,12 +174,15 @@ func (fs *DiskFileStore) GetMetadata(path string) ([]byte, error) {
 	if readErr != nil {
 		if errors.Is(readErr, os.ErrNotExist) {
 			metrics.IncrementGlobalCounter("disk_filestore.get_metadata.notfound")
-			return nil, fmt.Errorf("not found: %s", path)
+			return nil, fmt.Errorf("%w: %s", types.ErrFileNotFound, path)
 		}
 		metrics.IncrementGlobalCounter("disk_filestore.get_metadata.errors")
 		return nil, readErr
 	}
-	metadata, _ := fs.decrypt(data, nil)
+	metadata, err := decodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, data)
+	if err != nil {
+		return nil, err
+	}
 	metrics.IncrementGlobalCounter("disk_filestore.get_metadata.success")
 	metrics.AddGlobalCounter("disk_filestore.get_metadata.bytes", int64(len(metadata)))
 	return metadata, nil
@@ -233,6 +190,8 @@ func (fs *DiskFileStore) GetMetadata(path string) ([]byte, error) {
 
 // GetContent loads only content for a path.
 func (fs *DiskFileStore) GetContent(path string) ([]byte, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
 	defer metrics.FinishGlobalTimer("disk_filestore.get_content", metrics.StartGlobalTimer("disk_filestore.get_content"))
 	metrics.IncrementGlobalCounter("disk_filestore.get_content.calls")
 
@@ -250,7 +209,10 @@ func (fs *DiskFileStore) GetContent(path string) ([]byte, error) {
 		metrics.IncrementGlobalCounter("disk_filestore.get_content.errors")
 		return nil, readErr
 	}
-	_, content := fs.decrypt(nil, data)
+	content, err := decodeStored(fs.encryptionKey, fs.legacyEncryption, "content:"+path, data)
+	if err != nil {
+		return nil, err
+	}
 	metrics.IncrementGlobalCounter("disk_filestore.get_content.success")
 	metrics.AddGlobalCounter("disk_filestore.get_content.bytes", int64(len(content)))
 	return content, nil
@@ -258,6 +220,12 @@ func (fs *DiskFileStore) GetContent(path string) ([]byte, error) {
 
 // GetContentStream returns a streaming reader for the file content.
 func (fs *DiskFileStore) GetContentStream(path string) (io.ReadCloser, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	return fs.openContent(path)
+}
+
+func (fs *DiskFileStore) openContent(path string) (io.ReadCloser, error) {
 	contentPath, err := fs.contentPath(path)
 	if err != nil {
 		return nil, err
@@ -268,70 +236,36 @@ func (fs *DiskFileStore) GetContentStream(path string) (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	if len(fs.encryptionKey) == 0 {
-		return file, nil
+	reader, err := storedReader(file, fs.encryptionKey, fs.legacyEncryption, "content:"+path)
+	if err != nil {
+		file.Close()
+		return nil, err
 	}
-	return &xorReader{r: file, key: fs.encryptionKey}, nil
+	return reader, nil
+}
+
+func (fs *DiskFileStore) GetStream(path string) ([]byte, io.ReadCloser, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	metaPath, err := fs.metadataPath(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	encoded, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	metadata, err := decodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, encoded)
+	if err != nil {
+		return nil, nil, err
+	}
+	reader, err := fs.openContent(path)
+	return metadata, reader, err
 }
 
 // Put stores both metadata and content.
 func (fs *DiskFileStore) Put(path string, metadata, content []byte) error {
-	defer metrics.FinishGlobalTimer("disk_filestore.put", metrics.StartGlobalTimer("disk_filestore.put"))
-	metrics.IncrementGlobalCounter("disk_filestore.put.calls")
-
-	metaPath, err := fs.metadataPath(path)
-	if err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
-		return err
-	}
-	contentPath, err := fs.contentPath(path)
-	if err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
-		return err
-	}
-
-	partitionID := types.PartitionIDForPath(path)
-
-	if err := ensureParentDir(metaPath); err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
-		return err
-	}
-	if err := ensureParentDir(contentPath); err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
-		return err
-	}
-
-	var meta types.FileMetadata
-	if err := json.Unmarshal(metadata, &meta); err != nil {
-		meta = types.FileMetadata{}
-	}
-	modTime := meta.ModifiedAt
-
-	encMetadata, encContent := fs.encrypt(metadata, content)
-
-	if err := os.WriteFile(metaPath, encMetadata, 0o644); err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
-		return err
-	}
-	if !modTime.IsZero() {
-		_ = os.Chtimes(metaPath, modTime, modTime)
-	}
-	if err := os.WriteFile(contentPath, encContent, 0o644); err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
-		return err
-	}
-	if !modTime.IsZero() {
-		_ = os.Chtimes(contentPath, modTime, modTime)
-	}
-	writeTime := time.Now()
-	if err := fs.writePartitionTimestamp(partitionID, lastUpdateTimestampFile, writeTime); err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.put.errors")
-		return err
-	}
-	metrics.IncrementGlobalCounter("disk_filestore.put.success")
-	metrics.AddGlobalCounter("disk_filestore.put.metadata_bytes", int64(len(metadata)))
-	metrics.AddGlobalCounter("disk_filestore.put.content_bytes", int64(len(content)))
-	return nil
+	return fs.PutStream(path, metadata, bytes.NewReader(content), int64(len(content)))
 }
 
 // PutStream stores metadata and content streaming from a reader to avoid buffering the entire payload.
@@ -363,10 +297,12 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 
 	var meta types.FileMetadata
 	if err := json.Unmarshal(metadata, &meta); err != nil {
-		meta = types.FileMetadata{}
+		return fmt.Errorf("invalid metadata for %s: %w", path, err)
 	}
 	modTime := meta.ModifiedAt
-	types.Assertf(!modTime.IsZero(), "modified time must not be zero for PutStream")
+	if modTime.IsZero() {
+		return fmt.Errorf("metadata for %s is missing its modified time", path)
+	}
 
 	contentTmpFile, err := os.CreateTemp(fs.transferDir, "content-upload-*")
 	if err != nil {
@@ -402,59 +338,45 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 	}
 	defer file.Close()
 
-	var writer io.Writer = file
-	var offset int64
-	if len(fs.encryptionKey) > 0 {
-		writer = &xorWriter{
-			w:   file,
-			key: fs.encryptionKey,
-			pos: &offset,
-		}
-	}
-
-	written, err := io.CopyBuffer(writer, content, make([]byte, 128*1024))
+	written, err := encryptStored(file, content, fs.encryptionKey, fs.legacyEncryption, "content:"+path)
 	if err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
 		return err
 	}
-	if size > 0 && written != size {
+	if size >= 0 && written != size {
 		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
 		return fmt.Errorf("content size mismatch for %s: expected %d, wrote %d", path, size, written)
 	}
-	if len(fs.encryptionKey) > 0 {
-		offset += written
-	}
-
 	if err := file.Sync(); err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
 		return err
 	}
 
-	// Move the completed content into place before metadata so readers never see metadata without content.
-	if err := os.Rename(tmpContent, contentPath); err != nil {
+	if err := file.Close(); err != nil {
+		return err
+	}
+	encMetadata, err := encodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, metadata)
+	if err != nil {
+		return err
+	}
+
+	if err := writeFileAtomically(tmpMeta, encMetadata, fs.transferDir); err != nil {
+		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
+		return err
+	}
+
+	if err := os.Chtimes(tmpContent, modTime, modTime); err != nil {
+		return err
+	}
+	if err := os.Chtimes(tmpMeta, modTime, modTime); err != nil {
+		return err
+	}
+	if err := fs.publishPair(tmpContent, tmpMeta, contentPath, metaPath); err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
 		return err
 	}
 	tmpContent = ""
-
-	encMetadata := metadata
-	if len(fs.encryptionKey) > 0 {
-		encMetadata = fs.xorEncrypt(metadata)
-	}
-
-	if err := os.WriteFile(tmpMeta, encMetadata, 0o644); err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
-		return err
-	}
-
-	if err := os.Rename(tmpMeta, metaPath); err != nil {
-		metrics.IncrementGlobalCounter("disk_filestore.put_stream.errors")
-		return err
-	}
 	tmpMeta = ""
-
-	_ = os.Chtimes(contentPath, modTime, modTime)
-	_ = os.Chtimes(metaPath, modTime, modTime)
 
 	writeTime := time.Now()
 	if err := fs.writePartitionTimestamp(partitionID, lastUpdateTimestampFile, writeTime); err != nil {
@@ -469,6 +391,8 @@ func (fs *DiskFileStore) PutStream(path string, metadata []byte, content io.Read
 
 // PutMetadata stores metadata only.
 func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	defer metrics.FinishGlobalTimer("disk_filestore.put_metadata", metrics.StartGlobalTimer("disk_filestore.put_metadata"))
 	metrics.IncrementGlobalCounter("disk_filestore.put_metadata.calls")
 
@@ -482,8 +406,11 @@ func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
 		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
 		return err
 	}
-	encMetadata, _ := fs.encrypt(metadata, nil)
-	if err := os.WriteFile(metaPath, encMetadata, 0o644); err != nil {
+	encMetadata, err := encodeStored(fs.encryptionKey, fs.legacyEncryption, "metadata:"+path, metadata)
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomically(metaPath, encMetadata, fs.transferDir); err != nil {
 		metrics.IncrementGlobalCounter("disk_filestore.put_metadata.errors")
 		return err
 	}
@@ -507,6 +434,8 @@ func (fs *DiskFileStore) PutMetadata(path string, metadata []byte) error {
 
 // Delete removes metadata and content for a path.
 func (fs *DiskFileStore) Delete(path string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	defer metrics.FinishGlobalTimer("disk_filestore.delete", metrics.StartGlobalTimer("disk_filestore.delete"))
 	metrics.IncrementGlobalCounter("disk_filestore.delete.calls")
 
@@ -550,25 +479,14 @@ func (fs *DiskFileStore) Scan(pathPrefix string, fn func(path string, metadata, 
 			return nil
 		}
 
-		metadata, err := os.ReadFile(metaPath)
+		metadata, content, _, err := fs.Get(path)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, types.ErrFileNotFound) {
 				return nil
 			}
 			return err
 		}
 
-		contentPath, pathErr := fs.contentPath(path)
-		if pathErr != nil {
-			return pathErr
-		}
-
-		content, err := os.ReadFile(contentPath)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-
-		metadata, content = fs.decrypt(metadata, content)
 		metrics.AddGlobalCounter("disk_filestore.scan.entries", 1)
 		metrics.AddGlobalCounter("disk_filestore.scan.metadata_bytes", int64(len(metadata)))
 		metrics.AddGlobalCounter("disk_filestore.scan.content_bytes", int64(len(content)))
@@ -599,15 +517,14 @@ func (fs *DiskFileStore) ScanMetadata(pathPrefix string, fn func(path string, me
 			return nil
 		}
 
-		metadata, err := os.ReadFile(metaPath)
+		metadata, err := fs.GetMetadata(path)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, types.ErrFileNotFound) {
 				return nil
 			}
 			return err
 		}
 
-		metadata, _ = fs.decrypt(metadata, nil)
 		metrics.AddGlobalCounter("disk_filestore.scan_metadata.entries", 1)
 		metrics.AddGlobalCounter("disk_filestore.scan_metadata.bytes", int64(len(metadata)))
 		if err := fn(path, metadata); err != nil {
@@ -678,16 +595,15 @@ func (fs *DiskFileStore) ScanMetadataPartition(ctx context.Context, partitionID 
 		// Reconstruct the original cluster path
 		originalPath := "/" + strings.ReplaceAll(rel, string(filepath.Separator), "/")
 
-		metadata, err := os.ReadFile(filePath)
+		metadata, err := fs.GetMetadata(originalPath)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, types.ErrFileNotFound) {
 				return nil
 			}
 			metrics.IncrementGlobalCounter("disk_filestore.scan_metadata_partition.errors")
 			return err
 		}
 
-		metadata, _ = fs.decrypt(metadata, nil)
 		metrics.AddGlobalCounter("disk_filestore.scan_metadata_partition.entries", 1)
 		metrics.AddGlobalCounter("disk_filestore.scan_metadata_partition.bytes", int64(len(metadata)))
 		if err := fn(originalPath, metadata); err != nil {

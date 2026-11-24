@@ -49,19 +49,15 @@ func TestBuildFilesURL(t *testing.T) {
 }
 
 func TestBuildFilesURLRequiresAddress(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic for empty address, path /foo, port 1234")
-		}
-	}()
-	_, _ = BuildFilesURL("", 1234, "/foo")
+	if result, err := BuildFilesURL("", 1234, "/foo"); err == nil || result != "" {
+		t.Fatalf("expected no URL and an error for empty address, path /foo, port 1234; got %q, %v", result, err)
+	}
 }
 
 func TestBuildHTTPURLRequiresPort(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic for invalid port, path /foo, port 0")
+	for _, port := range []int{-1, 0, 65536} {
+		if result, err := BuildHTTPURL("example.com", port, "/foo"); err == nil || result != "" {
+			t.Fatalf("expected no URL and an error for example.com, path /foo, port %d; got %q, %v", port, result, err)
 		}
-	}()
-	_, _ = BuildHTTPURL("example.com", 0, "/foo")
+	}
 }

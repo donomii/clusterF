@@ -26,14 +26,20 @@ func (c *Cluster) sendUpdatesToPeers(updates []frogpond.DataPoint) {
 	if len(updates) == 0 {
 		return
 	}
+	for _, update := range updates {
+		if strings.HasPrefix(string(update.Key), "nodePartitions/") {
+			c.rebuildPartitionHolderMap(c.AppContext())
+			break
+		}
+	}
 
 	go func() {
-		peers := c.GetAvailablePeerList()
+		peers := c.DiscoveryManager().GetPeers()
 		for _, peer := range peers {
 			if c.AppContext().Err() != nil {
 				return
 			}
-			func(p types.NodeData) {
+			func(p *types.PeerInfo) {
 				c.debugf("Sending %v updates to %v", len(updates), p.NodeID)
 				endpointURL, err := urlutil.BuildHTTPURL(p.Address, p.HTTPPort, "/frogpond/update")
 				if err != nil {
@@ -108,11 +114,19 @@ func (c *Cluster) GetAvailablePeerNames() []types.NodeID {
 func (c *Cluster) refreshConnectedFromDiscovery() {
 	dm := c.discoveryManager
 	types.Assertf(dm != nil, "discovery manager must be initialized before checking connectivity")
-	connected := dm.GetPeerCount() > 1
+	connected := dm.GetPeerCount() > 0
 	c.connected.Store(connected)
 }
 
 func (c *Cluster) GetAvailablePeerList() []types.NodeData {
+	return c.storagePeerList(true)
+}
+
+func (c *Cluster) GetReadablePeerList() []types.NodeData {
+	return c.storagePeerList(false)
+}
+
+func (c *Cluster) storagePeerList(requireCapacity bool) []types.NodeData {
 	c.refreshConnectedFromDiscovery()
 	nodes := c.getPeerList()
 	peers := c.DiscoveryManager().GetPeerMap()
@@ -122,7 +136,7 @@ func (c *Cluster) GetAvailablePeerList() []types.NodeData {
 		//fmt.Printf("Considering node %v\n", nodeData.NodeID)
 		if nodeData.IsStorage {
 			//fmt.Printf("Considering storage node %+v\n", nodeData.NodeID)
-			if nodeData.DiskSize > 0 {
+			if requireCapacity && nodeData.DiskSize > 0 {
 				used := nodeData.DiskSize - nodeData.DiskFree
 				if used < 0 {
 					used = 0
@@ -134,6 +148,12 @@ func (c *Cluster) GetAvailablePeerList() []types.NodeData {
 				}
 			}
 
+			if nodeData.NodeID == c.NodeId {
+				nodeData.Address = "127.0.0.1"
+				nodeData.HTTPPort = c.HTTPDataPort
+				availablePeerList = append(availablePeerList, nodeData)
+				continue
+			}
 			discPeer, ok := peers.Load(string(nodeData.NodeID))
 			if !ok {
 				//fmt.Printf("Skipping node %+v (no peer)\n", nodeData)
@@ -158,6 +178,14 @@ func (c *Cluster) GetAvailablePeerMap() map[types.NodeID]types.NodeData {
 	nodes := c.GetAvailablePeerList()
 	for _, nodeData := range nodes {
 		out[types.NodeID(nodeData.NodeID)] = nodeData
+	}
+	return out
+}
+
+func (c *Cluster) GetReadablePeerMap() map[types.NodeID]types.NodeData {
+	out := make(map[types.NodeID]types.NodeData)
+	for _, node := range c.GetReadablePeerList() {
+		out[node.NodeID] = node
 	}
 	return out
 }
@@ -309,10 +337,12 @@ func (c *Cluster) GetAllNodes() map[types.NodeID]*types.NodeData {
 
 // rebuildPartitionHolderMap refreshes the in-memory partition->holders map from nodePartitions/* entries.
 func (c *Cluster) rebuildPartitionHolderMap(ctx context.Context) {
+	c.partitionRebuildMu.Lock()
+	defer c.partitionRebuildMu.Unlock()
 	types.Assert(c.frogpond != nil, "frogpond must be initialized before rebuilding partition holder map")
 	updates := c.frogpond.DeleteAllMatchingPrefix("partitions")
 	c.sendUpdatesToPeers(updates)
-	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
+	types.Assert(c.partitionHolderMap() != nil, "partitionHolders map not initialized")
 
 	dataPoints := c.frogpond.GetAllMatchingPrefix("nodePartitions/")
 	type holderSet map[types.NodeID]struct{}
@@ -367,14 +397,23 @@ func (c *Cluster) rebuildPartitionHolderMap(ctx context.Context) {
 		newMap.Store(pid, holders)
 	}
 
+	c.partitionHoldersMu.Lock()
 	c.partitionHolders = newMap
+	c.partitionHoldersMu.Unlock()
+}
+
+func (c *Cluster) partitionHolderMap() *syncmap.SyncMap[types.PartitionID, []types.NodeID] {
+	c.partitionHoldersMu.RLock()
+	defer c.partitionHoldersMu.RUnlock()
+	return c.partitionHolders
 }
 
 // PartitionHolderSnapshot returns a copy of the in-memory partition holder map.
 func (c *Cluster) PartitionHolderSnapshot() map[types.PartitionID][]types.NodeID {
-	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
+	holders := c.partitionHolderMap()
+	types.Assert(holders != nil, "partitionHolders map not initialized")
 	snapshot := make(map[types.PartitionID][]types.NodeID)
-	c.partitionHolders.Range(func(pid types.PartitionID, holders []types.NodeID) bool {
+	holders.Range(func(pid types.PartitionID, holders []types.NodeID) bool {
 		snapshot[pid] = append([]types.NodeID(nil), holders...)
 		return true
 	})
@@ -392,8 +431,9 @@ func partitionIDFromNumber(num int) (types.PartitionID, bool) {
 func (c *Cluster) GetNodesForPartition(partitionName string) []types.NodeID {
 	partitionID := types.PartitionID(partitionName)
 
-	types.Assert(c.partitionHolders != nil, "partitionHolders map not initialized")
-	if holders, ok := c.partitionHolders.Load(partitionID); ok {
+	partitionHolders := c.partitionHolderMap()
+	types.Assert(partitionHolders != nil, "partitionHolders map not initialized")
+	if holders, ok := partitionHolders.Load(partitionID); ok {
 		return append([]types.NodeID(nil), holders...)
 	}
 
@@ -414,7 +454,7 @@ func (c *Cluster) GetPartitionHolders(partitionID types.PartitionID) []types.Nod
 func (c *Cluster) GetAllPartitions() map[types.PartitionID][]types.NodeID {
 	types.Assertf(c.frogpond != nil, "frogpond must be initialized when getting all partitions")
 	out := make(map[types.PartitionID][]types.NodeID)
-	c.partitionHolders.Range(func(pid types.PartitionID, holders []types.NodeID) bool {
+	c.partitionHolderMap().Range(func(pid types.PartitionID, holders []types.NodeID) bool {
 		out[types.PartitionID(pid)] = holders
 		return true
 	})
@@ -535,14 +575,7 @@ func (c *Cluster) updateNodeMetadata() {
 	}
 
 	// Get our external address from discovery
-	address := ""
-	peers := c.DiscoveryManager().GetPeers()
-	for _, peer := range peers {
-		if peer.NodeID == c.NodeId {
-			address = peer.Address
-			break
-		}
-	}
+	address := c.DiscoveryManager().GetLocalAddress()
 
 	// Load storage settings for enhanced metadata
 	storageSettings, _ := loadStorageSettings(c.DataDir)

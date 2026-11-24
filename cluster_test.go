@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1266,17 +1267,27 @@ func TestCluster_Encryption(t *testing.T) {
 	// Test 3: Missing key should fail for encrypted repo
 	t.Run("MissingKeyFails", func(t *testing.T) {
 		// The repository from Test 2 should still exist and require a key
-		// Load its settings and verify the encrypted test phrase exists
+		// Validate the authenticated format before testing startup without its password.
 		settings, err := loadStorageSettings(filepath.Join(tempDir, "wrongkey", "encrypted-wrong-key-test"))
 		if err != nil {
 			t.Fatalf("Failed to load settings: %v", err)
 		}
 
-		if settings.EncryptedTestPhrase == "" {
-			t.Fatal("Expected encrypted test phrase in settings")
+		if settings == nil || settings.Encryption == nil || len(settings.Encryption.Verification) == 0 {
+			t.Fatal("Expected authenticated encryption settings")
 		}
-
-		t.Log("Encrypted repository correctly requires a key")
+		if settings.EncryptedTestPhrase != "" {
+			t.Fatal("New repository retained the legacy encryption marker")
+		}
+		defer func() {
+			if rejection := fmt.Sprint(recover()); !strings.Contains(rejection, "requires --encryption-key") {
+				t.Fatalf("Expected missing-password startup failure, got %s", rejection)
+			}
+		}()
+		NewCluster(ClusterOpts{
+			ID: "encrypted-wrong-key-test", DataDir: filepath.Join(tempDir, "wrongkey"),
+			DiscoveryPort: 21105,
+		})
 	})
 
 	// Test 4: Unencrypted repo should work without key

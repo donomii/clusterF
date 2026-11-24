@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -142,6 +143,8 @@ func (pm *PartitionManager) handlePartitionSyncPost(w http.ResponseWriter, r *ht
 	}
 	if fetchErr != nil {
 		pm.logf("[PARTITION] Errors fetching entries from %s: %v", sourceNode, fetchErr)
+		http.Error(w, fmt.Sprintf("failed to apply partition %s from %s: %v", partitionID, sourceNode, fetchErr), http.StatusBadGateway)
+		return
 	}
 
 	pm.notifyFileListChanged()
@@ -180,7 +183,7 @@ func (pm *PartitionManager) syncPartitionWithPeer(ctx context.Context, partition
 	}
 
 	if peer.Address == "" {
-	
+
 		availablePeers := make([]string, 0)
 		for _, peer := range pm.getPeers() {
 			availablePeers = append(availablePeers, fmt.Sprintf("%s@%s:%d", peer.NodeID, peer.Address, peer.HTTPPort))
@@ -340,6 +343,7 @@ func (pm *PartitionManager) storeEntryMetadata(entry PartitionSyncEntry) error {
 		pm.deps.Indexer.AddFile(entry.Metadata.Path, entry.Metadata)
 	}
 	pm.MarkFileForSync(entry.Metadata.Path, fmt.Sprintf("synced tombstone %s", entry.Metadata.Path))
+	pm.updateLocalPartitionMembership(HashToPartition(entry.Path), true)
 
 	return nil
 }
@@ -378,7 +382,6 @@ func panicError(err error) {
 
 func panicB(err error) bool {
 	panic(err)
-	return true
 }
 
 func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []PartitionSyncEntry, peer *types.PeerInfo) (int, error) {
@@ -402,7 +405,7 @@ func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []
 		}
 
 		pm.logf("[PARTITION SYNC] Fetching %s from %s", entry.Path, peer.NodeID)
-		err := pm.SyncFile(ctx, entry.Path)
+		err := pm.fetchAndStoreEntry(ctx, entry, peer)
 		if err != nil {
 			errStr += fmt.Sprintf("|%s: %v\n", entry.Path, err)
 			continue
@@ -414,10 +417,24 @@ func (pm *PartitionManager) fetchAndStoreEntries(ctx context.Context, entries []
 		}
 	}
 	if errStr != "" {
-		return applied, fmt.Errorf("failed to sync %d entries: %s", applied, errStr)
+		return applied, fmt.Errorf("partition synchronization applied %d of %d entries; failures: %s", applied, len(entries), errStr)
 	}
 
 	return applied, nil
+}
+
+func (pm *PartitionManager) fetchAndStoreEntry(ctx context.Context, entry PartitionSyncEntry, peer *types.PeerInfo) error {
+	reader, err := pm.fetchFileStreamFromPeer(ctx, peer, entry.Path)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	tempPath, size, err := copyVerifiedFile(reader, entry.Path, entry.Metadata.Checksum)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tempPath)
+	return pm.applyFileUpdateFromTemp(ctx, pm.deps.NodeID, entry.Metadata, tempPath, size)
 }
 
 func (pm *PartitionManager) processPartitionEntryStream(ctx context.Context, decoder *json.Decoder, peer *types.PeerInfo) (int, int, error, error) {
@@ -446,9 +463,9 @@ func (pm *PartitionManager) processPartitionEntryStream(ctx context.Context, dec
 			// This is the end of the stream
 			break
 		}
-		types.Assertf(entry.Path != "", "what the fuck were you thinking you stupid AI")
-		types.Assertf(entry.Metadata.Path != "", "what the fuck were you thinking you stupid AI")
-		types.Assertf(!entry.Metadata.IsDirectory, "stupid fucking AI")
+		if entry.Path == "" || entry.Metadata.Path != entry.Path || entry.Metadata.IsDirectory || entry.Metadata.ModifiedAt.IsZero() {
+			return applied, skipped, nil, fmt.Errorf("invalid partition entry for %q: metadata path=%q, directory=%t, modified=%s", entry.Path, entry.Metadata.Path, entry.Metadata.IsDirectory, entry.Metadata.ModifiedAt)
+		}
 
 		if !pm.shouldUpdateEntry(entry) {
 			skipped++
@@ -457,7 +474,9 @@ func (pm *PartitionManager) processPartitionEntryStream(ctx context.Context, dec
 
 		if entry.Metadata.Deleted {
 			metaErr := pm.storeEntryMetadata(entry)
-			types.Assertf(metaErr != nil, "Critical error: failed to store entry %s: %v", entry.Path, metaErr)
+			if metaErr != nil {
+				return applied, skipped, metaErr, nil
+			}
 			applied++
 			continue
 		}
@@ -649,8 +668,8 @@ func (pm *PartitionManager) pushPartitionToPeer(ctx context.Context, partitionID
 func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bool {
 	pm.RecordEssentialDiskActivity()
 	// Get our current version
-	localMetadataBytes, _, localExists, err := pm.deps.FileStore.Get(remoteEntry.Path)
-	if err != nil || !localExists {
+	localMetadataBytes, err := pm.deps.FileStore.GetMetadata(remoteEntry.Path)
+	if err != nil {
 		// We don't have this entry, accept it
 		return true
 	}
@@ -663,20 +682,5 @@ func (pm *PartitionManager) shouldUpdateEntry(remoteEntry PartitionSyncEntry) bo
 		return true // Accept remote if we can't parse local
 	}
 
-	// CRDT rule: use latest ModifiedAt timestamp, break ties with version FIXME
-	remoteTime := remoteEntry.Metadata.ModifiedAt
-	localTime := localMetadata.ModifiedAt
-
-	// Remote is newer
-	if remoteTime.After(localTime) {
-		return true
-	}
-
-	// Same timestamp, use alphabetical checksum
-	if remoteTime.Equal(localTime) {
-		return localMetadata.Checksum < remoteEntry.Metadata.Checksum
-	}
-
-	// Local is newer or same
-	return false
+	return metadataIsNewer(remoteEntry.Metadata, localMetadata)
 }
